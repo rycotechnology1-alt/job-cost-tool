@@ -1,0 +1,12 @@
+﻿{
+  "labor": {
+    "APP": "Labor_App_Row",
+    "JM": "Labor_JM_Row"
+  },
+  "equipment": {
+    "pickup_truck": "Equip_Pickup_Row"
+  },
+  "material": {
+    "group_by": "vendor"
+  }
+}
