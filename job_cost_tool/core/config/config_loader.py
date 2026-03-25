@@ -25,9 +25,13 @@ class ConfigLoader:
         "vendor_normalization": "vendor_normalization.json",
         "input_model": "input_model.json",
         "recap_template_map": "recap_template_map.json",
+        "target_labor_classifications": "target_labor_classifications.json",
+        "target_equipment_classifications": "target_equipment_classifications.json",
     }
     _required_top_level_keys: ClassVar[dict[str, tuple[str, ...]]] = {
         "input_model": ("report_type", "section_headers"),
+        "target_labor_classifications": ("classifications",),
+        "target_equipment_classifications": ("classifications",),
     }
     _shared_cache: ClassVar[dict[Path, dict[str, JsonDict]]] = {}
 
@@ -66,6 +70,14 @@ class ConfigLoader:
     def get_recap_template_map(self) -> JsonDict:
         """Return the recap template mapping configuration."""
         return self._load_config("recap_template_map")
+
+    def get_target_labor_classifications(self) -> JsonDict:
+        """Return the configured target labor recap classifications."""
+        return self._load_config("target_labor_classifications")
+
+    def get_target_equipment_classifications(self) -> JsonDict:
+        """Return the configured target equipment recap classifications."""
+        return self._load_config("target_equipment_classifications")
 
     def _validate_required_configs(self) -> None:
         """Ensure all required config files are present on disk."""
@@ -127,11 +139,24 @@ class ConfigLoader:
                 )
 
         if config_name == "input_model":
-            if not isinstance(loaded_config["report_type"], str):
-                raise ValueError(
-                    f"Config file '{file_path}' has invalid top-level key 'report_type': expected string"
-                )
-            if not isinstance(loaded_config["section_headers"], dict):
-                raise ValueError(
-                    f"Config file '{file_path}' has invalid top-level key 'section_headers': expected object"
-                )
+            self._validate_key_type(file_path, loaded_config, "report_type", str, "string")
+            self._validate_key_type(file_path, loaded_config, "section_headers", dict, "object")
+        elif config_name in {
+            "target_labor_classifications",
+            "target_equipment_classifications",
+        }:
+            self._validate_key_type(file_path, loaded_config, "classifications", list, "array")
+
+    def _validate_key_type(
+        self,
+        file_path: Path,
+        loaded_config: JsonDict,
+        key: str,
+        expected_type: type[Any],
+        expected_label: str,
+    ) -> None:
+        """Validate a single top-level key type in a config file."""
+        if not isinstance(loaded_config[key], expected_type):
+            raise ValueError(
+                f"Config file '{file_path}' has invalid top-level key '{key}': expected {expected_label}"
+            )

@@ -9,7 +9,9 @@ from typing import Any, Optional
 from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER
 
-_PHASE_HEADER_RE = re.compile(r"^(?P<phase_code>\d+)\s+\.\s+\.\s+(?P<phase_name>.+?)\s*$")
+_PHASE_HEADER_RE = re.compile(
+    r"^(?P<phase_code>\d{1,3})(?:\s*\.\s*){0,2}\s+(?P<phase_name>[A-Za-z].+?)\s*$"
+)
 _PAGE_FOOTER_RE = re.compile(r"\bPage\s+\d+\s+\d{2}/\d{2}/\d{2}\b", re.IGNORECASE)
 
 
@@ -34,7 +36,7 @@ def _get_ignore_patterns() -> tuple[str, ...]:
     ignore_patterns = _get_input_model().get("ignore_patterns", [])
     if not isinstance(ignore_patterns, list):
         return tuple()
-    return tuple(str(item).casefold() for item in ignore_patterns)
+    return tuple(str(item).strip().casefold() for item in ignore_patterns if str(item).strip())
 
 
 @lru_cache(maxsize=1)
@@ -73,11 +75,11 @@ def is_header_or_footer(line: str) -> bool:
     )
     if folded.startswith(boilerplate_prefixes):
         return True
-    if "viewpoint remote .rpt" in folded:
+    if folded.endswith("viewpoint remote .rpt"):
         return True
     if _PAGE_FOOTER_RE.search(normalized_line):
         return True
-    return any(pattern in folded for pattern in _get_ignore_patterns())
+    return any(_matches_ignore_pattern(folded, pattern) for pattern in _get_ignore_patterns())
 
 
 def is_total_line(line: str) -> bool:
@@ -97,7 +99,11 @@ def is_total_line(line: str) -> bool:
 
 def extract_phase_header(line: str) -> Optional[tuple[str, str]]:
     """Return the phase code and phase name when a line is a phase header."""
-    match = _PHASE_HEADER_RE.match(line.strip())
+    normalized_line = line.strip()
+    if not normalized_line or is_header_or_footer(normalized_line) or is_total_line(normalized_line):
+        return None
+
+    match = _PHASE_HEADER_RE.match(normalized_line)
     if not match:
         return None
     return match.group("phase_code"), match.group("phase_name").strip()
@@ -140,3 +146,26 @@ def is_detail_candidate(line: str) -> bool:
         or is_total_line(line)
         or is_phase_header(line)
     )
+
+
+def _matches_ignore_pattern(line: str, pattern: str) -> bool:
+    """Match ignore patterns conservatively to avoid dropping real detail lines."""
+    if not pattern:
+        return False
+    if line == pattern:
+        return True
+    if line.startswith(pattern):
+        remainder = line[len(pattern) :].strip()
+        return _is_safe_boilerplate_remainder(remainder)
+    if line.endswith(pattern):
+        prefix = line[: -len(pattern)].strip()
+        return _is_safe_boilerplate_remainder(prefix)
+    return False
+
+
+def _is_safe_boilerplate_remainder(text: str) -> bool:
+    """Return True when a remaining fragment is only punctuation-like boilerplate."""
+    if not text:
+        return True
+    return all(character in " .:-_/()[]" for character in text)
+

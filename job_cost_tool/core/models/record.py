@@ -42,7 +42,7 @@ class Record:
     raw_description: str
     labor_class_raw: Optional[str]
 
-    # Additional optional source traceability metadata.
+    # Additional raw source traceability metadata.
     job_number: Optional[str] = None
     job_name: Optional[str] = None
     transaction_type: Optional[str] = None
@@ -53,6 +53,11 @@ class Record:
     source_page: Optional[int] = None
     source_line_text: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
+
+    # Additional normalized recap-oriented fields derived after parsing.
+    record_type_normalized: Optional[str] = None
+    recap_labor_classification: Optional[str] = None
+    vendor_name_normalized: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Validate model invariants after initialization."""

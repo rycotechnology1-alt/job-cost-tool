@@ -1,5 +1,27 @@
 ﻿{
-  "box truck": "pickup_truck",
-  "bucket truck": "line_truck",
-  "van": "service_vehicle"
+  "keyword_mappings": {
+    "excavator": "Excavator/ Drill Rig",
+    "drill rig": "Excavator/ Drill Rig",
+    "bucket truck": "Bucket Truck",
+    "digger derrick": "Digger Derrick",
+    "backyard machine": "Backyard Machine",
+    "3-reel trailer": "3-Reel Trailer",
+    "pickup truck": "Pick-up Truck",
+    "pick up truck": "Pick-up Truck",
+    "silverado": "Pick-up Truck",
+    "box truck": "Pick-up Truck",
+    "utility truck": "Pick-up Truck",
+    "utiltiy truck": "Pick-up Truck",
+    "utility body": "Pick-up Truck",
+    "utility van": "Utility Van",
+    "van": "Utility Van",
+    "winch truck": "Winch Truck",
+    "load lugger": "Load Lugger",
+    "power fed trailer": "Power Fed Trailer",
+    "1-reel trailer": "1-Reel Trailer",
+    "boom truck": "Boom Truck",
+    "test truck": "Test Truck",
+    "pulling/tension trailer": "Pulling/Tension Trailer",
+    "pole trailer": "Pole Trailer"
+  }
 }

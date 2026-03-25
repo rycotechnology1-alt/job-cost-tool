@@ -3,6 +3,7 @@
 from typing import List
 
 from job_cost_tool.core.models.record import Record
+from job_cost_tool.core.normalization.normalizer import normalize_records as normalize_record_list
 
 
 def normalize_records(records: List[Record]) -> List[Record]:
@@ -21,4 +22,4 @@ def normalize_records(records: List[Record]) -> List[Record]:
     - Ask users for corrections
     - Write to Excel
     """
-    raise NotImplementedError("Record normalization has not been implemented yet.")
+    return normalize_record_list(records)
