@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 from typing import Any, ClassVar
 
+from job_cost_tool.core.config.path_utils import get_legacy_config_root
+from job_cost_tool.core.config.profile_manager import ProfileManager
+
 
 JsonDict = dict[str, Any]
 
@@ -27,6 +30,7 @@ class ConfigLoader:
         "recap_template_map": "recap_template_map.json",
         "target_labor_classifications": "target_labor_classifications.json",
         "target_equipment_classifications": "target_equipment_classifications.json",
+        "rates": "rates.json",
     }
     _required_top_level_keys: ClassVar[dict[str, tuple[str, ...]]] = {
         "input_model": ("report_type", "section_headers"),
@@ -46,9 +50,12 @@ class ConfigLoader:
     _shared_cache: ClassVar[dict[Path, dict[str, JsonDict]]] = {}
 
     def __init__(self, config_dir: Path | None = None) -> None:
-        """Initialize the loader with a project-relative config directory."""
-        base_dir = Path(__file__).resolve().parents[2]
-        self._config_dir = (config_dir or (base_dir / "config")).resolve()
+        """Initialize the loader using an explicit config dir or the active profile."""
+        if config_dir is not None:
+            self._config_dir = config_dir.resolve()
+        else:
+            self._config_dir = ProfileManager().get_active_profile_dir()
+        self._legacy_config_dir = get_legacy_config_root().resolve()
         self._cache = self._shared_cache.setdefault(self._config_dir, {})
 
     def load_all_configs(self) -> None:
@@ -88,6 +95,46 @@ class ConfigLoader:
     def get_target_equipment_classifications(self) -> JsonDict:
         """Return the configured target equipment recap classifications."""
         return self._load_config("target_equipment_classifications")
+
+    def get_rates(self) -> JsonDict:
+        """Return the configured rates bundle for the active profile."""
+        return self._load_config("rates")
+
+    def get_active_profile_name(self) -> str:
+        """Return the active profile name currently in use."""
+        profile_dir = self._config_dir
+        if profile_dir == self._legacy_config_dir:
+            return "default"
+        profile_file = profile_dir / "profile.json"
+        if profile_file.is_file():
+            metadata = ProfileManager().get_active_profile_metadata()
+            return str(metadata.get("profile_name", "default"))
+        return "default"
+
+    def get_profile_metadata(self) -> JsonDict:
+        """Return metadata describing the active profile."""
+        metadata = ProfileManager().get_active_profile_metadata()
+        return {str(key): value for key, value in metadata.items()}
+
+    def get_template_path(self) -> Path:
+        """Return the recap template path for the active profile."""
+        profile_metadata = self.get_profile_metadata()
+        template_filename = str(profile_metadata.get("template_filename") or "").strip()
+        if template_filename:
+            template_path = (self._config_dir / template_filename).resolve()
+            if template_path.is_file():
+                return template_path
+
+        recap_map = self.get_recap_template_map()
+        configured_path = str(recap_map.get("default_template_path") or "").strip()
+        if configured_path:
+            template_path = Path(configured_path).expanduser().resolve()
+            if template_path.is_file():
+                return template_path
+
+        raise FileNotFoundError(
+            f"No recap template workbook could be resolved for config bundle '{self._config_dir}'."
+        )
 
     def _validate_required_configs(self) -> None:
         """Ensure all required config files are present on disk."""

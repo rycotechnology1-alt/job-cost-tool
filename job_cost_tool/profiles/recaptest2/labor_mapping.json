@@ -1,0 +1,82 @@
+{
+  "phase_defaults": {
+    "20": "103",
+    "21": "104"
+  },
+  "aliases": {
+    "103/APP": "APP",
+    "2B APP": "2B APP",
+    "8H APP": "8H APP",
+    "9I APP": "9I APP",
+    "APP": "APP",
+    "APPRENTICE": "APPRENTICE",
+    "103/F": "F",
+    "F": "F",
+    "FOREMAN": "FOREMAN",
+    "103/G": "G",
+    "G": "G",
+    "GENERAL": "GENERAL",
+    "GROUNDSMAN": "GROUNDSMAN",
+    "103/GF": "GF",
+    "GENERAL FM": "GENERAL FM",
+    "GF": "GF",
+    "103/J": "J",
+    "J": "J",
+    "JOURNEYMAN": "JOURNEYMAN",
+    "JOURNEYMAN LM": "JOURNEYMAN LM",
+    "104/APP": "APP",
+    "104/EO": "EO",
+    "EO": "EO",
+    "EQUIPMENT OPERATOR": "EQUIPMENT OPERATOR",
+    "104/F": "F",
+    "104/GF": "GF",
+    "104/G": "G",
+    "104/J": "J",
+    "104/LL": "LL",
+    "LEAD LINEMAN": "LEAD LINEMAN",
+    "LL": "LL"
+  },
+  "class_mappings": {
+    "103": {
+      "APP": "103 Apprentice",
+      "2B APP": "103 Apprentice",
+      "8H APP": "103 Apprentice",
+      "9I APP": "103 Apprentice",
+      "APPRENTICE": "103 Apprentice",
+      "F": "103 Big Boy",
+      "FOREMAN": "103 Big Boy",
+      "G": "103 General",
+      "GENERAL": "103 General",
+      "GROUNDSMAN": "103 General",
+      "GF": "103 General FM",
+      "GENERAL FM": "103 General FM",
+      "J": "103 Journeyman",
+      "JOURNEYMAN": "103 Journeyman",
+      "JOURNEYMAN LM": "103 Journeyman"
+    },
+    "104": {
+      "APP": "104 Apprentice",
+      "2B APP": "104 Apprentice",
+      "8H APP": "104 Apprentice",
+      "9I APP": "104 Apprentice",
+      "APPRENTICE": "104 Apprentice",
+      "EO": "104 Equipment Operator",
+      "EQUIPMENT OPERATOR": "104 Equipment Operator",
+      "F": "104 Foreman",
+      "FOREMAN": "104 Foreman",
+      "GF": "104 General FM",
+      "GENERAL FM": "104 General FM",
+      "G": "104 Groundsman",
+      "GENERAL": "104 Groundsman",
+      "GROUNDSMAN": "104 Groundsman",
+      "J": "104 Journeyman LM",
+      "JOURNEYMAN": "104 Journeyman LM",
+      "JOURNEYMAN LM": "104 Journeyman LM",
+      "LL": "104 Lead Lineman",
+      "LEAD LINEMAN": "104 Lead Lineman"
+    }
+  },
+  "apprentice_aliases": [
+    "APP"
+  ]
+}

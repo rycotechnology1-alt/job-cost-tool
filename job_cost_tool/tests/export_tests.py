@@ -12,6 +12,7 @@ from openpyxl import Workbook, load_workbook
 import job_cost_tool.core.export.recap_mapper as recap_mapper
 from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
 from job_cost_tool.services.export_service import export_records_to_recap
+from job_cost_tool.services.validation_service import validate_records
 
 
 TEST_TEMPLATE_MAP = {
@@ -157,6 +158,22 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertIsNone(worksheet["B47"].value)
         self.assertEqual(worksheet["B53"].value, "=SUM(B46:B52)")
 
+    def test_omitted_record_does_not_block_or_export(self) -> None:
+        records = [
+            self._labor_record(recap_classification=None, is_omitted=True),
+            self._material_record(vendor="Vendor A", cost=100),
+        ]
+
+        validated_records, blocking_issues = validate_records(records)
+        self.assertEqual(blocking_issues, [])
+
+        export_records_to_recap(validated_records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertIsNone(worksheet["B14"].value)
+        self.assertEqual(worksheet["A46"].value, "Vendor A")
+        self.assertEqual(worksheet["B46"].value, 100)
+
     def _cleanup_temp_dir(self) -> None:
         shutil.rmtree(self.temp_path, ignore_errors=True)
 
@@ -176,7 +193,7 @@ class ExportWorkflowTests(unittest.TestCase):
         worksheet["C65"] = "=SUM(C63:C64)"
         workbook.save(path)
 
-    def _labor_record(self, recap_classification: str | None, hours: float = 8) -> Record:
+    def _labor_record(self, recap_classification: str | None, hours: float = 8, is_omitted: bool = False) -> Record:
         return Record(
             record_type=LABOR,
             phase_code="20",
@@ -199,6 +216,7 @@ class ExportWorkflowTests(unittest.TestCase):
             record_type_normalized=LABOR,
             recap_labor_classification=recap_classification,
             vendor_name_normalized=None,
+            is_omitted=is_omitted,
         )
 
     def _equipment_record(self, category: str, hours: float = 2) -> Record:

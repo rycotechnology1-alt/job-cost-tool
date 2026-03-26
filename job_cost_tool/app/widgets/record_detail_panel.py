@@ -6,6 +6,7 @@ from typing import Optional
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -44,6 +45,7 @@ class RecordDetailPanel(QWidget):
         self._equipment_edit_combo = QComboBox()
         self._vendor_edit_label = QLabel("Vendor Normalized")
         self._vendor_edit_input = QLineEdit()
+        self._omit_checkbox = QCheckBox("Omit this record from export")
         self._apply_button = QPushButton("Apply Changes")
 
         self._build_layout()
@@ -65,6 +67,7 @@ class RecordDetailPanel(QWidget):
             ("transaction_type", "Transaction Type"),
             ("record_type", "Raw Type"),
             ("record_type_normalized", "Normalized Type"),
+            ("is_omitted", "Export Status"),
             ("confidence", "Confidence"),
             ("employee_id", "Employee ID"),
             ("employee_name", "Employee Name"),
@@ -88,6 +91,7 @@ class RecordDetailPanel(QWidget):
         editor_form.addRow(self._labor_edit_label, self._labor_edit_combo)
         editor_form.addRow(self._equipment_edit_label, self._equipment_edit_combo)
         editor_form.addRow(self._vendor_edit_label, self._vendor_edit_input)
+        editor_form.addRow(QLabel("Export"), self._omit_checkbox)
         button_row = QHBoxLayout()
         button_row.addStretch(1)
         button_row.addWidget(self._apply_button)
@@ -134,6 +138,8 @@ class RecordDetailPanel(QWidget):
             self._set_editor_visibility(None)
             self._apply_button.setEnabled(False)
             self._reset_editor_values()
+            self._omit_checkbox.setChecked(False)
+            self._omit_checkbox.setEnabled(False)
             return
 
         values = {
@@ -143,6 +149,7 @@ class RecordDetailPanel(QWidget):
             "transaction_type": _to_text(record.transaction_type),
             "record_type": _to_text(record.record_type),
             "record_type_normalized": _to_text(record.record_type_normalized),
+            "is_omitted": "Omitted from export" if record.is_omitted else "Included in export",
             "confidence": f"{record.confidence:.1f}",
             "employee_id": _to_text(record.employee_id),
             "employee_name": _to_text(record.employee_name),
@@ -169,6 +176,7 @@ class RecordDetailPanel(QWidget):
 
         self._set_editor_visibility(record)
         self._populate_editor_values(record)
+        self._omit_checkbox.setEnabled(True)
         self._apply_button.setEnabled(True)
 
     def _rebuild_option_lists(self) -> None:
@@ -191,20 +199,24 @@ class RecordDetailPanel(QWidget):
         self._labor_edit_combo.blockSignals(True)
         self._equipment_edit_combo.blockSignals(True)
         self._vendor_edit_input.blockSignals(True)
+        self._omit_checkbox.blockSignals(True)
         try:
             self._labor_edit_combo.setCurrentText(record.recap_labor_classification or "")
             self._equipment_edit_combo.setCurrentText(record.equipment_category or "")
             self._vendor_edit_input.setText(record.vendor_name_normalized or "")
+            self._omit_checkbox.setChecked(record.is_omitted)
         finally:
             self._labor_edit_combo.blockSignals(False)
             self._equipment_edit_combo.blockSignals(False)
             self._vendor_edit_input.blockSignals(False)
+            self._omit_checkbox.blockSignals(False)
 
     def _reset_editor_values(self) -> None:
         """Clear correction control values."""
         self._labor_edit_combo.setCurrentText("")
         self._equipment_edit_combo.setCurrentText("")
         self._vendor_edit_input.clear()
+        self._omit_checkbox.setChecked(False)
 
     def _set_editor_visibility(self, record: Optional[Record]) -> None:
         """Show only the editor relevant to the selected record family."""
@@ -219,6 +231,7 @@ class RecordDetailPanel(QWidget):
         self._equipment_edit_combo.setVisible(is_equipment)
         self._vendor_edit_label.setVisible(is_material)
         self._vendor_edit_input.setVisible(is_material)
+        self._omit_checkbox.setVisible(record is not None)
 
     def _emit_apply_requested(self) -> None:
         """Emit normalized field edits for the selected record."""
@@ -226,15 +239,13 @@ class RecordDetailPanel(QWidget):
             return
 
         normalized_family = self._current_record.record_type_normalized
-        updates: dict[str, Optional[str]] = {}
+        updates: dict[str, object] = {"is_omitted": self._omit_checkbox.isChecked()}
         if normalized_family == LABOR:
             updates["recap_labor_classification"] = self._labor_edit_combo.currentText() or None
         elif normalized_family == EQUIPMENT:
             updates["equipment_category"] = self._equipment_edit_combo.currentText() or None
         elif normalized_family == MATERIAL:
             updates["vendor_name_normalized"] = self._vendor_edit_input.text().strip() or None
-        else:
-            return
 
         self.apply_requested.emit(updates)
 

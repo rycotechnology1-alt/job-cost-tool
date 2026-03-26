@@ -25,6 +25,7 @@ class ReviewViewModel(QObject):
         "recap_labor_classification",
         "equipment_category",
         "vendor_name_normalized",
+        "is_omitted",
     }
 
     state_changed = Signal()
@@ -128,6 +129,11 @@ class ReviewViewModel(QObject):
         if self.current_pdf_path:
             self.load_pdf(self.current_pdf_path)
 
+    def reload_profile_options(self) -> None:
+        """Reload profile-driven editor options after a profile change."""
+        self._labor_options, self._equipment_options = self._load_edit_options()
+        self.state_changed.emit()
+
     def set_filter_mode(self, filter_mode: str) -> None:
         """Update the active record filter."""
         if filter_mode not in self.FILTER_OPTIONS:
@@ -143,29 +149,37 @@ class ReviewViewModel(QObject):
         self._selected_record_id = self._record_id_for_record(record) if record else None
         self.state_changed.emit()
 
-    def apply_updates_to_selected_record(self, updates: dict[str, Optional[str]]) -> None:
+    def apply_updates_to_selected_record(self, updates: dict[str, object]) -> None:
         """Apply normalized-field updates to the selected record and revalidate."""
         if self._selected_record_id is None:
             return
         self.update_record(self._selected_record_id, updates)
 
-    def update_record(self, record_id: str, updates: dict[str, Optional[str]]) -> None:
+    def update_record(self, record_id: str, updates: dict[str, object]) -> None:
         """Apply normalized-field updates to a record, then re-run validation."""
         index = self._index_for_record_id(record_id)
         if index is None:
             return
 
-        allowed_updates = {
-            key: (value if value not in {"", None} else None)
-            for key, value in updates.items()
-            if key in self.EDITABLE_FIELDS
-        }
+        allowed_updates: dict[str, object] = {}
+        for key, value in updates.items():
+            if key not in self.EDITABLE_FIELDS:
+                continue
+            if key == "is_omitted":
+                allowed_updates[key] = bool(value)
+            else:
+                allowed_updates[key] = value if value not in {"", None} else None
+
         if not allowed_updates:
             return
 
         self._review_records[index] = replace(self._review_records[index], **allowed_updates)
         self._revalidate_records()
-        self._selected_record_id = record_id
+        if self.selected_record not in self.filtered_records:
+            first_filtered_record = self.filtered_records[0] if self.filtered_records else None
+            self._selected_record_id = self._record_id_for_record(first_filtered_record) if first_filtered_record else None
+        else:
+            self._selected_record_id = record_id
         self.status_text = self._build_status_text(
             self.current_pdf_path or "current session",
             self._records,

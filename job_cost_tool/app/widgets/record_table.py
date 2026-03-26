@@ -5,9 +5,12 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
 
 from job_cost_tool.core.models.record import Record
+
+_OMITTED_ROW_COLOR = QColor("#FDECEC")
 
 
 class RecordTable(QTableWidget):
@@ -73,6 +76,9 @@ class RecordTable(QTableWidget):
                     item = QTableWidgetItem(value)
                     if column_index == 0:
                         item.setData(Qt.ItemDataRole.UserRole, record)
+                    if record.is_omitted:
+                        item.setBackground(_OMITTED_ROW_COLOR)
+                        item.setToolTip("This record is omitted from export.")
                     self.setItem(row_index, column_index, item)
 
             if not self._records:
@@ -117,6 +123,8 @@ class RecordTable(QTableWidget):
 
 def _summarize_warnings(record: Record) -> str:
     """Build a short warning summary for table display."""
+    if record.is_omitted:
+        return "Omitted"
     if not record.warnings:
         return ""
     if record.has_blocking_warning():

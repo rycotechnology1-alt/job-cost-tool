@@ -22,7 +22,8 @@ from job_cost_tool.app.viewmodels.review_view_model import ReviewViewModel
 from job_cost_tool.app.widgets.issues_panel import IssuesPanel
 from job_cost_tool.app.widgets.record_detail_panel import RecordDetailPanel
 from job_cost_tool.app.widgets.record_table import RecordTable
-from job_cost_tool.core.config import ConfigLoader
+from job_cost_tool.app.widgets.settings_dialog import SettingsDialog
+from job_cost_tool.core.config import ConfigLoader, ProfileManager
 from job_cost_tool.services.export_service import export_records_to_recap
 
 
@@ -37,9 +38,11 @@ class MainWindow(QMainWindow):
         self._issues_panel = IssuesPanel()
         self._open_button = QPushButton("Open PDF")
         self._refresh_button = QPushButton("Reprocess")
+        self._settings_button = QPushButton("Settings")
         self._filter_combo = QComboBox()
         self._export_button = QPushButton("Export")
         self._status_label = QLabel("Open a PDF to begin review.")
+        self._profile_label = QLabel()
 
         self._configure_window()
         self._build_layout()
@@ -66,13 +69,17 @@ class MainWindow(QMainWindow):
         self._filter_combo.addItems(ReviewViewModel.FILTER_OPTIONS)
         self._export_button.setToolTip("Export the reviewed recap workbook when all blocking issues are resolved.")
         self._status_label.setWordWrap(True)
+        self._profile_label.setWordWrap(True)
 
         controls_layout.addWidget(self._open_button)
         controls_layout.addWidget(self._refresh_button)
+        controls_layout.addWidget(self._settings_button)
         controls_layout.addSpacing(12)
         controls_layout.addWidget(filter_label)
         controls_layout.addWidget(self._filter_combo)
         controls_layout.addStretch(1)
+        controls_layout.addWidget(self._profile_label)
+        controls_layout.addSpacing(12)
         controls_layout.addWidget(self._export_button)
 
         horizontal_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -97,6 +104,7 @@ class MainWindow(QMainWindow):
         """Connect UI events and view-model signals."""
         self._open_button.clicked.connect(self._choose_pdf)
         self._refresh_button.clicked.connect(self._view_model.reload_current_pdf)
+        self._settings_button.clicked.connect(self._open_settings_dialog)
         self._filter_combo.currentTextChanged.connect(self._view_model.set_filter_mode)
         self._export_button.clicked.connect(self._export_records)
         self._record_table.record_selected.connect(self._view_model.set_selected_record)
@@ -119,15 +127,51 @@ class MainWindow(QMainWindow):
     def _refresh_ui(self) -> None:
         """Refresh widgets from the current view-model state."""
         self._status_label.setText(self._view_model.status_text)
+        self._profile_label.setText(self._build_profile_label_text())
         self._record_table.set_records(self._view_model.filtered_records)
         self._record_table.select_record(self._view_model.selected_record)
+        self._detail_panel.set_edit_options(self._view_model.labor_options, self._view_model.equipment_options)
         self._detail_panel.set_record(self._view_model.selected_record)
         self._issues_panel.set_issues(self._view_model.blocking_issues)
 
         self._refresh_button.setEnabled(self._view_model.current_pdf_path is not None and not self._view_model.is_processing)
         self._open_button.setEnabled(not self._view_model.is_processing)
+        self._settings_button.setEnabled(not self._view_model.is_processing)
         self._filter_combo.setEnabled(not self._view_model.is_processing)
         self._export_button.setEnabled(self._view_model.can_export)
+
+    def _open_settings_dialog(self) -> None:
+        """Open the settings/admin dialog for profile management."""
+        dialog = SettingsDialog(self)
+        dialog.profile_changed.connect(self._handle_profile_changed)
+        dialog.settings_changed.connect(self._handle_settings_saved)
+        dialog.exec()
+        self._handle_settings_saved()
+
+    def _handle_profile_changed(self) -> None:
+        """Refresh lightweight profile-driven UI state after a profile change."""
+        self._handle_settings_saved()
+        if self._view_model.current_pdf_path:
+            QMessageBox.information(
+                self,
+                "Profile Changed",
+                "The active profile changed. Reprocess the current PDF to apply the new profile bundle to loaded records.",
+            )
+
+    def _handle_settings_saved(self) -> None:
+        """Refresh profile-driven UI options after settings changes."""
+        self._view_model.reload_profile_options()
+        self._refresh_ui()
+
+    def _build_profile_label_text(self) -> str:
+        """Build a short active-profile label for the main window."""
+        try:
+            metadata = ProfileManager().get_active_profile_metadata()
+        except Exception:
+            return "Profile: unavailable"
+        display_name = str(metadata.get("display_name") or metadata.get("profile_name") or "default")
+        profile_name = str(metadata.get("profile_name") or "default")
+        return f"Profile: {display_name} ({profile_name})"
 
     def _export_records(self) -> None:
         """Export the reviewed record set into the configured recap template."""
@@ -173,17 +217,13 @@ class MainWindow(QMainWindow):
         )
 
     def _resolve_template_path(self) -> Path | None:
-        """Resolve the recap template path, preferring the configured default template when available."""
+        """Resolve the recap template path, preferring the active profile template."""
         try:
-            template_map = ConfigLoader().get_recap_template_map()
+            template_path = ConfigLoader().get_template_path()
         except Exception:
-            template_map = {}
-
-        configured_path = str(template_map.get("default_template_path", "")).strip()
-        if configured_path:
-            configured_template = Path(configured_path).expanduser()
-            if configured_template.is_file():
-                return configured_template
+            template_path = None
+        if template_path and template_path.is_file():
+            return template_path
 
         file_path, _ = QFileDialog.getOpenFileName(
             self,

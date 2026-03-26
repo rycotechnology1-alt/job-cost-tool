@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from functools import lru_cache
 from typing import Any, Optional
 
 from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.models.record import MATERIAL, Record
+
+_EMPLOYEE_EXPENSE_VENDOR = "Employee Expense"
+_REIMBURSEMENT_PATTERN = re.compile(r"\bjob\s+reimb(?:urse(?:ment)?)?\b", re.IGNORECASE)
 
 
 @lru_cache(maxsize=1)
@@ -19,6 +23,17 @@ def _get_vendor_normalization() -> dict[str, Any]:
 def normalize_material_record(record: Record) -> Record:
     """Apply vendor/material normalization foundations to a parsed record."""
     warnings = list(record.warnings)
+
+    if _is_employee_reimbursement(record):
+        warnings = [warning for warning in warnings if "pr detail line family is ambiguous" not in warning.casefold()]
+        return replace(
+            record,
+            record_type_normalized=MATERIAL,
+            vendor_name_normalized=_EMPLOYEE_EXPENSE_VENDOR,
+            warnings=_dedupe_warnings(warnings),
+            confidence=max(record.confidence, 0.6),
+        )
+
     vendor_name_normalized = _normalize_vendor_name(record.vendor_name)
 
     if record.vendor_name is None:
@@ -34,6 +49,16 @@ def normalize_material_record(record: Record) -> Record:
         warnings=_dedupe_warnings(warnings),
         confidence=_reduce_confidence(record.confidence, record.vendor_name is None),
     )
+
+
+def _is_employee_reimbursement(record: Record) -> bool:
+    """Return True for narrow phase-50 employee reimbursement lines."""
+    if record.phase_code != "50":
+        return False
+    searchable_text = " ".join(
+        part for part in (record.raw_description, record.source_line_text) if part
+    )
+    return bool(_REIMBURSEMENT_PATTERN.search(searchable_text))
 
 
 def _normalize_vendor_name(vendor_name: Optional[str]) -> Optional[str]:

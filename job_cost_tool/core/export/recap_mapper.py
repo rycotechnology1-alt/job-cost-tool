@@ -34,14 +34,15 @@ def build_recap_payload(records: list[Record]) -> dict[str, Any]:
     if not records:
         raise ValueError("There are no reviewed records available for export.")
 
-    _validate_records_for_export(records)
+    included_records = [record for record in records if not record.is_omitted]
+    _validate_records_for_export(included_records)
 
-    labor_values = _build_labor_values(records)
-    equipment_values = _build_equipment_values(records)
-    materials_values = _build_material_values(records)
-    subcontractor_values = _build_subcontractor_values(records)
-    permits_values = _build_permit_values(records)
-    police_values = _build_police_values(records)
+    labor_values = _build_labor_values(included_records)
+    equipment_values = _build_equipment_values(included_records)
+    materials_values = _build_material_values(included_records)
+    subcontractor_values = _build_subcontractor_values(included_records)
+    permits_values = _build_permit_values(included_records)
+    police_values = _build_police_values(included_records)
 
     return {
         "header": _build_header_values(records),

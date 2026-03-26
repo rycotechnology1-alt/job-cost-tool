@@ -1,0 +1,116 @@
+{
+  "labor_rates": {
+    "103 General": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "103 General FM": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "103 Foreman": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "103 Journeyman": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "103 Apprentice": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "104 General FM": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "104 Foreman": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "104 Lead Lineman": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "104 Journeyman LM": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "104 Equipment Operator": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "104 Groundsman": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "104 Apprentice": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "103 Big Boy": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    }
+  },
+  "equipment_rates": {
+    "Excavator/ Drill Rig": {
+      "rate": 1.0
+    },
+    "Bucket Truck": {
+      "rate": 1.0
+    },
+    "Digger Derrick": {
+      "rate": 1.0
+    },
+    "Backyard Machine": {
+      "rate": 1.0
+    },
+    "3-Reel Trailer": {
+      "rate": 1.0
+    },
+    "Pick-up Truck": {
+      "rate": 1.0
+    },
+    "Utility Van": {
+      "rate": 1.0
+    },
+    "Winch Truck": {
+      "rate": 1.0
+    },
+    "Load Lugger": {
+      "rate": 1.0
+    },
+    "Power Fed Trailer": {
+      "rate": 1.0
+    },
+    "1-Reel Trailer": {
+      "rate": 1.0
+    },
+    "Boom Truck": {
+      "rate": 1.0
+    },
+    "Test Truck": {
+      "rate": 1.0
+    },
+    "Pulling/Tension Trailer": {
+      "rate": 1.0
+    },
+    "Pole Trailer": {
+      "rate": 1.0
+    }
+  }
+}

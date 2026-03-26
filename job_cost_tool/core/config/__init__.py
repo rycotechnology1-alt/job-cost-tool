@@ -1,5 +1,6 @@
 ﻿"""Configuration helpers and schemas for the core layer."""
 
 from .config_loader import ConfigLoader
+from .profile_manager import ProfileManager
 
-__all__ = ["ConfigLoader"]
+__all__ = ["ConfigLoader", "ProfileManager"]

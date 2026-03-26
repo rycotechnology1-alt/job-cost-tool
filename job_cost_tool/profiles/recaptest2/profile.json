@@ -1,0 +1,8 @@
+{
+  "profile_name": "recaptest2",
+  "display_name": "test2",
+  "description": "test2",
+  "version": "1.0",
+  "template_filename": "recap_template.xlsx",
+  "is_active": false
+}

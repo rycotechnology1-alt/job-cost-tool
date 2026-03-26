@@ -58,6 +58,7 @@ class Record:
     record_type_normalized: Optional[str] = None
     recap_labor_classification: Optional[str] = None
     vendor_name_normalized: Optional[str] = None
+    is_omitted: bool = False
 
     def __post_init__(self) -> None:
         """Validate model invariants after initialization."""

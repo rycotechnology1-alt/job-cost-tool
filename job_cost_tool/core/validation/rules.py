@@ -17,15 +17,20 @@ def get_record_warnings(record: Record) -> List[str]:
     """Return additional non-blocking validation warnings for a normalized record."""
     warnings: List[str] = []
 
+    if record.is_omitted:
+        return warnings
+
     if not get_record_blocking_issues(record) and 0.3 < record.confidence < 0.9:
         warnings.append("Medium-confidence record should be reviewed before export.")
-
 
     return _dedupe_messages(warnings)
 
 
 def get_record_blocking_issues(record: Record) -> List[str]:
     """Return blocking issues for a normalized record."""
+    if record.is_omitted:
+        return []
+
     issues: List[str] = []
     normalized_family = record.record_type_normalized or record.record_type
 
@@ -78,4 +83,3 @@ def _dedupe_messages(messages: List[str]) -> List[str]:
             unique_messages.append(message)
             seen.add(message)
     return unique_messages
-
