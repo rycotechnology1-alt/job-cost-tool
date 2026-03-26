@@ -1,0 +1,291 @@
+﻿"""Workbook-writing helpers for the recap Excel template."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+from zipfile import BadZipFile
+
+from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
+from openpyxl.worksheet.worksheet import Worksheet
+
+from job_cost_tool.core.config import ConfigLoader
+
+
+_SECTION_LABELS = {
+    "materials": "Material",
+    "subcontractors": "Subcontractor",
+    "permits & fees": "Permits & Fees",
+    "police detail": "Police Detail",
+}
+
+
+def export_to_excel(template_path: str, output_path: str, recap_payload: dict[str, Any]) -> None:
+    """Write recap payload values into a copy of the existing recap template workbook."""
+    template = Path(template_path).expanduser().resolve()
+    output = Path(output_path).expanduser().resolve()
+    mapping = ConfigLoader().get_recap_template_map()
+    worksheet_name = str(mapping.get("worksheet_name", "")).strip()
+    if not worksheet_name:
+        raise ValueError("Recap template map is missing worksheet_name.")
+
+    workbook, worksheet = _load_template_workbook(template, worksheet_name)
+    _validate_output_path(template, output)
+    _validate_section_capacities(recap_payload, mapping)
+
+    _clear_fixed_inputs(worksheet, mapping)
+    _clear_list_section(worksheet, "materials", mapping["materials_section"])
+    _clear_list_section(worksheet, "subcontractors", mapping["subcontractors_section"])
+    _clear_list_section(worksheet, "permits & fees", mapping["permits_fees_section"])
+    _clear_list_section(worksheet, "police detail", mapping["police_detail_section"])
+    _clear_header_fields(worksheet, mapping.get("header_fields", {}))
+
+    _write_header_fields(worksheet, recap_payload.get("header", {}), mapping.get("header_fields", {}))
+    _write_labor_values(worksheet, recap_payload.get("labor", {}), mapping.get("labor_rows", {}))
+    _write_equipment_values(worksheet, recap_payload.get("equipment", {}), mapping.get("equipment_rows", {}))
+    _write_list_section(worksheet, recap_payload.get("materials", []), mapping["materials_section"], "materials")
+    _write_list_section(
+        worksheet,
+        recap_payload.get("subcontractors", []),
+        mapping["subcontractors_section"],
+        "subcontractors",
+    )
+    _write_list_section(
+        worksheet,
+        recap_payload.get("permits_fees", []),
+        mapping["permits_fees_section"],
+        "permits & fees",
+    )
+    _write_list_section(
+        worksheet,
+        recap_payload.get("police_detail", []),
+        mapping["police_detail_section"],
+        "police detail",
+    )
+
+    try:
+        workbook.save(output)
+    except PermissionError as exc:
+        if output.exists():
+            raise ValueError(
+                "The output file is currently open. Please close it and try again."
+            ) from exc
+        raise ValueError(f"Permission denied while saving recap workbook to '{output}'.") from exc
+    except OSError as exc:
+        if output.exists():
+            raise ValueError(
+                "The output file is currently open. Please close it and try again."
+            ) from exc
+        raise ValueError(f"Failed to save recap workbook '{output}': {exc}") from exc
+
+
+def _load_template_workbook(template: Path, worksheet_name: str) -> tuple[Any, Worksheet]:
+    """Load and validate the configured recap template workbook."""
+    if not template.is_file():
+        raise FileNotFoundError(f"Recap template workbook was not found: {template}")
+
+    try:
+        workbook = load_workbook(template)
+    except (InvalidFileException, BadZipFile) as exc:
+        raise ValueError(f"Recap template workbook is not a valid Excel file: {template}") from exc
+    except Exception as exc:
+        raise ValueError(f"Failed to load recap template workbook '{template}': {exc}") from exc
+
+    if worksheet_name not in workbook.sheetnames:
+        raise ValueError(f"Recap template worksheet '{worksheet_name}' was not found in '{template}'.")
+
+    return workbook, workbook[worksheet_name]
+
+
+def _validate_output_path(template: Path, output: Path) -> None:
+    """Validate the chosen output path before saving the recap workbook."""
+    if template == output:
+        raise ValueError("Output path must be different from the recap template path.")
+    if not output.parent.exists():
+        raise FileNotFoundError(f"Output folder does not exist: {output.parent}")
+
+
+def _validate_section_capacities(recap_payload: dict[str, Any], mapping: dict[str, Any]) -> None:
+    """Fail early when a variable-length section would overflow the template."""
+    section_key_map = {
+        "materials": "materials_section",
+        "subcontractors": "subcontractors_section",
+        "permits_fees": "permits_fees_section",
+        "police_detail": "police_detail_section",
+    }
+    display_name_map = {
+        "materials": "Material",
+        "subcontractors": "Subcontractor",
+        "permits_fees": "Permits & Fees",
+        "police_detail": "Police Detail",
+    }
+
+    for payload_key, mapping_key in section_key_map.items():
+        rows = recap_payload.get(payload_key, []) or []
+        section_name = payload_key.replace("_", " ")
+        start_row, end_row, _ = _get_section_bounds(section_name, mapping[mapping_key])
+        capacity = end_row - start_row + 1
+        required = len(rows)
+        if required > capacity:
+            display_name = display_name_map[payload_key]
+            raise ValueError(
+                f"{display_name} section exceeds template capacity ({capacity} rows available, {required} required)."
+            )
+
+
+def _clear_fixed_inputs(worksheet: Worksheet, mapping: dict[str, Any]) -> None:
+    """Clear fixed writable input cells before writing a new export."""
+    for row_mapping in mapping.get("labor_rows", {}).values():
+        if not isinstance(row_mapping, dict):
+            continue
+        for key in ("st_hours", "ot_hours", "dt_hours"):
+            cell_ref = row_mapping.get(key)
+            if cell_ref:
+                worksheet[str(cell_ref)].value = None
+
+    for row_mapping in mapping.get("equipment_rows", {}).values():
+        if not isinstance(row_mapping, dict):
+            continue
+        cell_ref = row_mapping.get("hours_qty")
+        if cell_ref:
+            worksheet[str(cell_ref)].value = None
+
+
+def _clear_header_fields(worksheet: Worksheet, header_mapping: dict[str, Any]) -> None:
+    """Clear only mapped header input cells before writing known values."""
+    for mapping_entry in header_mapping.values():
+        if not isinstance(mapping_entry, dict):
+            continue
+        cell_ref = mapping_entry.get("cell")
+        if cell_ref:
+            worksheet[str(cell_ref)].value = None
+
+
+def _clear_list_section(worksheet: Worksheet, section_name: str, section_mapping: dict[str, Any]) -> None:
+    """Clear only the writable cells in a bounded variable-length section."""
+    start_row, end_row, columns = _get_section_bounds(section_name, section_mapping)
+    for row in range(start_row, end_row + 1):
+        for column_letter in columns.values():
+            worksheet[f"{column_letter}{row}"].value = None
+
+
+def _write_header_fields(
+    worksheet: Worksheet,
+    header_payload: dict[str, Any],
+    header_mapping: dict[str, Any],
+) -> None:
+    """Write known header values into their configured input cells."""
+    for header_key, value in header_payload.items():
+        if value in {None, ""}:
+            continue
+        mapping_entry = header_mapping.get(header_key)
+        if not isinstance(mapping_entry, dict) or "cell" not in mapping_entry:
+            continue
+        worksheet[str(mapping_entry["cell"])].value = value
+
+
+def _write_labor_values(
+    worksheet: Worksheet,
+    labor_payload: dict[str, dict[str, int | float]],
+    labor_mapping: dict[str, Any],
+) -> None:
+    """Write aggregated labor hours into fixed recap labor rows."""
+    for classification, totals in labor_payload.items():
+        mapping_entry = labor_mapping.get(classification)
+        if not isinstance(mapping_entry, dict):
+            raise ValueError(
+                f"Recap template map is missing a labor row mapping for '{classification}'."
+            )
+
+        for hour_type, mapping_key in (("ST", "st_hours"), ("OT", "ot_hours"), ("DT", "dt_hours")):
+            cell_ref = mapping_entry.get(mapping_key)
+            if not cell_ref:
+                raise ValueError(
+                    f"Recap template map for labor classification '{classification}' is missing '{mapping_key}'."
+                )
+            value = totals.get(hour_type, 0)
+            worksheet[str(cell_ref)].value = None if _is_zero(value) else value
+
+
+def _write_equipment_values(
+    worksheet: Worksheet,
+    equipment_payload: dict[str, int | float],
+    equipment_mapping: dict[str, Any],
+) -> None:
+    """Write aggregated equipment hours or quantities into fixed recap rows."""
+    for category, value in equipment_payload.items():
+        mapping_entry = equipment_mapping.get(category)
+        if not isinstance(mapping_entry, dict):
+            raise ValueError(
+                f"Recap template map is missing an equipment row mapping for '{category}'."
+            )
+        cell_ref = mapping_entry.get("hours_qty")
+        if not cell_ref:
+            raise ValueError(
+                f"Recap template map for equipment category '{category}' is missing 'hours_qty'."
+            )
+        worksheet[str(cell_ref)].value = None if _is_zero(value) else value
+
+
+def _write_list_section(
+    worksheet: Worksheet,
+    rows: list[dict[str, Any]],
+    section_mapping: dict[str, Any],
+    section_name: str,
+) -> None:
+    """Write a bounded variable-length list section into configured rows and columns."""
+    start_row, end_row, columns = _get_section_bounds(section_name, section_mapping)
+    capacity = end_row - start_row + 1
+    if len(rows) > capacity:
+        label = _SECTION_LABELS.get(section_name, section_name.title())
+        raise ValueError(
+            f"{label} section exceeds template capacity ({capacity} rows available, {len(rows)} required)."
+        )
+
+    for offset, row_values in enumerate(rows):
+        row_number = start_row + offset
+        for field_name, column_letter in columns.items():
+            value = row_values.get(field_name)
+            worksheet[f"{column_letter}{row_number}"].value = None if value in {None, ""} else value
+
+
+def _get_section_bounds(section_name: str, section_mapping: dict[str, Any]) -> tuple[int, int, dict[str, str]]:
+    """Return validated row bounds and column mapping for a variable list section."""
+    try:
+        start_row = int(section_mapping["start_row"])
+        end_row = int(section_mapping["end_row"])
+        raw_columns = section_mapping["columns"]
+    except KeyError as exc:
+        raise ValueError(
+            f"Recap template map for section '{section_name}' is missing required key '{exc.args[0]}'."
+        ) from exc
+
+    if end_row < start_row:
+        raise ValueError(
+            f"Recap template map for section '{section_name}' has an invalid row range {start_row}-{end_row}."
+        )
+    if not isinstance(raw_columns, dict) or not raw_columns:
+        raise ValueError(
+            f"Recap template map for section '{section_name}' must define one or more output columns."
+        )
+
+    columns = {
+        str(field_name): str(column_letter).strip().upper()
+        for field_name, column_letter in raw_columns.items()
+        if str(column_letter).strip()
+    }
+    if not columns:
+        raise ValueError(
+            f"Recap template map for section '{section_name}' does not contain any usable column mappings."
+        )
+
+    return start_row, end_row, columns
+
+
+def _is_zero(value: Any) -> bool:
+    """Return True when a numeric export value is effectively zero."""
+    try:
+        return float(value) == 0.0
+    except (TypeError, ValueError):
+        return False

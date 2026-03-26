@@ -30,6 +30,16 @@ class ConfigLoader:
     }
     _required_top_level_keys: ClassVar[dict[str, tuple[str, ...]]] = {
         "input_model": ("report_type", "section_headers"),
+        "recap_template_map": (
+            "worksheet_name",
+            "header_fields",
+            "labor_rows",
+            "equipment_rows",
+            "materials_section",
+            "subcontractors_section",
+            "permits_fees_section",
+            "police_detail_section",
+        ),
         "target_labor_classifications": ("classifications",),
         "target_equipment_classifications": ("classifications",),
     }
@@ -141,6 +151,20 @@ class ConfigLoader:
         if config_name == "input_model":
             self._validate_key_type(file_path, loaded_config, "report_type", str, "string")
             self._validate_key_type(file_path, loaded_config, "section_headers", dict, "object")
+        elif config_name == "recap_template_map":
+            if "default_template_path" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "default_template_path", str, "string")
+            self._validate_key_type(file_path, loaded_config, "worksheet_name", str, "string")
+            for key in (
+                "header_fields",
+                "labor_rows",
+                "equipment_rows",
+                "materials_section",
+                "subcontractors_section",
+                "permits_fees_section",
+                "police_detail_section",
+            ):
+                self._validate_key_type(file_path, loaded_config, key, dict, "object")
         elif config_name in {
             "target_labor_classifications",
             "target_equipment_classifications",

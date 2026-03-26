@@ -15,10 +15,13 @@ def validate_records(records: List[Record]) -> Tuple[List[Record], List[str]]:
     aggregate_blocking_issues: List[str] = []
 
     for record in records:
-        blocking_issues = get_record_blocking_issues(record)
-        validation_warnings = get_record_warnings(record)
+        base_warnings = _strip_existing_blocking_warnings(record.warnings)
+        evaluation_record = replace(record, warnings=base_warnings)
 
-        combined_warnings = list(record.warnings)
+        blocking_issues = get_record_blocking_issues(evaluation_record)
+        validation_warnings = get_record_warnings(evaluation_record)
+
+        combined_warnings = list(base_warnings)
         for warning in validation_warnings:
             _append_warning(combined_warnings, warning)
         for issue in blocking_issues:
@@ -41,6 +44,11 @@ def _format_record_reference(record: Record) -> str:
     phase_label = f"phase {record.phase_code}" if record.phase_code else "unknown phase"
     type_label = record.record_type_normalized or record.record_type or "unknown type"
     return f"Record on {page_label} ({phase_label}, {type_label})"
+
+
+def _strip_existing_blocking_warnings(warnings: List[str]) -> List[str]:
+    """Remove prior blocking markers so validation can be safely re-run."""
+    return [warning for warning in warnings if not warning.startswith("BLOCKING:")]
 
 
 def _append_warning(warnings: List[str], warning: str) -> None:

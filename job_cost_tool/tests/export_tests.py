@@ -1,0 +1,256 @@
+﻿"""Lightweight tests for recap export behavior."""
+
+from __future__ import annotations
+
+import shutil
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from openpyxl import Workbook, load_workbook
+
+import job_cost_tool.core.export.recap_mapper as recap_mapper
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
+from job_cost_tool.services.export_service import export_records_to_recap
+
+
+TEST_TEMPLATE_MAP = {
+    "worksheet_name": "Recap",
+    "header_fields": {
+        "project": {"cell": "B6"},
+        "description": {"cell": "B7"},
+        "prepared_by": {"cell": "B8"},
+        "job_number": {"cell": "G6"},
+        "date": {"cell": "G7"},
+        "report_or_co_number": {"cell": "G8"},
+    },
+    "labor_rows": {
+        "103 Journeyman": {"st_hours": "B14", "ot_hours": "C14", "dt_hours": "D14"},
+        "104 Apprentice": {"st_hours": "B22", "ot_hours": "C22", "dt_hours": "D22"},
+    },
+    "equipment_rows": {
+        "Pick-up Truck": {"hours_qty": "B32"},
+        "Utility Van": {"hours_qty": "B33"},
+    },
+    "materials_section": {
+        "start_row": 46,
+        "end_row": 52,
+        "columns": {"name": "A", "amount": "B"},
+    },
+    "subcontractors_section": {
+        "start_row": 46,
+        "end_row": 50,
+        "columns": {"name": "E", "description": "F", "amount": "G"},
+    },
+    "permits_fees_section": {
+        "start_row": 57,
+        "end_row": 58,
+        "columns": {"description": "A", "amount": "C"},
+    },
+    "police_detail_section": {
+        "start_row": 63,
+        "end_row": 64,
+        "columns": {"description": "A", "amount": "C"},
+    },
+}
+
+TARGET_LABOR = {"classifications": ["103 Journeyman", "104 Apprentice"]}
+TARGET_EQUIPMENT = {"classifications": ["Pick-up Truck", "Utility Van"]}
+TEST_TMP_ROOT = Path("job_cost_tool/tests/_tmp")
+
+
+class ExportWorkflowTests(unittest.TestCase):
+    """Verify recap export safety and repeatability."""
+
+    def setUp(self) -> None:
+        TEST_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+        self.temp_path = TEST_TMP_ROOT / self._testMethodName
+        shutil.rmtree(self.temp_path, ignore_errors=True)
+        self.temp_path.mkdir(parents=True, exist_ok=True)
+
+        self.template_path = self.temp_path / "template.xlsx"
+        self.output_path = self.temp_path / "output.xlsx"
+        self._create_template(self.template_path)
+
+        recap_mapper._get_target_labor_classifications.cache_clear()
+        recap_mapper._get_target_equipment_classifications.cache_clear()
+
+        self.recap_map_patch = patch(
+            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_recap_template_map",
+            return_value=TEST_TEMPLATE_MAP,
+        )
+        self.labor_patch = patch(
+            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_target_labor_classifications",
+            return_value=TARGET_LABOR,
+        )
+        self.equipment_patch = patch(
+            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_target_equipment_classifications",
+            return_value=TARGET_EQUIPMENT,
+        )
+        self.recap_map_patch.start()
+        self.labor_patch.start()
+        self.equipment_patch.start()
+
+        self.addCleanup(self.recap_map_patch.stop)
+        self.addCleanup(self.labor_patch.stop)
+        self.addCleanup(self.equipment_patch.stop)
+        self.addCleanup(recap_mapper._get_target_labor_classifications.cache_clear)
+        self.addCleanup(recap_mapper._get_target_equipment_classifications.cache_clear)
+        self.addCleanup(self._cleanup_temp_dir)
+
+    def test_export_fails_when_blockers_exist(self) -> None:
+        records = [self._labor_record(recap_classification=None)]
+
+        with self.assertRaisesRegex(ValueError, "Export blocked until all blocking issues are resolved"):
+            export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+    def test_export_succeeds_after_correction(self) -> None:
+        records = [
+            self._labor_record(recap_classification="103 Journeyman", hours=8),
+            self._equipment_record(category="Pick-up Truck", hours=2),
+            self._material_record(vendor="Vendor A", cost=100),
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["B6"].value, "Sample Project")
+        self.assertEqual(worksheet["G6"].value, "JOB-100")
+        self.assertEqual(worksheet["B14"].value, 8)
+        self.assertEqual(worksheet["B32"].value, 2)
+        self.assertEqual(worksheet["A46"].value, "Vendor A")
+        self.assertEqual(worksheet["B46"].value, 100)
+        self.assertEqual(worksheet["B53"].value, "=SUM(B46:B52)")
+
+    def test_export_fails_on_section_overflow(self) -> None:
+        records = [
+            self._material_record(vendor=f"Vendor {index}", cost=10 + index)
+            for index in range(8)
+        ]
+
+        with self.assertRaisesRegex(ValueError, "Material section exceeds template capacity"):
+            export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+    def test_export_fails_if_template_missing(self) -> None:
+        records = [self._labor_record(recap_classification="103 Journeyman")]
+        missing_template = self.temp_path / "missing-template.xlsx"
+
+        with self.assertRaisesRegex(FileNotFoundError, "Recap template workbook was not found"):
+            export_records_to_recap(records, str(missing_template), str(self.output_path))
+
+    def test_export_clears_previous_data_when_reused(self) -> None:
+        first_records = [
+            self._material_record(vendor="Vendor A", cost=100),
+            self._material_record(vendor="Vendor B", cost=200),
+        ]
+        second_records = [
+            self._material_record(vendor="Vendor C", cost=300),
+        ]
+
+        export_records_to_recap(first_records, str(self.template_path), str(self.output_path))
+        export_records_to_recap(second_records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["A46"].value, "Vendor C")
+        self.assertEqual(worksheet["B46"].value, 300)
+        self.assertIsNone(worksheet["A47"].value)
+        self.assertIsNone(worksheet["B47"].value)
+        self.assertEqual(worksheet["B53"].value, "=SUM(B46:B52)")
+
+    def _cleanup_temp_dir(self) -> None:
+        shutil.rmtree(self.temp_path, ignore_errors=True)
+
+    def _create_template(self, path: Path) -> None:
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Recap"
+
+        for cell in ["B6", "B7", "B8", "G6", "G7", "G8", "B14", "C14", "D14", "B22", "C22", "D22", "B32", "B33", "A46", "B46", "A47", "B47", "A48", "B48", "A49", "B49", "A50", "B50", "A51", "B51", "A52", "B52", "E46", "F46", "G46", "E47", "F47", "G47", "E48", "F48", "G48", "E49", "F49", "G49", "E50", "F50", "G50", "A57", "C57", "A58", "C58", "A63", "C63", "A64", "C64"]:
+            worksheet[cell] = None
+
+        worksheet["H23"] = "=SUM(H12:H22)"
+        worksheet["E42"] = "=SUM(E27:E41)"
+        worksheet["B53"] = "=SUM(B46:B52)"
+        worksheet["G51"] = "=SUM(G46:G50)"
+        worksheet["C59"] = "=SUM(C57:C58)"
+        worksheet["C65"] = "=SUM(C63:C64)"
+        workbook.save(path)
+
+    def _labor_record(self, recap_classification: str | None, hours: float = 8) -> Record:
+        return Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100,
+            hours=hours,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="J",
+            labor_class_normalized="J",
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="Labor source",
+            record_type_normalized=LABOR,
+            recap_labor_classification=recap_classification,
+            vendor_name_normalized=None,
+        )
+
+    def _equipment_record(self, category: str, hours: float = 2) -> Record:
+        return Record(
+            record_type=EQUIPMENT,
+            phase_code="31",
+            raw_description="Equipment line",
+            cost=50,
+            hours=hours,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="Pickup truck",
+            equipment_category=category,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="Equipment source",
+            record_type_normalized=EQUIPMENT,
+            recap_labor_classification=None,
+            vendor_name_normalized=None,
+        )
+
+    def _material_record(self, vendor: str, cost: float) -> Record:
+        return Record(
+            record_type=MATERIAL,
+            phase_code="50",
+            raw_description="Material line",
+            cost=cost,
+            hours=None,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=vendor,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="Material source",
+            record_type_normalized=MATERIAL,
+            recap_labor_classification=None,
+            vendor_name_normalized=vendor,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
