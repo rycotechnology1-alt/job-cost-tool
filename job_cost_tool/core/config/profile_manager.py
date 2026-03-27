@@ -164,6 +164,30 @@ class ProfileManager:
         metadata["is_active_profile"] = False
         return metadata
 
+    def delete_profile(self, profile_name: str) -> None:
+        """Delete a non-default, non-active profile directory safely."""
+        normalized_name = self._validate_profile_name(profile_name)
+        if normalized_name.casefold() == "default":
+            raise ValueError("Default profile cannot be deleted.")
+        if normalized_name == self.get_active_profile_name():
+            raise ValueError("Switch to another profile before deleting this one.")
+
+        profile_dir = self.get_profile_dir(normalized_name)
+        if profile_dir is None:
+            raise FileNotFoundError(
+                f"Profile '{normalized_name}' was not found under '{self._profiles_root}'."
+            )
+
+        try:
+            profile_dir.relative_to(self._profiles_root)
+        except ValueError as exc:
+            raise ValueError("Profile deletion target is outside the profiles directory.") from exc
+
+        try:
+            shutil.rmtree(profile_dir)
+        except Exception as exc:
+            raise ValueError(f"Failed to delete profile '{normalized_name}': {exc}") from exc
+
     def validate_profile_name(self, profile_name: str) -> str:
         """Validate and normalize a filesystem-safe profile name."""
         return self._validate_profile_name(profile_name)

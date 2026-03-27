@@ -173,6 +173,7 @@ class ReviewViewModel(QObject):
         if not allowed_updates:
             return
 
+        self._apply_slot_backed_updates(allowed_updates)
         self._review_records[index] = replace(self._review_records[index], **allowed_updates)
         self._revalidate_records()
         if self.selected_record not in self.filtered_records:
@@ -244,3 +245,30 @@ class ReviewViewModel(QObject):
         labor_options = [str(item) for item in labor_config.get("classifications", []) if str(item).strip()]
         equipment_options = [str(item) for item in equipment_config.get("classifications", []) if str(item).strip()]
         return labor_options, equipment_options
+
+    def _apply_slot_backed_updates(self, allowed_updates: dict[str, object]) -> None:
+        """Resolve stable slot ids for edited labor and equipment selections."""
+        try:
+            loader = ConfigLoader()
+        except Exception:
+            return
+
+        if "recap_labor_classification" in allowed_updates:
+            label = str(allowed_updates.get("recap_labor_classification") or "").strip()
+            if not label:
+                allowed_updates["recap_labor_slot_id"] = None
+            else:
+                slot = loader.get_labor_slot_lookup().get(label.casefold())
+                allowed_updates["recap_labor_slot_id"] = (
+                    str(slot.get("slot_id") or "").strip() if isinstance(slot, dict) else None
+                ) or None
+
+        if "equipment_category" in allowed_updates:
+            label = str(allowed_updates.get("equipment_category") or "").strip()
+            if not label:
+                allowed_updates["recap_equipment_slot_id"] = None
+            else:
+                slot = loader.get_equipment_slot_lookup().get(label.casefold())
+                allowed_updates["recap_equipment_slot_id"] = (
+                    str(slot.get("slot_id") or "").strip() if isinstance(slot, dict) else None
+                ) or None

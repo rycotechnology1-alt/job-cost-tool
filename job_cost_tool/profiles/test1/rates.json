@@ -1,0 +1,20 @@
+{
+  "labor_rates": {
+    "103 General FM": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "Big Boy": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    },
+    "103 Journeyman": {
+      "standard_rate": 1.0,
+      "overtime_rate": 1.0,
+      "double_time_rate": 1.0
+    }
+  },
+  "equipment_rates": {}
+}

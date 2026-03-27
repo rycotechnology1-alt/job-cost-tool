@@ -41,13 +41,26 @@ class SettingsDialog(QDialog):
         self._profiles_table = QTableWidget(0, 3)
         self._set_active_button = QPushButton("Set Active Profile")
         self._duplicate_button = QPushButton("Duplicate Profile")
+        self._delete_button = QPushButton("Delete Profile")
 
         self._labor_mapping_table = QTableWidget(0, 3)
         self._equipment_mapping_table = QTableWidget(0, 2)
-        self._labor_classifications_table = QTableWidget(0, 1)
-        self._equipment_classifications_table = QTableWidget(0, 1)
+        self._labor_classifications_table = QTableWidget(0, 3)
+        self._equipment_classifications_table = QTableWidget(0, 3)
         self._labor_rates_table = QTableWidget(0, 4)
         self._equipment_rates_table = QTableWidget(0, 2)
+        self._labor_mapping_status_label = QLabel()
+        self._equipment_mapping_status_label = QLabel()
+        self._classification_status_label = QLabel()
+        self._rates_status_label = QLabel()
+        self._labor_mapping_add_button = QPushButton("Add")
+        self._labor_mapping_remove_button = QPushButton("Remove")
+        self._labor_mapping_save_button = QPushButton("Save")
+        self._equipment_mapping_add_button = QPushButton("Add")
+        self._equipment_mapping_remove_button = QPushButton("Remove")
+        self._equipment_mapping_save_button = QPushButton("Save")
+        self._save_classifications_button = QPushButton("Save Classifications")
+        self._save_rates_button = QPushButton("Save Rates")
 
         self._configure_window()
         self._build_layout()
@@ -113,6 +126,7 @@ class SettingsDialog(QDialog):
         actions_layout = QHBoxLayout()
         actions_layout.addWidget(self._set_active_button)
         actions_layout.addWidget(self._duplicate_button)
+        actions_layout.addWidget(self._delete_button)
         actions_layout.addStretch(1)
 
         layout.addWidget(summary_group)
@@ -133,12 +147,18 @@ class SettingsDialog(QDialog):
         self._labor_mapping_table.setColumnWidth(1, 260)
         self._labor_mapping_table.horizontalHeader().setStretchLastSection(True)
 
-        actions = self._build_editor_actions(
-            add_handler=lambda: self._add_labor_mapping_row(),
-            remove_handler=lambda: self._remove_selected_rows(self._labor_mapping_table),
-            save_handler=self._save_labor_mappings,
-        )
+        self._labor_mapping_status_label.setWordWrap(True)
+        self._labor_mapping_add_button.clicked.connect(self._add_labor_mapping_row)
+        self._labor_mapping_remove_button.clicked.connect(lambda: self._remove_selected_rows(self._labor_mapping_table))
+        self._labor_mapping_save_button.clicked.connect(self._save_labor_mappings)
 
+        actions = QHBoxLayout()
+        actions.addWidget(self._labor_mapping_add_button)
+        actions.addWidget(self._labor_mapping_remove_button)
+        actions.addStretch(1)
+        actions.addWidget(self._labor_mapping_save_button)
+
+        layout.addWidget(self._labor_mapping_status_label)
         layout.addWidget(self._labor_mapping_table, stretch=1)
         layout.addLayout(actions)
         return tab
@@ -155,45 +175,49 @@ class SettingsDialog(QDialog):
         self._equipment_mapping_table.setColumnWidth(0, 360)
         self._equipment_mapping_table.horizontalHeader().setStretchLastSection(True)
 
-        actions = self._build_editor_actions(
-            add_handler=lambda: self._add_equipment_mapping_row(),
-            remove_handler=lambda: self._remove_selected_rows(self._equipment_mapping_table),
-            save_handler=self._save_equipment_mappings,
-        )
+        self._equipment_mapping_status_label.setWordWrap(True)
+        self._equipment_mapping_add_button.clicked.connect(self._add_equipment_mapping_row)
+        self._equipment_mapping_remove_button.clicked.connect(lambda: self._remove_selected_rows(self._equipment_mapping_table))
+        self._equipment_mapping_save_button.clicked.connect(self._save_equipment_mappings)
 
+        actions = QHBoxLayout()
+        actions.addWidget(self._equipment_mapping_add_button)
+        actions.addWidget(self._equipment_mapping_remove_button)
+        actions.addStretch(1)
+        actions.addWidget(self._equipment_mapping_save_button)
+
+        layout.addWidget(self._equipment_mapping_status_label)
         layout.addWidget(self._equipment_mapping_table, stretch=1)
         layout.addLayout(actions)
         return tab
 
     def _build_classifications_tab(self) -> QWidget:
-        """Build the target classifications editor tab."""
+        """Build the fixed-slot classifications editor tab."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
+        self._classification_status_label.setWordWrap(True)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_classification_group(
-            title="Labor Classifications",
+            title="Labor Slots",
             table=self._labor_classifications_table,
-            add_handler=lambda: self._add_simple_row(self._labor_classifications_table),
-            remove_handler=lambda: self._remove_selected_rows(self._labor_classifications_table),
         ))
         splitter.addWidget(self._build_classification_group(
-            title="Equipment Classifications",
+            title="Equipment Slots",
             table=self._equipment_classifications_table,
-            add_handler=lambda: self._add_simple_row(self._equipment_classifications_table),
-            remove_handler=lambda: self._remove_selected_rows(self._equipment_classifications_table),
         ))
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
 
-        save_button = QPushButton("Save Classifications")
-        save_button.clicked.connect(self._save_classifications)
+        self._save_classifications_button.clicked.connect(self._save_classifications)
         save_row = QHBoxLayout()
         save_row.addStretch(1)
-        save_row.addWidget(save_button)
+        save_row.addWidget(self._save_classifications_button)
 
+        layout.addWidget(self._classification_status_label)
         layout.addWidget(splitter, stretch=1)
         layout.addLayout(save_row)
         return tab
@@ -221,12 +245,13 @@ class SettingsDialog(QDialog):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
 
-        save_button = QPushButton("Save Rates")
-        save_button.clicked.connect(self._save_rates)
+        self._rates_status_label.setWordWrap(True)
+        self._save_rates_button.clicked.connect(self._save_rates)
         save_row = QHBoxLayout()
         save_row.addStretch(1)
-        save_row.addWidget(save_button)
+        save_row.addWidget(self._save_rates_button)
 
+        layout.addWidget(self._rates_status_label)
         layout.addWidget(splitter, stretch=1)
         layout.addLayout(save_row)
         return tab
@@ -235,18 +260,18 @@ class SettingsDialog(QDialog):
         self,
         title: str,
         table: QTableWidget,
-        add_handler,
-        remove_handler,
     ) -> QWidget:
-        """Build a classification editor group."""
+        """Build a fixed-slot classification editor group."""
         group = QGroupBox(title)
         layout = QVBoxLayout(group)
-        table.setHorizontalHeaderLabels(["Label"])
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(["Slot", "Label", "Active"])
         self._configure_table(table)
-        table.horizontalHeader().setStretchLastSection(True)
-        actions = self._build_editor_actions(add_handler, remove_handler, None)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        table.setColumnWidth(0, 80)
+        table.setColumnWidth(1, 240)
+        table.horizontalHeader().setStretchLastSection(False)
         layout.addWidget(table)
-        layout.addLayout(actions)
         return group
 
     def _build_rates_group(
@@ -290,6 +315,7 @@ class SettingsDialog(QDialog):
         self._profiles_table.itemSelectionChanged.connect(self._update_action_state)
         self._set_active_button.clicked.connect(self._set_active_profile)
         self._duplicate_button.clicked.connect(self._duplicate_profile)
+        self._delete_button.clicked.connect(self._delete_profile)
 
     def _refresh_ui(self) -> None:
         """Refresh summary, available profiles, and editor tabs from the view-model."""
@@ -299,6 +325,7 @@ class SettingsDialog(QDialog):
         self._refresh_equipment_mapping_table()
         self._refresh_classifications_tables()
         self._refresh_rates_tables()
+        self._update_editor_states()
         self._update_action_state()
 
     def _refresh_profile_summary(self) -> None:
@@ -368,9 +395,10 @@ class SettingsDialog(QDialog):
             )
 
     def _refresh_classifications_tables(self) -> None:
-        """Refresh labor and equipment classification lists."""
-        self._populate_single_column_table(self._labor_classifications_table, self._view_model.labor_classifications)
-        self._populate_single_column_table(self._equipment_classifications_table, self._view_model.equipment_classifications)
+        """Refresh labor and equipment fixed slot tables."""
+        self._populate_slot_table(self._labor_classifications_table, self._view_model.labor_slots)
+        self._populate_slot_table(self._equipment_classifications_table, self._view_model.equipment_slots)
+        self._update_classification_editor_state()
 
     def _refresh_rates_tables(self) -> None:
         """Refresh labor and equipment rate tables."""
@@ -438,6 +466,52 @@ class SettingsDialog(QDialog):
         QMessageBox.information(self, "Profile Created", message)
         self.settings_changed.emit()
 
+    def _delete_profile(self) -> None:
+        """Delete the currently selected non-default, non-active profile after confirmation."""
+        profile_name = self._selected_profile_name()
+        if not profile_name:
+            return
+
+        selected_profile = next(
+            (profile for profile in self._view_model.profiles if profile.get("profile_name") == profile_name),
+            None,
+        )
+        if selected_profile is None:
+            QMessageBox.critical(self, "Profile Error", "The selected profile could not be found.")
+            return
+
+        if str(selected_profile.get("profile_name", "")).strip().casefold() == "default":
+            QMessageBox.information(self, "Delete Not Allowed", "Default profile cannot be deleted.")
+            return
+
+        if bool(selected_profile.get("is_active_profile")):
+            QMessageBox.information(
+                self,
+                "Delete Not Allowed",
+                "Switch to another profile before deleting this one.",
+            )
+            return
+
+        display_name = str(selected_profile.get("display_name", profile_name)).strip() or profile_name
+        confirmation = QMessageBox.question(
+            self,
+            "Delete Profile",
+            f"Delete profile '{display_name}'? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            message = self._view_model.delete_profile(profile_name)
+        except Exception as exc:
+            QMessageBox.critical(self, "Profile Error", str(exc))
+            return
+
+        QMessageBox.information(self, "Profile Deleted", message)
+        self.settings_changed.emit()
+
     def _save_labor_mappings(self) -> None:
         """Validate and persist labor mapping edits."""
         rows = []
@@ -483,13 +557,13 @@ class SettingsDialog(QDialog):
         )
 
     def _save_classifications(self) -> None:
-        """Validate and persist classification list edits."""
-        labor_values = self._collect_single_column_values(self._labor_classifications_table)
-        equipment_values = self._collect_single_column_values(self._equipment_classifications_table)
+        """Validate and persist fixed slot edits."""
+        labor_slots = self._collect_slot_rows(self._labor_classifications_table)
+        equipment_slots = self._collect_slot_rows(self._equipment_classifications_table)
         self._run_save_action(
-            self._view_model.save_classifications,
-            labor_values,
-            equipment_values,
+            self._view_model.save_classification_slots,
+            labor_slots,
+            equipment_slots,
             success_title="Classifications Saved",
         )
 
@@ -535,6 +609,7 @@ class SettingsDialog(QDialog):
         has_selection = bool(selected_profile_name)
         self._set_active_button.setEnabled(has_selection and selected_profile_name != active_profile_name)
         self._duplicate_button.setEnabled(has_selection)
+        self._delete_button.setEnabled(has_selection)
 
     def _selected_profile_name(self) -> Optional[str]:
         """Return the currently selected profile name from the table."""
@@ -582,11 +657,185 @@ class SettingsDialog(QDialog):
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.horizontalHeader().setStretchLastSection(True)
 
-    def _populate_single_column_table(self, table: QTableWidget, values: list[str]) -> None:
-        """Populate a one-column editable list table."""
-        table.setRowCount(len(values))
-        for row_index, value in enumerate(values):
-            table.setItem(row_index, 0, QTableWidgetItem(value))
+    def _populate_slot_table(self, table: QTableWidget, slots: list[dict[str, object]]) -> None:
+        """Populate a fixed-slot classification table."""
+        table.setRowCount(len(slots))
+        for row_index, slot in enumerate(slots):
+            slot_id = str(slot.get("slot_id", "")).strip()
+            order_item = QTableWidgetItem(str(row_index + 1))
+            order_item.setData(Qt.ItemDataRole.UserRole, slot_id)
+            order_item.setToolTip(slot_id)
+            order_item.setFlags(order_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row_index, 0, order_item)
+
+            label_item = QTableWidgetItem(str(slot.get("label", "")))
+            table.setItem(row_index, 1, label_item)
+
+            active_item = QTableWidgetItem("")
+            active_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsUserCheckable
+            )
+            active_item.setCheckState(
+                Qt.CheckState.Checked if bool(slot.get("active")) else Qt.CheckState.Unchecked
+            )
+            table.setItem(row_index, 2, active_item)
+
+    def _update_editor_states(self) -> None:
+        """Apply default-profile read-only state across all editable admin tabs."""
+        self._update_mapping_editor_state(
+            table=self._labor_mapping_table,
+            status_label=self._labor_mapping_status_label,
+            add_button=self._labor_mapping_add_button,
+            remove_button=self._labor_mapping_remove_button,
+            save_button=self._labor_mapping_save_button,
+            editable_columns={0, 2},
+        )
+        self._update_mapping_editor_state(
+            table=self._equipment_mapping_table,
+            status_label=self._equipment_mapping_status_label,
+            add_button=self._equipment_mapping_add_button,
+            remove_button=self._equipment_mapping_remove_button,
+            save_button=self._equipment_mapping_save_button,
+            editable_columns={0},
+        )
+        self._update_classification_editor_state()
+        self._update_rates_editor_state()
+
+    def _update_mapping_editor_state(
+        self,
+        *,
+        table: QTableWidget,
+        status_label: QLabel,
+        add_button: QPushButton,
+        remove_button: QPushButton,
+        save_button: QPushButton,
+        editable_columns: set[int],
+    ) -> None:
+        """Apply read-only state for a mapping editor table."""
+        is_read_only = self._view_model.is_default_profile
+        status_label.setText(
+            self._view_model.read_only_message if is_read_only else "Edit mappings for the active profile."
+        )
+        add_button.setEnabled(not is_read_only)
+        remove_button.setEnabled(not is_read_only)
+        save_button.setEnabled(not is_read_only)
+        if is_read_only:
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        else:
+            table.setEditTriggers(
+                QAbstractItemView.EditTrigger.DoubleClicked
+                | QAbstractItemView.EditTrigger.EditKeyPressed
+                | QAbstractItemView.EditTrigger.SelectedClicked
+            )
+        self._set_table_item_editability(table, editable_columns, not is_read_only)
+        self._set_table_combo_widgets_enabled(table, not is_read_only)
+
+    def _update_rates_editor_state(self) -> None:
+        """Apply read-only state for the rates editors."""
+        is_read_only = self._view_model.is_default_profile
+        self._rates_status_label.setText(
+            self._view_model.read_only_message if is_read_only else "Edit rates for the active profile."
+        )
+        self._save_rates_button.setEnabled(not is_read_only)
+        for table, editable_columns in (
+            (self._labor_rates_table, {1, 2, 3}),
+            (self._equipment_rates_table, {1}),
+        ):
+            if is_read_only:
+                table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            else:
+                table.setEditTriggers(
+                    QAbstractItemView.EditTrigger.DoubleClicked
+                    | QAbstractItemView.EditTrigger.EditKeyPressed
+                    | QAbstractItemView.EditTrigger.SelectedClicked
+                )
+            self._set_table_item_editability(table, editable_columns, not is_read_only)
+
+    def _set_table_item_editability(self, table: QTableWidget, editable_columns: set[int], editable: bool) -> None:
+        """Toggle edit flags for existing table items by column."""
+        for row_index in range(table.rowCount()):
+            for column_index in range(table.columnCount()):
+                item = table.item(row_index, column_index)
+                if item is None:
+                    continue
+                flags = item.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+                if column_index in editable_columns and editable:
+                    flags |= Qt.ItemFlag.ItemIsEditable
+                else:
+                    flags &= ~Qt.ItemFlag.ItemIsEditable
+                item.setFlags(flags)
+
+    def _set_table_combo_widgets_enabled(self, table: QTableWidget, enabled: bool) -> None:
+        """Toggle enabled state for combo-box cell widgets in a table."""
+        for row_index in range(table.rowCount()):
+            for column_index in range(table.columnCount()):
+                widget = table.cellWidget(row_index, column_index)
+                if widget is not None:
+                    widget.setEnabled(enabled)
+
+    def _update_classification_editor_state(self) -> None:
+        """Apply read-only messaging and enabled state for classification slots."""
+        is_read_only = self._view_model.is_default_profile
+        if is_read_only:
+            self._classification_status_label.setText(self._view_model.read_only_message)
+        else:
+            self._classification_status_label.setText(
+                "Edit fixed recap slot labels and active states for this profile."
+            )
+
+        self._save_classifications_button.setEnabled(not is_read_only)
+        self._set_slot_table_read_only(self._labor_classifications_table, is_read_only)
+        self._set_slot_table_read_only(self._equipment_classifications_table, is_read_only)
+
+    def _set_slot_table_read_only(self, table: QTableWidget, is_read_only: bool) -> None:
+        """Toggle slot table editability without changing its visible fixed rows."""
+        if is_read_only:
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        else:
+            table.setEditTriggers(
+                QAbstractItemView.EditTrigger.DoubleClicked
+                | QAbstractItemView.EditTrigger.EditKeyPressed
+                | QAbstractItemView.EditTrigger.SelectedClicked
+            )
+
+        for row_index in range(table.rowCount()):
+            label_item = table.item(row_index, 1)
+            if label_item is not None:
+                flags = label_item.flags() | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+                if is_read_only:
+                    flags &= ~Qt.ItemFlag.ItemIsEditable
+                else:
+                    flags |= Qt.ItemFlag.ItemIsEditable
+                label_item.setFlags(flags)
+
+            active_item = table.item(row_index, 2)
+            if active_item is not None:
+                if is_read_only:
+                    active_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+                else:
+                    active_item.setFlags(
+                        Qt.ItemFlag.ItemIsEnabled
+                        | Qt.ItemFlag.ItemIsSelectable
+                        | Qt.ItemFlag.ItemIsUserCheckable
+                    )
+
+    def _collect_slot_rows(self, table: QTableWidget) -> list[dict[str, object]]:
+        """Collect edited slot rows from a fixed-slot classification table."""
+        rows: list[dict[str, object]] = []
+        for row_index in range(table.rowCount()):
+            slot_item = table.item(row_index, 0)
+            label_item = table.item(row_index, 1)
+            active_item = table.item(row_index, 2)
+            rows.append(
+                {
+                    "slot_id": str(slot_item.data(Qt.ItemDataRole.UserRole)) if slot_item else "",
+                    "label": label_item.text().strip() if label_item else "",
+                    "active": bool(active_item and active_item.checkState() == Qt.CheckState.Checked),
+                }
+            )
+        return rows
 
     def _set_combo_cell(
         self,
@@ -608,15 +857,6 @@ class SettingsDialog(QDialog):
         item = QTableWidgetItem(value)
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         table.setItem(row_index, column_index, item)
-
-    def _collect_single_column_values(self, table: QTableWidget) -> list[str]:
-        """Collect non-empty values from a single-column editable table."""
-        values: list[str] = []
-        for row_index in range(table.rowCount()):
-            text = self._item_text(table, row_index, 0)
-            if text:
-                values.append(text)
-        return values
 
     def _item_text(self, table: QTableWidget, row_index: int, column_index: int) -> str:
         """Return table item text safely."""

@@ -1,4 +1,4 @@
-﻿{
+{
   "phase_defaults": {
     "20": "103",
     "21": "104"
@@ -42,5 +42,7 @@
       "APP": "104 Apprentice"
     }
   },
-  "apprentice_aliases": ["APP"]
+  "apprentice_aliases": [
+    "APP"
+  ]
 }

@@ -1,4 +1,4 @@
-﻿"""Lightweight tests for recap export behavior."""
+"""Lightweight tests for recap export behavior."""
 
 from __future__ import annotations
 
@@ -26,12 +26,26 @@ TEST_TEMPLATE_MAP = {
         "report_or_co_number": {"cell": "G8"},
     },
     "labor_rows": {
-        "103 Journeyman": {"st_hours": "B14", "ot_hours": "C14", "dt_hours": "D14"},
-        "104 Apprentice": {"st_hours": "B22", "ot_hours": "C22", "dt_hours": "D22"},
+        "103 Journeyman": {
+            "st_hours": "B14",
+            "ot_hours": "C14",
+            "dt_hours": "D14",
+            "st_rate": "E14",
+            "ot_rate": "F14",
+            "dt_rate": "G14",
+        },
+        "104 Apprentice": {
+            "st_hours": "B22",
+            "ot_hours": "C22",
+            "dt_hours": "D22",
+            "st_rate": "E22",
+            "ot_rate": "F22",
+            "dt_rate": "G22",
+        },
     },
     "equipment_rows": {
-        "Pick-up Truck": {"hours_qty": "B32"},
-        "Utility Van": {"hours_qty": "B33"},
+        "Pick-up Truck": {"hours_qty": "B32", "rate": "D32"},
+        "Utility Van": {"hours_qty": "B33", "rate": "D33"},
     },
     "materials_section": {
         "start_row": 46,
@@ -55,8 +69,62 @@ TEST_TEMPLATE_MAP = {
     },
 }
 
-TARGET_LABOR = {"classifications": ["103 Journeyman", "104 Apprentice"]}
-TARGET_EQUIPMENT = {"classifications": ["Pick-up Truck", "Utility Van"]}
+TEST_LABOR_SLOT_CONFIG = {
+    "slots": [
+        {"slot_id": "labor_1", "label": "103 Journeyman", "active": True},
+        {"slot_id": "labor_2", "label": "104 Apprentice", "active": True},
+    ],
+    "classifications": ["103 Journeyman", "104 Apprentice"],
+}
+TEST_EQUIPMENT_SLOT_CONFIG = {
+    "slots": [
+        {"slot_id": "equipment_1", "label": "Pick-up Truck", "active": True},
+        {"slot_id": "equipment_2", "label": "Utility Van", "active": True},
+    ],
+    "classifications": ["Pick-up Truck", "Utility Van"],
+}
+TEST_LABOR_ROW_SLOTS = {
+    "labor_1": {
+        "slot_id": "labor_1",
+        "label": "103 Journeyman",
+        "active": True,
+        "template_label": "103 Journeyman",
+        "mapping": TEST_TEMPLATE_MAP["labor_rows"]["103 Journeyman"],
+    },
+    "labor_2": {
+        "slot_id": "labor_2",
+        "label": "104 Apprentice",
+        "active": True,
+        "template_label": "104 Apprentice",
+        "mapping": TEST_TEMPLATE_MAP["labor_rows"]["104 Apprentice"],
+    },
+}
+TEST_EQUIPMENT_ROW_SLOTS = {
+    "equipment_1": {
+        "slot_id": "equipment_1",
+        "label": "Pick-up Truck",
+        "active": True,
+        "template_label": "Pick-up Truck",
+        "mapping": TEST_TEMPLATE_MAP["equipment_rows"]["Pick-up Truck"],
+    },
+    "equipment_2": {
+        "slot_id": "equipment_2",
+        "label": "Utility Van",
+        "active": True,
+        "template_label": "Utility Van",
+        "mapping": TEST_TEMPLATE_MAP["equipment_rows"]["Utility Van"],
+    },
+}
+TARGET_RATES = {
+    "labor_rates": {
+        "103 Journeyman": {"standard_rate": 199.5, "overtime_rate": 299.25, "double_time_rate": 399.0},
+        "104 Apprentice": {"standard_rate": 150.0, "overtime_rate": 225.0, "double_time_rate": 300.0},
+    },
+    "equipment_rates": {
+        "Pick-up Truck": {"rate": 88.0},
+        "Utility Van": {"rate": 44.5},
+    },
+}
 TEST_TMP_ROOT = Path("job_cost_tool/tests/_tmp")
 
 
@@ -75,28 +143,56 @@ class ExportWorkflowTests(unittest.TestCase):
 
         recap_mapper._get_target_labor_classifications.cache_clear()
         recap_mapper._get_target_equipment_classifications.cache_clear()
+        recap_mapper._get_active_labor_slots.cache_clear()
+        recap_mapper._get_active_equipment_slots.cache_clear()
+        recap_mapper._get_active_labor_slot_lookup.cache_clear()
+        recap_mapper._get_active_equipment_slot_lookup.cache_clear()
+        recap_mapper._get_rates.cache_clear()
 
         self.recap_map_patch = patch(
             "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_recap_template_map",
             return_value=TEST_TEMPLATE_MAP,
         )
+        self.labor_row_slots_patch = patch(
+            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_labor_row_slots",
+            return_value=TEST_LABOR_ROW_SLOTS,
+        )
+        self.equipment_row_slots_patch = patch(
+            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_equipment_row_slots",
+            return_value=TEST_EQUIPMENT_ROW_SLOTS,
+        )
         self.labor_patch = patch(
             "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_target_labor_classifications",
-            return_value=TARGET_LABOR,
+            return_value=TEST_LABOR_SLOT_CONFIG,
         )
         self.equipment_patch = patch(
             "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_target_equipment_classifications",
-            return_value=TARGET_EQUIPMENT,
+            return_value=TEST_EQUIPMENT_SLOT_CONFIG,
+        )
+        self.rates_patch = patch(
+            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_rates",
+            return_value=TARGET_RATES,
         )
         self.recap_map_patch.start()
+        self.labor_row_slots_patch.start()
+        self.equipment_row_slots_patch.start()
         self.labor_patch.start()
         self.equipment_patch.start()
+        self.rates_patch.start()
 
         self.addCleanup(self.recap_map_patch.stop)
+        self.addCleanup(self.labor_row_slots_patch.stop)
+        self.addCleanup(self.equipment_row_slots_patch.stop)
         self.addCleanup(self.labor_patch.stop)
         self.addCleanup(self.equipment_patch.stop)
+        self.addCleanup(self.rates_patch.stop)
         self.addCleanup(recap_mapper._get_target_labor_classifications.cache_clear)
         self.addCleanup(recap_mapper._get_target_equipment_classifications.cache_clear)
+        self.addCleanup(recap_mapper._get_active_labor_slots.cache_clear)
+        self.addCleanup(recap_mapper._get_active_equipment_slots.cache_clear)
+        self.addCleanup(recap_mapper._get_active_labor_slot_lookup.cache_clear)
+        self.addCleanup(recap_mapper._get_active_equipment_slot_lookup.cache_clear)
+        self.addCleanup(recap_mapper._get_rates.cache_clear)
         self.addCleanup(self._cleanup_temp_dir)
 
     def test_export_fails_when_blockers_exist(self) -> None:
@@ -107,8 +203,8 @@ class ExportWorkflowTests(unittest.TestCase):
 
     def test_export_succeeds_after_correction(self) -> None:
         records = [
-            self._labor_record(recap_classification="103 Journeyman", hours=8),
-            self._equipment_record(category="Pick-up Truck", hours=2),
+            self._labor_record(recap_classification="103 Journeyman", recap_slot_id="labor_1", hours=8),
+            self._equipment_record(category="Pick-up Truck", recap_slot_id="equipment_1", hours=2),
             self._material_record(vendor="Vendor A", cost=100),
         ]
 
@@ -118,10 +214,64 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["B6"].value, "Sample Project")
         self.assertEqual(worksheet["G6"].value, "JOB-100")
         self.assertEqual(worksheet["B14"].value, 8)
+        self.assertEqual(worksheet["E14"].value, 199.5)
+        self.assertEqual(worksheet["F14"].value, 299.25)
+        self.assertEqual(worksheet["G14"].value, 399)
         self.assertEqual(worksheet["B32"].value, 2)
+        self.assertEqual(worksheet["D32"].value, 88)
         self.assertEqual(worksheet["A46"].value, "Vendor A")
         self.assertEqual(worksheet["B46"].value, 100)
         self.assertEqual(worksheet["B53"].value, "=SUM(B46:B52)")
+
+    def test_export_uses_slot_rows_after_profile_label_rename(self) -> None:
+        renamed_labor_slot_config = {
+            "slots": [
+                {"slot_id": "labor_1", "label": "Big Boy", "active": True},
+                {"slot_id": "labor_2", "label": "104 Apprentice", "active": True},
+            ],
+            "classifications": ["Big Boy", "104 Apprentice"],
+        }
+        renamed_labor_row_slots = {
+            **TEST_LABOR_ROW_SLOTS,
+            "labor_1": {
+                "slot_id": "labor_1",
+                "label": "Big Boy",
+                "active": True,
+                "template_label": "103 Journeyman",
+                "mapping": TEST_TEMPLATE_MAP["labor_rows"]["103 Journeyman"],
+            },
+        }
+        renamed_rates = {
+            **TARGET_RATES,
+            "labor_rates": {
+                "Big Boy": {"standard_rate": 210.0, "overtime_rate": 315.0, "double_time_rate": 420.0},
+                "104 Apprentice": TARGET_RATES["labor_rates"]["104 Apprentice"],
+            },
+        }
+
+        with patch(
+            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_target_labor_classifications",
+            return_value=renamed_labor_slot_config,
+        ), patch(
+            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_rates",
+            return_value=renamed_rates,
+        ), patch(
+            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_labor_row_slots",
+            return_value=renamed_labor_row_slots,
+        ):
+            recap_mapper._get_target_labor_classifications.cache_clear()
+            recap_mapper._get_active_labor_slots.cache_clear()
+            recap_mapper._get_active_labor_slot_lookup.cache_clear()
+            recap_mapper._get_rates.cache_clear()
+
+            records = [self._labor_record(recap_classification="Big Boy", recap_slot_id="labor_1", hours=8)]
+            export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["B14"].value, 8)
+        self.assertEqual(worksheet["E14"].value, 210)
+        self.assertEqual(worksheet["F14"].value, 315)
+        self.assertEqual(worksheet["G14"].value, 420)
 
     def test_export_fails_on_section_overflow(self) -> None:
         records = [
@@ -132,8 +282,29 @@ class ExportWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Material section exceeds template capacity"):
             export_records_to_recap(records, str(self.template_path), str(self.output_path))
 
+    def test_export_fails_if_rate_target_cell_mapping_is_missing(self) -> None:
+        broken_labor_row_slots = {
+            **TEST_LABOR_ROW_SLOTS,
+            "labor_1": {
+                **TEST_LABOR_ROW_SLOTS["labor_1"],
+                "mapping": {
+                    key: value
+                    for key, value in TEST_LABOR_ROW_SLOTS["labor_1"]["mapping"].items()
+                    if key != "st_rate"
+                },
+            },
+        }
+
+        with patch(
+            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_labor_row_slots",
+            return_value=broken_labor_row_slots,
+        ):
+            records = [self._labor_record(recap_classification="103 Journeyman", recap_slot_id="labor_1", hours=8)]
+            with self.assertRaisesRegex(ValueError, "missing 'st_rate'"):
+                export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
     def test_export_fails_if_template_missing(self) -> None:
-        records = [self._labor_record(recap_classification="103 Journeyman")]
+        records = [self._labor_record(recap_classification="103 Journeyman", recap_slot_id="labor_1")]
         missing_template = self.temp_path / "missing-template.xlsx"
 
         with self.assertRaisesRegex(FileNotFoundError, "Recap template workbook was not found"):
@@ -182,7 +353,7 @@ class ExportWorkflowTests(unittest.TestCase):
         worksheet = workbook.active
         worksheet.title = "Recap"
 
-        for cell in ["B6", "B7", "B8", "G6", "G7", "G8", "B14", "C14", "D14", "B22", "C22", "D22", "B32", "B33", "A46", "B46", "A47", "B47", "A48", "B48", "A49", "B49", "A50", "B50", "A51", "B51", "A52", "B52", "E46", "F46", "G46", "E47", "F47", "G47", "E48", "F48", "G48", "E49", "F49", "G49", "E50", "F50", "G50", "A57", "C57", "A58", "C58", "A63", "C63", "A64", "C64"]:
+        for cell in ["B6", "B7", "B8", "G6", "G7", "G8", "B14", "C14", "D14", "E14", "F14", "G14", "B22", "C22", "D22", "E22", "F22", "G22", "B32", "D32", "B33", "D33", "A46", "B46", "A47", "B47", "A48", "B48", "A49", "B49", "A50", "B50", "A51", "B51", "A52", "B52", "E46", "F46", "G46", "E47", "F47", "G47", "E48", "F48", "G48", "E49", "F49", "G49", "E50", "F50", "G50", "A57", "C57", "A58", "C58", "A63", "C63", "A64", "C64"]:
             worksheet[cell] = None
 
         worksheet["H23"] = "=SUM(H12:H22)"
@@ -193,7 +364,13 @@ class ExportWorkflowTests(unittest.TestCase):
         worksheet["C65"] = "=SUM(C63:C64)"
         workbook.save(path)
 
-    def _labor_record(self, recap_classification: str | None, hours: float = 8, is_omitted: bool = False) -> Record:
+    def _labor_record(
+        self,
+        recap_classification: str | None,
+        hours: float = 8,
+        is_omitted: bool = False,
+        recap_slot_id: str | None = None,
+    ) -> Record:
         return Record(
             record_type=LABOR,
             phase_code="20",
@@ -214,12 +391,13 @@ class ExportWorkflowTests(unittest.TestCase):
             source_page=1,
             source_line_text="Labor source",
             record_type_normalized=LABOR,
+            recap_labor_slot_id=recap_slot_id,
             recap_labor_classification=recap_classification,
             vendor_name_normalized=None,
             is_omitted=is_omitted,
         )
 
-    def _equipment_record(self, category: str, hours: float = 2) -> Record:
+    def _equipment_record(self, category: str, hours: float = 2, recap_slot_id: str | None = None) -> Record:
         return Record(
             record_type=EQUIPMENT,
             phase_code="31",
@@ -241,6 +419,7 @@ class ExportWorkflowTests(unittest.TestCase):
             source_line_text="Equipment source",
             record_type_normalized=EQUIPMENT,
             recap_labor_classification=None,
+            recap_equipment_slot_id=recap_slot_id,
             vendor_name_normalized=None,
         )
 

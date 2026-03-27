@@ -43,11 +43,10 @@
       "8H APP": "103 Apprentice",
       "9I APP": "103 Apprentice",
       "APPRENTICE": "103 Apprentice",
-      "F": "103 Big Boy",
-      "FOREMAN": "103 Big Boy",
-      "G": "103 General",
-      "GENERAL": "103 General",
-      "GROUNDSMAN": "103 General",
+      "F": "Big Boy",
+      "FOREMAN": "Big Boy",
+      "G": "103 General FM",
+      "GENERAL": "103 General FM",
       "GF": "103 General FM",
       "GENERAL FM": "103 General FM",
       "J": "103 Journeyman",
@@ -55,6 +54,7 @@
       "JOURNEYMAN LM": "103 Journeyman"
     },
     "104": {
+      "GROUNDSMAN": "104 Groundsman",
       "APP": "104 Apprentice",
       "2B APP": "104 Apprentice",
       "8H APP": "104 Apprentice",
@@ -68,7 +68,6 @@
       "GENERAL FM": "104 General FM",
       "G": "104 Groundsman",
       "GENERAL": "104 Groundsman",
-      "GROUNDSMAN": "104 Groundsman",
       "J": "104 Journeyman LM",
       "JOURNEYMAN": "104 Journeyman LM",
       "JOURNEYMAN LM": "104 Journeyman LM",
@@ -78,5 +77,6 @@
   },
   "apprentice_aliases": [
     "APP"
-  ]
+  ],
+  "mapping_notes": {}
 }

@@ -1,4 +1,4 @@
-﻿"""Labor-specific normalization helpers for parsed job cost records."""
+"""Labor-specific normalization helpers for parsed job cost records."""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ from functools import lru_cache
 from typing import Any, Optional
 
 from job_cost_tool.core.config import ConfigLoader
+from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots
 from job_cost_tool.core.models.record import LABOR, Record
+
+_FALLBACK_LABOR_MAPPING_GROUP = "*"
 
 
 @lru_cache(maxsize=1)
@@ -24,6 +27,13 @@ def _get_target_labor_classifications() -> set[str]:
     return {str(item) for item in classifications if str(item).strip()}
 
 
+@lru_cache(maxsize=1)
+def _get_active_labor_slot_lookup() -> dict[str, dict[str, Any]]:
+    """Return the active labor slot lookup keyed by current display label."""
+    config = ConfigLoader().get_target_labor_classifications()
+    return build_slot_lookup(get_active_slots(config, slot_prefix="labor"))
+
+
 def normalize_labor_record(record: Record) -> Record:
     """Apply config-driven labor normalization to a parsed record."""
     warnings = list(record.warnings)
@@ -32,12 +42,13 @@ def normalize_labor_record(record: Record) -> Record:
 
     labor_group = _resolve_labor_group(record, labor_mapping)
     labor_class_normalized = _normalize_labor_class(record.labor_class_raw, labor_mapping)
-    recap_labor_classification = _map_to_target_classification(
+    recap_target_label = _map_to_target_classification(
         labor_group=labor_group,
         labor_class_normalized=labor_class_normalized,
         labor_mapping=labor_mapping,
         target_classifications=target_classifications,
     )
+    slot_id, recap_labor_classification = _resolve_labor_slot(recap_target_label)
 
     if labor_group is None:
         warnings.append("Labor record could not be aligned to a configured labor group.")
@@ -45,16 +56,19 @@ def normalize_labor_record(record: Record) -> Record:
         warnings.append("Labor record is missing a raw labor class for recap mapping.")
     elif labor_class_normalized is None:
         warnings.append("Labor acronym did not match any configured labor alias.")
-    if recap_labor_classification is None:
+    if recap_target_label is None:
         warnings.append("Labor record could not be mapped to a target recap labor classification.")
+    elif slot_id is None:
+        warnings.append("Labor record mapped to a classification that is not active for the current profile.")
 
     return replace(
         record,
         record_type_normalized=LABOR,
         labor_class_normalized=labor_class_normalized,
+        recap_labor_slot_id=slot_id,
         recap_labor_classification=recap_labor_classification,
         warnings=_dedupe_warnings(warnings),
-        confidence=_reduce_confidence(record.confidence, recap_labor_classification is None),
+        confidence=_reduce_confidence(record.confidence, slot_id is None),
     )
 
 
@@ -93,7 +107,7 @@ def _map_to_target_classification(
     labor_mapping: dict[str, Any],
     target_classifications: set[str],
 ) -> Optional[str]:
-    """Map a canonical labor class to a configured recap target."""
+    """Map a canonical labor class to a configured recap target label."""
     if labor_group is None or labor_class_normalized is None:
         return None
 
@@ -103,7 +117,7 @@ def _map_to_target_classification(
 
     group_mappings = class_mappings.get(labor_group, {})
     if not isinstance(group_mappings, dict):
-        return None
+        group_mappings = {}
 
     target = group_mappings.get(labor_class_normalized)
     if target is None:
@@ -113,12 +127,34 @@ def _map_to_target_classification(
             target = group_mappings.get("APP")
 
     if target is None:
+        fallback_mappings = class_mappings.get(_FALLBACK_LABOR_MAPPING_GROUP, {})
+        if isinstance(fallback_mappings, dict):
+            target = fallback_mappings.get(labor_class_normalized)
+            if target is None:
+                apprentice_aliases = labor_mapping.get("apprentice_aliases", [])
+                apprentice_alias_set = {str(item).strip() for item in apprentice_aliases if str(item).strip()}
+                if labor_class_normalized in apprentice_alias_set:
+                    target = fallback_mappings.get("APP")
+
+    if target is None:
         return None
 
     target_value = str(target).strip()
     if target_value not in target_classifications:
         return None
     return target_value
+
+
+def _resolve_labor_slot(target_label: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Resolve the stable labor slot identity for a mapped target label."""
+    if not target_label:
+        return None, None
+
+    slot_lookup = _get_active_labor_slot_lookup()
+    slot = slot_lookup.get(target_label.casefold())
+    if not slot:
+        return None, None
+    return str(slot.get("slot_id") or "").strip() or None, str(slot.get("label") or "").strip() or None
 
 
 def _canonicalize_token(value: str) -> str:

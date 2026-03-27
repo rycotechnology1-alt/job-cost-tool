@@ -1,4 +1,4 @@
-﻿"""Workbook-writing helpers for the recap Excel template."""
+"""Workbook-writing helpers for the recap Excel template."""
 
 from __future__ import annotations
 
@@ -25,7 +25,10 @@ def export_to_excel(template_path: str, output_path: str, recap_payload: dict[st
     """Write recap payload values into a copy of the existing recap template workbook."""
     template = Path(template_path).expanduser().resolve()
     output = Path(output_path).expanduser().resolve()
-    mapping = ConfigLoader().get_recap_template_map()
+    loader = ConfigLoader()
+    mapping = loader.get_recap_template_map()
+    labor_row_slots = loader.get_labor_row_slots()
+    equipment_row_slots = loader.get_equipment_row_slots()
     worksheet_name = str(mapping.get("worksheet_name", "")).strip()
     if not worksheet_name:
         raise ValueError("Recap template map is missing worksheet_name.")
@@ -34,7 +37,7 @@ def export_to_excel(template_path: str, output_path: str, recap_payload: dict[st
     _validate_output_path(template, output)
     _validate_section_capacities(recap_payload, mapping)
 
-    _clear_fixed_inputs(worksheet, mapping)
+    _clear_fixed_inputs(worksheet, labor_row_slots, equipment_row_slots)
     _clear_list_section(worksheet, "materials", mapping["materials_section"])
     _clear_list_section(worksheet, "subcontractors", mapping["subcontractors_section"])
     _clear_list_section(worksheet, "permits & fees", mapping["permits_fees_section"])
@@ -42,8 +45,10 @@ def export_to_excel(template_path: str, output_path: str, recap_payload: dict[st
     _clear_header_fields(worksheet, mapping.get("header_fields", {}))
 
     _write_header_fields(worksheet, recap_payload.get("header", {}), mapping.get("header_fields", {}))
-    _write_labor_values(worksheet, recap_payload.get("labor", {}), mapping.get("labor_rows", {}))
-    _write_equipment_values(worksheet, recap_payload.get("equipment", {}), mapping.get("equipment_rows", {}))
+    _write_labor_values(worksheet, recap_payload.get("labor", {}), labor_row_slots)
+    _write_labor_rates(worksheet, recap_payload.get("labor_rates", {}), labor_row_slots)
+    _write_equipment_values(worksheet, recap_payload.get("equipment", {}), equipment_row_slots)
+    _write_equipment_rates(worksheet, recap_payload.get("equipment_rates", {}), equipment_row_slots)
     _write_list_section(worksheet, recap_payload.get("materials", []), mapping["materials_section"], "materials")
     _write_list_section(
         worksheet,
@@ -134,22 +139,33 @@ def _validate_section_capacities(recap_payload: dict[str, Any], mapping: dict[st
             )
 
 
-def _clear_fixed_inputs(worksheet: Worksheet, mapping: dict[str, Any]) -> None:
+def _clear_fixed_inputs(
+    worksheet: Worksheet,
+    labor_row_slots: dict[str, Any],
+    equipment_row_slots: dict[str, Any],
+) -> None:
     """Clear fixed writable input cells before writing a new export."""
-    for row_mapping in mapping.get("labor_rows", {}).values():
+    for slot_info in labor_row_slots.values():
+        if not isinstance(slot_info, dict):
+            continue
+        row_mapping = slot_info.get("mapping", {})
         if not isinstance(row_mapping, dict):
             continue
-        for key in ("st_hours", "ot_hours", "dt_hours"):
+        for key in ("st_hours", "ot_hours", "dt_hours", "st_rate", "ot_rate", "dt_rate"):
             cell_ref = row_mapping.get(key)
             if cell_ref:
                 worksheet[str(cell_ref)].value = None
 
-    for row_mapping in mapping.get("equipment_rows", {}).values():
+    for slot_info in equipment_row_slots.values():
+        if not isinstance(slot_info, dict):
+            continue
+        row_mapping = slot_info.get("mapping", {})
         if not isinstance(row_mapping, dict):
             continue
-        cell_ref = row_mapping.get("hours_qty")
-        if cell_ref:
-            worksheet[str(cell_ref)].value = None
+        for key in ("hours_qty", "rate"):
+            cell_ref = row_mapping.get(key)
+            if cell_ref:
+                worksheet[str(cell_ref)].value = None
 
 
 def _clear_header_fields(worksheet: Worksheet, header_mapping: dict[str, Any]) -> None:
@@ -188,44 +204,83 @@ def _write_header_fields(
 def _write_labor_values(
     worksheet: Worksheet,
     labor_payload: dict[str, dict[str, int | float]],
-    labor_mapping: dict[str, Any],
+    labor_row_slots: dict[str, Any],
 ) -> None:
-    """Write aggregated labor hours into fixed recap labor rows."""
-    for classification, totals in labor_payload.items():
-        mapping_entry = labor_mapping.get(classification)
-        if not isinstance(mapping_entry, dict):
-            raise ValueError(
-                f"Recap template map is missing a labor row mapping for '{classification}'."
-            )
+    """Write aggregated labor hours into fixed recap labor rows keyed by slot id."""
+    for slot_id, totals in labor_payload.items():
+        mapping_entry = _get_fixed_row_mapping(labor_row_slots, slot_id, "labor")
 
         for hour_type, mapping_key in (("ST", "st_hours"), ("OT", "ot_hours"), ("DT", "dt_hours")):
             cell_ref = mapping_entry.get(mapping_key)
             if not cell_ref:
                 raise ValueError(
-                    f"Recap template map for labor classification '{classification}' is missing '{mapping_key}'."
+                    f"Recap template map for labor slot '{slot_id}' is missing '{mapping_key}'."
                 )
             value = totals.get(hour_type, 0)
             worksheet[str(cell_ref)].value = None if _is_zero(value) else value
 
 
+def _write_labor_rates(
+    worksheet: Worksheet,
+    labor_rate_payload: dict[str, dict[str, int | float]],
+    labor_row_slots: dict[str, Any],
+) -> None:
+    """Write configured labor rates into recap labor rate input cells keyed by slot id."""
+    for slot_id, rate_values in labor_rate_payload.items():
+        mapping_entry = _get_fixed_row_mapping(labor_row_slots, slot_id, "labor")
+
+        for payload_key, mapping_key in (("ST", "st_rate"), ("OT", "ot_rate"), ("DT", "dt_rate")):
+            if payload_key not in rate_values:
+                continue
+            cell_ref = mapping_entry.get(mapping_key)
+            if not cell_ref:
+                raise ValueError(
+                    f"Recap template map for labor slot '{slot_id}' is missing '{mapping_key}'."
+                )
+            worksheet[str(cell_ref)].value = rate_values[payload_key]
+
+
 def _write_equipment_values(
     worksheet: Worksheet,
     equipment_payload: dict[str, int | float],
-    equipment_mapping: dict[str, Any],
+    equipment_row_slots: dict[str, Any],
 ) -> None:
-    """Write aggregated equipment hours or quantities into fixed recap rows."""
-    for category, value in equipment_payload.items():
-        mapping_entry = equipment_mapping.get(category)
-        if not isinstance(mapping_entry, dict):
-            raise ValueError(
-                f"Recap template map is missing an equipment row mapping for '{category}'."
-            )
+    """Write aggregated equipment hours or quantities into fixed recap rows keyed by slot id."""
+    for slot_id, value in equipment_payload.items():
+        mapping_entry = _get_fixed_row_mapping(equipment_row_slots, slot_id, "equipment")
         cell_ref = mapping_entry.get("hours_qty")
         if not cell_ref:
             raise ValueError(
-                f"Recap template map for equipment category '{category}' is missing 'hours_qty'."
+                f"Recap template map for equipment slot '{slot_id}' is missing 'hours_qty'."
             )
         worksheet[str(cell_ref)].value = None if _is_zero(value) else value
+
+
+def _write_equipment_rates(
+    worksheet: Worksheet,
+    equipment_rate_payload: dict[str, int | float],
+    equipment_row_slots: dict[str, Any],
+) -> None:
+    """Write configured equipment rates into recap equipment rate input cells keyed by slot id."""
+    for slot_id, value in equipment_rate_payload.items():
+        mapping_entry = _get_fixed_row_mapping(equipment_row_slots, slot_id, "equipment")
+        cell_ref = mapping_entry.get("rate")
+        if not cell_ref:
+            raise ValueError(
+                f"Recap template map for equipment slot '{slot_id}' is missing 'rate'."
+            )
+        worksheet[str(cell_ref)].value = value
+
+
+def _get_fixed_row_mapping(row_slots: dict[str, Any], slot_id: str, family: str) -> dict[str, Any]:
+    """Return the mapped fixed-row cells for a slot-backed recap row."""
+    slot_info = row_slots.get(slot_id)
+    if not isinstance(slot_info, dict):
+        raise ValueError(f"Recap template map is missing a {family} row mapping for slot '{slot_id}'.")
+    row_mapping = slot_info.get("mapping", {})
+    if not isinstance(row_mapping, dict):
+        raise ValueError(f"Recap template map is missing cell mappings for {family} slot '{slot_id}'.")
+    return row_mapping
 
 
 def _write_list_section(

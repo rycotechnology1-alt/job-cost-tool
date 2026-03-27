@@ -56,7 +56,9 @@ class Record:
 
     # Additional normalized recap-oriented fields derived after parsing.
     record_type_normalized: Optional[str] = None
+    recap_labor_slot_id: Optional[str] = None
     recap_labor_classification: Optional[str] = None
+    recap_equipment_slot_id: Optional[str] = None
     vendor_name_normalized: Optional[str] = None
     is_omitted: bool = False
 

@@ -1,4 +1,4 @@
-﻿"""Config loading utilities for the Job Cost Tool."""
+"""Config loading utilities for the Job Cost Tool."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, ClassVar
 
+from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots, normalize_slot_config
 from job_cost_tool.core.config.path_utils import get_legacy_config_root
 from job_cost_tool.core.config.profile_manager import ProfileManager
 
@@ -44,8 +45,6 @@ class ConfigLoader:
             "permits_fees_section",
             "police_detail_section",
         ),
-        "target_labor_classifications": ("classifications",),
-        "target_equipment_classifications": ("classifications",),
     }
     _shared_cache: ClassVar[dict[Path, dict[str, JsonDict]]] = {}
 
@@ -88,13 +87,45 @@ class ConfigLoader:
         """Return the recap template mapping configuration."""
         return self._load_config("recap_template_map")
 
-    def get_target_labor_classifications(self) -> JsonDict:
-        """Return the configured target labor recap classifications."""
+    def get_labor_slots(self) -> JsonDict:
+        """Return fixed-capacity labor slot definitions for the active profile."""
         return self._load_config("target_labor_classifications")
 
-    def get_target_equipment_classifications(self) -> JsonDict:
-        """Return the configured target equipment recap classifications."""
+    def get_equipment_slots(self) -> JsonDict:
+        """Return fixed-capacity equipment slot definitions for the active profile."""
         return self._load_config("target_equipment_classifications")
+
+    def get_active_labor_slots(self) -> list[JsonDict]:
+        """Return the active labor slots for the current profile."""
+        return get_active_slots(self.get_labor_slots(), slot_prefix="labor")
+
+    def get_active_equipment_slots(self) -> list[JsonDict]:
+        """Return the active equipment slots for the current profile."""
+        return get_active_slots(self.get_equipment_slots(), slot_prefix="equipment")
+
+    def get_labor_slot_lookup(self) -> JsonDict:
+        """Return a case-insensitive lookup from active labor label to slot metadata."""
+        return build_slot_lookup(self.get_active_labor_slots())
+
+    def get_equipment_slot_lookup(self) -> JsonDict:
+        """Return a case-insensitive lookup from active equipment label to slot metadata."""
+        return build_slot_lookup(self.get_active_equipment_slots())
+
+    def get_labor_row_slots(self) -> JsonDict:
+        """Return fixed labor recap row mappings keyed by stable slot id."""
+        return self._build_row_slot_mapping("labor", self.get_labor_slots(), "labor_rows")
+
+    def get_equipment_row_slots(self) -> JsonDict:
+        """Return fixed equipment recap row mappings keyed by stable slot id."""
+        return self._build_row_slot_mapping("equipment", self.get_equipment_slots(), "equipment_rows")
+
+    def get_target_labor_classifications(self) -> JsonDict:
+        """Return the active labor recap classifications derived from labor slots."""
+        return self.get_labor_slots()
+
+    def get_target_equipment_classifications(self) -> JsonDict:
+        """Return the active equipment recap classifications derived from equipment slots."""
+        return self.get_equipment_slots()
 
     def get_rates(self) -> JsonDict:
         """Return the configured rates bundle for the active profile."""
@@ -178,8 +209,69 @@ class ConfigLoader:
             )
 
         self._validate_top_level_structure(config_name, file_path, loaded_config)
-        self._cache[config_name] = loaded_config
+        normalized_config = self._normalize_loaded_config(config_name, loaded_config)
+        self._cache[config_name] = normalized_config
+        return normalized_config
+
+    def _normalize_loaded_config(self, config_name: str, loaded_config: JsonDict) -> JsonDict:
+        """Normalize compatible config formats into the app's current in-memory shape."""
+        if config_name == "target_labor_classifications":
+            capacity, template_labels = self._get_slot_context("labor_rows")
+            return normalize_slot_config(
+                loaded_config,
+                slot_prefix="labor",
+                capacity=capacity,
+                template_labels=template_labels,
+            )
+        if config_name == "target_equipment_classifications":
+            capacity, template_labels = self._get_slot_context("equipment_rows")
+            return normalize_slot_config(
+                loaded_config,
+                slot_prefix="equipment",
+                capacity=capacity,
+                template_labels=template_labels,
+            )
         return loaded_config
+
+    def _get_slot_context(self, recap_key: str) -> tuple[int, list[str]]:
+        """Return slot capacity and row-label order from the recap template map."""
+        recap_map = self.get_recap_template_map()
+        row_mapping = recap_map.get(recap_key, {}) if isinstance(recap_map.get(recap_key), dict) else {}
+        template_labels = [str(label).strip() for label in row_mapping.keys() if str(label).strip()]
+        capacity = len(template_labels)
+        return capacity, template_labels
+
+    def _build_row_slot_mapping(
+        self,
+        slot_prefix: str,
+        slot_config: JsonDict,
+        recap_key: str,
+    ) -> JsonDict:
+        """Build a stable slot-id to recap-row mapping using fixed row order."""
+        recap_map = self.get_recap_template_map()
+        raw_rows = recap_map.get(recap_key, {}) if isinstance(recap_map.get(recap_key), dict) else {}
+        normalized_slots = slot_config.get("slots", []) if isinstance(slot_config.get("slots"), list) else []
+
+        row_items = list(raw_rows.items())
+        if normalized_slots and len(row_items) < len(normalized_slots):
+            raise ValueError(
+                f"Recap template map '{recap_key}' does not have enough fixed rows for the configured slot capacity."
+            )
+
+        slot_rows: JsonDict = {}
+        for index, slot in enumerate(normalized_slots):
+            if not isinstance(slot, dict) or index >= len(row_items):
+                continue
+            template_label, row_mapping = row_items[index]
+            slot_id = str(slot.get("slot_id") or f"{slot_prefix}_{index + 1}").strip() or f"{slot_prefix}_{index + 1}"
+            slot_rows[slot_id] = {
+                "slot_id": slot_id,
+                "label": str(slot.get("label", "")).strip(),
+                "active": bool(slot.get("active")),
+                "template_label": str(template_label).strip(),
+                "mapping": dict(row_mapping) if isinstance(row_mapping, dict) else {},
+            }
+        return slot_rows
 
     def _validate_top_level_structure(
         self,
@@ -216,7 +308,18 @@ class ConfigLoader:
             "target_labor_classifications",
             "target_equipment_classifications",
         }:
+            self._validate_classification_structure(file_path, loaded_config)
+
+    def _validate_classification_structure(self, file_path: Path, loaded_config: JsonDict) -> None:
+        """Validate slot-based or legacy list-based classification config structure."""
+        if "slots" in loaded_config:
+            self._validate_key_type(file_path, loaded_config, "slots", list, "array")
+        elif "classifications" in loaded_config:
             self._validate_key_type(file_path, loaded_config, "classifications", list, "array")
+        else:
+            raise ValueError(
+                f"Config file '{file_path}' must define either top-level key 'slots' or 'classifications'"
+            )
 
     def _validate_key_type(
         self,
