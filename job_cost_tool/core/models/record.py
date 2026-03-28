@@ -60,6 +60,7 @@ class Record:
     recap_labor_classification: Optional[str] = None
     recap_equipment_slot_id: Optional[str] = None
     vendor_name_normalized: Optional[str] = None
+    equipment_mapping_key: Optional[str] = None
     is_omitted: bool = False
 
     def __post_init__(self) -> None:

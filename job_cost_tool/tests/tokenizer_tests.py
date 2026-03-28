@@ -40,6 +40,38 @@ class TokenizerTests(unittest.TestCase):
             result["warnings"],
         )
 
+    def test_non_year_asset_start_keeps_employee_suffix_out_of_equipment_description(self) -> None:
+        line = "104/EO B / 24 / Baez , Juan O 751/Kubota Tracked Skid Steer / 1"
+
+        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase", return_value=EQUIPMENT):
+            result = tokenize_pr_line(line, phase_code="31", phase_name_raw="Internal Equip. Charges")
+
+        self.assertEqual(result["employee_name"], "Baez , Juan O")
+        self.assertEqual(result["equipment_description"], "751/Kubota Tracked Skid Steer")
+        self.assertEqual(result["line_family"], EQUIPMENT)
+        self.assertNotIn(
+            "PR equipment detail line was recognized but equipment description was not parsed cleanly.",
+            result["warnings"],
+        )
+
+    def test_non_year_asset_start_extracts_tow_behind_compressor(self) -> None:
+        line = "104/EO B / 24 / Baez , Juan O 797/SullAir Tow Behind Compressor / 1"
+
+        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase", return_value=EQUIPMENT):
+            result = tokenize_pr_line(line, phase_code="31", phase_name_raw="Internal Equip. Charges")
+
+        self.assertEqual(result["employee_name"], "Baez , Juan O")
+        self.assertEqual(result["equipment_description"], "797/SullAir Tow Behind Compressor")
+
+    def test_non_year_asset_start_extracts_hi_rai_bucket_truck(self) -> None:
+        line = "104/EO B / 24 / Baez , Juan O 504/Ford F550 Hi-Rai Bucket Truck / 1"
+
+        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase", return_value=EQUIPMENT):
+            result = tokenize_pr_line(line, phase_code="31", phase_name_raw="Internal Equip. Charges")
+
+        self.assertEqual(result["employee_name"], "Baez , Juan O")
+        self.assertEqual(result["equipment_description"], "504/Ford F550 Hi-Rai Bucket Truck")
+
     def test_labor_payroll_tail_does_not_regress_into_equipment_description(self) -> None:
         line = "103/F 1.00 / 205 / Dondero Jr, John 123 Regular Earnings"
 

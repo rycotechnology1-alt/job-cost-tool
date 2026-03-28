@@ -229,9 +229,9 @@ class ProfileConfigTests(unittest.TestCase):
         self._write_json(
             TEST_ROOT / "profiles" / "default" / "equipment_mapping.json",
             {
-                "raw_mappings": {" 627/2025 ford transit van ": "Pick-up Truck"},
+                "raw_mappings": {" 638/2025 ford f600 bucket/ material handler ": "Pick-up Truck"},
                 "saved_mappings": [
-                    {"raw_description": "627/2025 ford transit van", "target_category": "Pick-up Truck"},
+                    {"raw_description": "638/2025 ford f600 bucket/ material handler", "target_category": "Pick-up Truck"},
                     {"raw_description": " crane truck ", "target_category": ""},
                 ],
             },
@@ -240,15 +240,15 @@ class ProfileConfigTests(unittest.TestCase):
         loader = ConfigLoader(config_dir=(TEST_ROOT / "profiles" / "default"))
         equipment_mapping = loader.get_equipment_mapping()
 
-        self.assertEqual(equipment_mapping["raw_mappings"], {"627/2025 FORD TRANSIT VAN": "Pick-up Truck"})
+        self.assertEqual(equipment_mapping["raw_mappings"], {"FORD F600 BUCKET/MAT HANDLER": "Pick-up Truck"})
         self.assertEqual(
             equipment_mapping["saved_mappings"],
             [
-                {"raw_description": "627/2025 FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
+                {"raw_description": "FORD F600 BUCKET/MAT HANDLER", "target_category": "Pick-up Truck"},
                 {"raw_description": "CRANE TRUCK", "target_category": ""},
             ],
         )
-        self.assertEqual(equipment_mapping["keyword_mappings"], {"627/2025 FORD TRANSIT VAN": "Pick-up Truck"})
+        self.assertEqual(equipment_mapping["keyword_mappings"], {"FORD F600 BUCKET/MAT HANDLER": "Pick-up Truck"})
 
     def test_config_loader_migrates_old_classification_list_to_slots_using_template_capacity(self) -> None:
         self._write_json(
@@ -440,14 +440,14 @@ class ProfileConfigTests(unittest.TestCase):
             {
                 "raw_mappings": {"CRANE TRUCK": "Pick-up Truck"},
                 "saved_mappings": [
-                    {"raw_description": "CRANE TRUCK", "target_category": "Utility Van"},
+                    {"raw_description": "CRANE TRUCK", "target_category": "Pick-up Truck"},
                 ],
             }
         )
 
         self.assertEqual(
             rows,
-            [{"raw_description": "CRANE TRUCK", "raw_pattern": "CRANE TRUCK", "target_category": "Utility Van"}],
+            [{"raw_description": "CRANE TRUCK", "raw_pattern": "CRANE TRUCK", "target_category": "Pick-up Truck"}],
         )
 
     def test_build_equipment_mapping_rows_appends_observed_unmapped_descriptions(self) -> None:
@@ -463,7 +463,7 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                {"raw_description": "593/2024 FREIGHTLINER BUCKET/MH", "raw_pattern": "593/2024 FREIGHTLINER BUCKET/MH", "target_category": ""},
+                {"raw_description": "FREIGHTLINER BUCKET/MH", "raw_pattern": "FREIGHTLINER BUCKET/MH", "target_category": ""},
                 {"raw_description": "CRANE TRUCK", "raw_pattern": "CRANE TRUCK", "target_category": "Pick-up Truck"},
             ],
         )
@@ -472,7 +472,7 @@ class ProfileConfigTests(unittest.TestCase):
         raw_rows = _build_equipment_mapping_rows(
             {
                 "raw_mappings": {
-                    "627/2025 FORD TRANSIT VAN": "Pick-up Truck",
+                    "FORD TRANSIT VAN": "Pick-up Truck",
                 },
             }
         )
@@ -486,7 +486,7 @@ class ProfileConfigTests(unittest.TestCase):
 
         self.assertEqual(
             raw_rows,
-            [{"raw_description": "627/2025 FORD TRANSIT VAN", "raw_pattern": "627/2025 FORD TRANSIT VAN", "target_category": "Pick-up Truck"}],
+            [{"raw_description": "FORD TRANSIT VAN", "raw_pattern": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"}],
         )
         self.assertEqual(
             keyword_rows,
@@ -498,9 +498,9 @@ class ProfileConfigTests(unittest.TestCase):
         self._write_json(
             TEST_ROOT / "profiles" / "default" / "equipment_mapping.json",
             {
-                "raw_mappings": {"627/2025 FORD TRANSIT VAN": "Pick-up Truck"},
+                "raw_mappings": {"FORD TRANSIT VAN": "Pick-up Truck"},
                 "saved_mappings": [
-                    {"raw_description": "627/2025 FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
+                    {"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
                 ],
             },
         )
@@ -508,8 +508,8 @@ class ProfileConfigTests(unittest.TestCase):
         loader = ConfigLoader(config_dir=(TEST_ROOT / "profiles" / "default"))
         equipment_mapping = loader.get_equipment_mapping()
 
-        self.assertEqual(equipment_mapping["raw_mappings"], {"627/2025 FORD TRANSIT VAN": "Pick-up Truck"})
-        self.assertEqual(equipment_mapping["keyword_mappings"], {"627/2025 FORD TRANSIT VAN": "Pick-up Truck"})
+        self.assertEqual(equipment_mapping["raw_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
+        self.assertEqual(equipment_mapping["keyword_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
 
     def test_save_labor_mappings_persists_raw_mappings_and_blank_saved_rows(self) -> None:
         manager = self._build_manager()
@@ -592,11 +592,11 @@ class ProfileConfigTests(unittest.TestCase):
         )
 
         self.assertEqual(message, "Equipment mappings saved successfully.")
-        self.assertEqual(saved_config["raw_mappings"], {"627/2025 FORD TRANSIT VAN": "Pick-up Truck"})
+        self.assertEqual(saved_config["raw_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
         self.assertEqual(
             saved_config["saved_mappings"],
             [
-                {"raw_description": "627/2025 FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
+                {"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
                 {"raw_description": "CRANE TRUCK", "target_category": ""},
             ],
         )
@@ -621,6 +621,64 @@ class ProfileConfigTests(unittest.TestCase):
                         {"raw_description": " CRANE   TRUCK ", "target_category": "Pick-up Truck"},
                     ]
                 )
+
+    def test_save_equipment_mappings_rejects_duplicate_rows_after_phase_1_key_derivation(self) -> None:
+        manager = self._build_manager()
+        manager.duplicate_profile(
+            source_profile_name="default",
+            new_profile_name="editable_profile",
+            display_name="Editable Profile",
+            description="Editable clone",
+        )
+        manager.set_active_profile("editable_profile")
+
+        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+            view_model = SettingsViewModel()
+            with self.assertRaisesRegex(ValueError, "Duplicate equipment mapping raw description"):
+                view_model.save_equipment_mappings(
+                    [
+                        {"raw_description": "567/2021 Chevrolet 2500 Pick Up", "target_category": "Pick-up Truck"},
+                        {"raw_description": "890/2022 Chevrolet 2500 Pick Up", "target_category": "Pick-up Truck"},
+                    ]
+                )
+
+    def test_save_equipment_mappings_applies_deterministic_key_cleanup(self) -> None:
+        manager = self._build_manager()
+        manager.duplicate_profile(
+            source_profile_name="default",
+            new_profile_name="editable_profile",
+            display_name="Editable Profile",
+            description="Editable clone",
+        )
+        manager.set_active_profile("editable_profile")
+
+        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+            view_model = SettingsViewModel()
+            view_model.save_equipment_mappings(
+                [
+                    {"raw_description": "638/2025 Ford F600 Bucket/ Material Handler", "target_category": "Pick-up Truck"},
+                    {"raw_description": "504/Chevy 2500 Utiltiy Body", "target_category": "Pick-up Truck"},
+                ]
+            )
+
+        saved_config = json.loads(
+            (TEST_ROOT / "profiles" / "editable_profile" / "equipment_mapping.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(
+            saved_config["raw_mappings"],
+            {
+                "FORD F600 BUCKET/MAT HANDLER": "Pick-up Truck",
+                "CHEVROLET 2500 UTILITY BODY": "Pick-up Truck",
+            },
+        )
+        self.assertEqual(
+            saved_config["saved_mappings"],
+            [
+                {"raw_description": "FORD F600 BUCKET/MAT HANDLER", "target_category": "Pick-up Truck"},
+                {"raw_description": "CHEVROLET 2500 UTILITY BODY", "target_category": "Pick-up Truck"},
+            ],
+        )
 
     def test_persist_observed_labor_raw_values_appends_new_placeholder_and_preserves_existing_rows(self) -> None:
         profile_dir = TEST_ROOT / "profiles" / "editable_profile"
@@ -722,11 +780,11 @@ class ProfileConfigTests(unittest.TestCase):
         self._write_json(
             profile_dir / "equipment_mapping.json",
             {
-                "raw_mappings": {"627/2025 FORD TRANSIT VAN": "Pick-up Truck"},
+                "raw_mappings": {"FORD TRANSIT VAN": "Pick-up Truck"},
                 "saved_mappings": [
-                    {"raw_description": "627/2025 FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
+                    {"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
                 ],
-                "keyword_mappings": {"627/2025 FORD TRANSIT VAN": "Pick-up Truck"},
+                "keyword_mappings": {"FORD TRANSIT VAN": "Pick-up Truck"},
             },
         )
 
@@ -734,12 +792,12 @@ class ProfileConfigTests(unittest.TestCase):
         updated = json.loads((profile_dir / "equipment_mapping.json").read_text(encoding="utf-8"))
 
         self.assertTrue(did_update)
-        self.assertEqual(updated["raw_mappings"], {"627/2025 FORD TRANSIT VAN": "Pick-up Truck"})
+        self.assertEqual(updated["raw_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
         self.assertNotIn("keyword_mappings", updated)
         self.assertEqual(
             updated["saved_mappings"],
             [
-                {"raw_description": "627/2025 FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
+                {"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
                 {"raw_description": "CRANE TRUCK", "target_category": ""},
             ],
         )
@@ -777,8 +835,8 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(
             view_model.equipment_mapping_rows,
             [
-                {"raw_description": "593/2024 FREIGHTLINER BUCKET/MH", "raw_pattern": "593/2024 FREIGHTLINER BUCKET/MH", "target_category": ""},
-                {"raw_description": "619/2025 FREIGHTLINER DIGGER DERRICK", "raw_pattern": "619/2025 FREIGHTLINER DIGGER DERRICK", "target_category": ""},
+                {"raw_description": "FREIGHTLINER BUCKET/MH", "raw_pattern": "FREIGHTLINER BUCKET/MH", "target_category": ""},
+                {"raw_description": "FREIGHTLINER DIGGER DERRICK", "raw_pattern": "FREIGHTLINER DIGGER DERRICK", "target_category": ""},
             ],
         )
 
@@ -802,7 +860,7 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(
             view_model.equipment_mapping_rows,
             [
-                {"raw_description": "593/2024 FREIGHTLINER BUCKET/MH", "raw_pattern": "593/2024 FREIGHTLINER BUCKET/MH", "target_category": ""},
+                {"raw_description": "FREIGHTLINER BUCKET/MH", "raw_pattern": "FREIGHTLINER BUCKET/MH", "target_category": ""},
             ],
         )
 
@@ -910,8 +968,8 @@ class ProfileConfigTests(unittest.TestCase):
         first_call_args = persist_mock.call_args_list[0].args
         second_call_args = persist_mock.call_args_list[1].args
         self.assertEqual(first_call_args[0], manager.get_active_profile_dir())
-        self.assertEqual(first_call_args[1], ["627/2025 FORD TRANSIT VAN"])
-        self.assertEqual(second_call_args[1], ["627/2025 FORD TRANSIT VAN"])
+        self.assertEqual(first_call_args[1], ["FORD TRANSIT VAN"])
+        self.assertEqual(second_call_args[1], ["FORD TRANSIT VAN"])
 
     def test_dedupe_casefold_preserving_order_keeps_first_observed_value(self) -> None:
         self.assertEqual(

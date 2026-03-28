@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, Signal
 
 from job_cost_tool.core.config import ConfigLoader, ProfileManager
 from job_cost_tool.core.models.record import Record
+from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
 from job_cost_tool.services.normalization_service import normalize_records
 from job_cost_tool.services.parsing_service import parse_pdf
 from job_cost_tool.services.validation_service import validate_records
@@ -116,7 +117,7 @@ class ReviewViewModel(QObject):
 
     @property
     def observed_equipment_raw_values(self) -> list[str]:
-        """Return actual observed raw equipment descriptions from the current review dataset."""
+        """Return raw equipment descriptions from the current review dataset for traceability."""
         observed_values: list[str] = []
         seen: set[str] = set()
         for record in self._review_records:
@@ -128,6 +129,22 @@ class ReviewViewModel(QObject):
                 continue
             seen.add(normalized)
             observed_values.append(raw_value)
+        return observed_values
+
+    @property
+    def observed_equipment_mapping_keys(self) -> list[str]:
+        """Return derived reusable equipment mapping keys from the current review dataset."""
+        observed_values: list[str] = []
+        seen: set[str] = set()
+        for record in self._review_records:
+            mapping_key = str(record.equipment_mapping_key or derive_equipment_mapping_key(record.equipment_description) or "").strip()
+            if not mapping_key:
+                continue
+            normalized = mapping_key.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            observed_values.append(mapping_key)
         return observed_values
 
     def load_pdf(self, file_path: str) -> None:
@@ -248,7 +265,7 @@ class ReviewViewModel(QObject):
                 return
             persist_observed_equipment_raw_values(
                 profile_manager.get_active_profile_dir(),
-                self.observed_equipment_raw_values,
+                self.observed_equipment_mapping_keys,
             )
         except Exception:
             return

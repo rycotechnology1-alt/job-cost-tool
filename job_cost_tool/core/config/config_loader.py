@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots, normalize_slot_config
+from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
 from job_cost_tool.core.config.path_utils import get_legacy_config_root
 from job_cost_tool.core.config.profile_manager import ProfileManager
 
@@ -303,7 +304,7 @@ class ConfigLoader:
         raw_mappings = loaded_config.get("raw_mappings", {}) if isinstance(loaded_config.get("raw_mappings"), dict) else {}
         normalized_raw_mappings: JsonDict = {}
         for raw_description, target_category in raw_mappings.items():
-            canonical_raw_description = " ".join(str(raw_description).strip().upper().split())
+            canonical_raw_description = derive_equipment_mapping_key(str(raw_description).strip()) or ""
             target_text = str(target_category).strip()
             if canonical_raw_description and target_text:
                 normalized_raw_mappings[canonical_raw_description] = target_text
@@ -314,7 +315,7 @@ class ConfigLoader:
         for row in saved_mappings:
             if not isinstance(row, dict):
                 continue
-            canonical_raw_description = " ".join(str(row.get("raw_description", "")).strip().upper().split())
+            canonical_raw_description = derive_equipment_mapping_key(str(row.get("raw_description", "")).strip()) or ""
             if not canonical_raw_description:
                 continue
             normalized_raw = canonical_raw_description.casefold()
@@ -331,7 +332,7 @@ class ConfigLoader:
         keyword_mappings = loaded_config.get("keyword_mappings", {}) if isinstance(loaded_config.get("keyword_mappings"), dict) else {}
         normalized_keyword_mappings: JsonDict = {}
         for raw_description, target_category in keyword_mappings.items():
-            canonical_raw_description = " ".join(str(raw_description).strip().upper().split())
+            canonical_raw_description = derive_equipment_mapping_key(str(raw_description).strip()) or ""
             target_text = str(target_category).strip()
             if canonical_raw_description and target_text:
                 normalized_keyword_mappings[canonical_raw_description] = target_text

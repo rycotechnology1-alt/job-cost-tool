@@ -9,6 +9,7 @@ from typing import Any, Optional
 from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots
 from job_cost_tool.core.models.record import EQUIPMENT, Record
+from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
 
 
 @lru_cache(maxsize=1)
@@ -36,15 +37,16 @@ def normalize_equipment_record(record: Record) -> Record:
     """Apply config-driven equipment normalization to a parsed record.
 
     Runtime equipment normalization is now fully raw-first: exact configured
-    raw descriptions are the sole runtime mapping source of truth.
+    derived equipment mapping keys are the sole runtime mapping source of truth.
     """
     warnings = list(record.warnings)
     equipment_target_label = None
+    equipment_mapping_key = derive_equipment_mapping_key(record.equipment_description)
 
     if record.equipment_description is None:
         warnings.append("Equipment record is missing a raw equipment description for recap mapping.")
     else:
-        equipment_target_label, raw_mapping_warning = _map_raw_equipment_description(record.equipment_description)
+        equipment_target_label, raw_mapping_warning = _map_raw_equipment_description(equipment_mapping_key)
         if raw_mapping_warning:
             warnings.append(raw_mapping_warning)
 
@@ -62,12 +64,13 @@ def normalize_equipment_record(record: Record) -> Record:
         equipment_category=equipment_category,
         warnings=_dedupe_warnings(warnings),
         confidence=_reduce_confidence(record.confidence, slot_id is None),
+        equipment_mapping_key=equipment_mapping_key,
     )
 
 
-def _map_raw_equipment_description(equipment_description: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    """Map an exact raw equipment description first and return any config warning."""
-    if equipment_description is None:
+def _map_raw_equipment_description(equipment_mapping_key: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Map an exact derived equipment key first and return any config warning."""
+    if equipment_mapping_key is None:
         return None, None
 
     mapping = _get_equipment_mapping()
@@ -75,8 +78,8 @@ def _map_raw_equipment_description(equipment_description: Optional[str]) -> tupl
     if not isinstance(raw_mappings, dict):
         return None, None
 
-    raw_key = _canonicalize_equipment_description(equipment_description)
-    target = str(raw_mappings.get(raw_key, "")).strip()
+    raw_key = derive_equipment_mapping_key(equipment_mapping_key)
+    target = str(raw_mappings.get(raw_key or "", "")).strip()
     if not raw_key or not target:
         return None, None
     if target not in _get_target_equipment_classifications():
@@ -98,12 +101,6 @@ def _resolve_equipment_slot(target_label: Optional[str]) -> tuple[Optional[str],
     if not slot:
         return None, None
     return str(slot.get("slot_id") or "").strip() or None, str(slot.get("label") or "").strip() or None
-
-
-def _canonicalize_equipment_description(value: str) -> str:
-    """Canonicalize equipment descriptions conservatively for raw-first matching."""
-    return " ".join(str(value).strip().upper().split())
-
 
 def _reduce_confidence(confidence: float, is_uncertain: bool) -> float:
     """Lower confidence slightly when normalization remains uncertain."""

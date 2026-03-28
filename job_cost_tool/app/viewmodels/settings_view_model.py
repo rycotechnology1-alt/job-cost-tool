@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, Signal
 
 from job_cost_tool.core.config import ConfigLoader, ProfileManager
 from job_cost_tool.core.config.classification_slots import build_slot_config_from_rows
+from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
 
 
 
@@ -260,7 +261,7 @@ class SettingsViewModel(QObject):
                     f"Equipment mapping '{raw_description}' references unknown target category '{target_category}'."
                 )
 
-            canonical_raw_description = _canonicalize_equipment_description(raw_description)
+            canonical_raw_description = _canonicalize_equipment_mapping_key(raw_description)
             normalized_raw_description = canonical_raw_description.casefold()
             if normalized_raw_description in seen_raw_descriptions:
                 raise ValueError(
@@ -645,7 +646,7 @@ def persist_observed_equipment_raw_values(profile_dir: Path, observed_raw_descri
 
     did_update = False
     for raw_description in observed_values:
-        canonical_raw_description = _canonicalize_equipment_description(raw_description)
+        canonical_raw_description = _canonicalize_equipment_mapping_key(raw_description)
         if not canonical_raw_description or canonical_raw_description.casefold() in seen_raw_descriptions:
             continue
         seen_raw_descriptions.add(canonical_raw_description.casefold())
@@ -785,7 +786,7 @@ def _normalize_saved_equipment_mapping_rows(saved_mappings: Any) -> list[dict[st
     for row in saved_mappings:
         if not isinstance(row, dict):
             continue
-        raw_description = _canonicalize_equipment_description(
+        raw_description = _canonicalize_equipment_mapping_key(
             str(row.get("raw_description") or row.get("raw_pattern") or "").strip()
         )
         if not raw_description:
@@ -810,7 +811,7 @@ def _normalize_raw_equipment_mappings(raw_mappings: Any) -> dict[str, str]:
 
     normalized_mappings: dict[str, str] = {}
     for raw_description, target_category in raw_mappings.items():
-        canonical_raw_description = _canonicalize_equipment_description(str(raw_description).strip())
+        canonical_raw_description = _canonicalize_equipment_mapping_key(str(raw_description).strip())
         target_text = str(target_category).strip()
         if canonical_raw_description and target_text:
             normalized_mappings[canonical_raw_description] = target_text
@@ -834,7 +835,7 @@ def _build_raw_equipment_mappings_from_rows(rows: list[dict[str, str]]) -> dict[
     """Build the exact persisted raw equipment mapping lookup from saved editor rows."""
     raw_mappings: dict[str, str] = {}
     for row in rows:
-        raw_description = _canonicalize_equipment_description(
+        raw_description = _canonicalize_equipment_mapping_key(
             str(row.get("raw_description") or row.get("raw_pattern") or "").strip()
         )
         target_category = str(row.get("target_category", "")).strip()
@@ -868,7 +869,7 @@ def _build_equipment_mapping_rows(
     }
 
     for raw_description in observed_raw_descriptions or []:
-        raw_description_text = _canonicalize_equipment_description(str(raw_description).strip())
+        raw_description_text = _canonicalize_equipment_mapping_key(str(raw_description).strip())
         if not raw_description_text or raw_description_text.casefold() in seen_raw_descriptions:
             continue
         seen_raw_descriptions.add(raw_description_text.casefold())
@@ -1344,9 +1345,9 @@ def _canonicalize_labor_token(value: str) -> str:
     return collapsed.replace("APPRENTICESHIP", "APP")
 
 
-def _canonicalize_equipment_description(value: str) -> str:
-    """Canonicalize raw equipment descriptions conservatively for raw-first matching."""
-    return " ".join(str(value).strip().upper().split())
+def _canonicalize_equipment_mapping_key(value: str) -> str:
+    """Derive the Phase 1 reusable equipment mapping key for settings and persistence."""
+    return derive_equipment_mapping_key(value) or ""
 
 
 def _stringify_rate(value: Any) -> str:

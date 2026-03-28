@@ -18,7 +18,7 @@ _HOURS_COST_RE = re.compile(
 )
 _EMPLOYEE_SPLIT_RE = re.compile(r"^(?P<prefix>.*?)\s*/\s*(?P<employee_id>\d+)\s*/\s*(?P<remaining>.+)$")
 _EQUIPMENT_DETAIL_RE = re.compile(
-    r"^(?P<employee_name>.+?)\s+(?P<equipment_description>\d+/\d{4}.+?)\s*/\s*\d+\s*$"
+    r"^(?P<employee_name>.+?)\s+(?P<equipment_description>\d+/(?:(?:\d{4}\b)|[A-Za-z]).+?)\s*/\s*\d+\s*$"
 )
 _EQUIPMENT_TRAILING_COUNT_RE = re.compile(r"^(?P<equipment_description>.+?)\s*/\s*\d+\s*$")
 _EQUIPMENT_FALLBACK_NAME_RE = re.compile(
@@ -315,9 +315,11 @@ def _parse_employee_and_equipment(
     """Parse employee and equipment text from the remaining PR detail body.
 
     Equipment extraction is intentionally permissive when a PR line already sits
-    inside an equipment phase. Preserving a messy-but-usable raw equipment tail
-    is safer for downstream review and keyword normalization than dropping the
-    description entirely when one narrow detail pattern misses.
+    inside an equipment phase. Equipment descriptions may start with either
+    ``asset_id/4-digit-year ...`` or ``asset_id/description ...``; preserving a
+    messy-but-usable raw equipment tail is safer for downstream review and
+    keyword normalization than dropping the description entirely when one narrow
+    detail pattern misses.
     """
     equipment_match = _EQUIPMENT_DETAIL_RE.match(remaining)
     if equipment_match:

@@ -7,6 +7,7 @@ from dataclasses import replace
 from unittest.mock import patch
 
 from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
+from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
 from job_cost_tool.core.normalization.equipment_normalizer import normalize_equipment_record
 from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
 from job_cost_tool.core.normalization.normalizer import normalize_records
@@ -334,6 +335,81 @@ class NormalizationRuleTests(unittest.TestCase):
         self.assertTrue(any("missing a raw labor class" in warning.casefold() for warning in normalized_record.warnings))
 
 
+    def test_phase_2_equipment_mapping_key_cleanup_normalizes_low_risk_variants(self) -> None:
+        self.assertEqual(
+            derive_equipment_mapping_key("567/2021 Chevrolet 2500 Pick Up"),
+            "CHEVROLET 2500 PICK UP",
+        )
+        self.assertEqual(
+            derive_equipment_mapping_key("638/2025 Ford F600 Bucket/ Material Handler"),
+            "FORD F600 BUCKET/MAT HANDLER",
+        )
+        self.assertEqual(
+            derive_equipment_mapping_key("638/2025 Ford F600 Bucket / Mat Handler"),
+            "FORD F600 BUCKET/MAT HANDLER",
+        )
+        self.assertEqual(
+            derive_equipment_mapping_key("638/2025 Ford F600 Bucket/ MH"),
+            "FORD F600 BUCKET/MH",
+        )
+        self.assertEqual(
+            derive_equipment_mapping_key("504/Ford F550 Hi-Rai Bucket Truck W/ Liftgate"),
+            "FORD F550 HI-RAI BUCKET TRUCK W/LIFT GATE",
+        )
+        self.assertEqual(
+            derive_equipment_mapping_key("751/Kubota Tracked Skid Steer"),
+            "KUBOTA TRACKED SKID STEER",
+        )
+
+    def test_equipment_mapping_key_corrects_obvious_spelling_and_wording_variants(self) -> None:
+        self.assertEqual(
+            derive_equipment_mapping_key("504/Chevy 2500 Utiltiy Body"),
+            "CHEVROLET 2500 UTILITY BODY",
+        )
+        self.assertEqual(
+            derive_equipment_mapping_key("365/2018 Freightliner Digger Derrick Handelr"),
+            "FREIGHTLINER DIGGER DERRICK HANDLER",
+        )
+        self.assertEqual(
+            derive_equipment_mapping_key("409/2019 GMC Savanna Van"),
+            "GMC SAVANA VAN",
+        )
+        self.assertEqual(
+            derive_equipment_mapping_key("410/2019 GMC Savana Van"),
+            "GMC SAVANA VAN",
+        )
+
+    def test_equipment_mapping_key_normalizes_ram_model_spacing_consistently(self) -> None:
+        self.assertEqual(
+            derive_equipment_mapping_key("504/Dodge Ram5500 Hi-Rai Bucket Truck"),
+            "DODGE RAM 5500 HI-RAI BUCKET TRUCK",
+        )
+        self.assertEqual(
+            derive_equipment_mapping_key("505/Dodge Ram 5500 Hi-Rai Bucket Truck"),
+            "DODGE RAM 5500 HI-RAI BUCKET TRUCK",
+        )
+        self.assertEqual(
+            derive_equipment_mapping_key("506/Ram5500 Hi-Rai Bucket Truck"),
+            "RAM 5500 HI-RAI BUCKET TRUCK",
+        )
+
+    def test_equipment_mapping_key_preserves_meaningful_distinctions(self) -> None:
+        self.assertNotEqual(
+            derive_equipment_mapping_key("409/2019 Isuzu 16' Box Truck"),
+            derive_equipment_mapping_key("504/Chevrolet 2500 Utility Body"),
+        )
+        self.assertNotEqual(
+            derive_equipment_mapping_key("638/2025 Ford F600 Bucket/ Material Handler"),
+            derive_equipment_mapping_key("504/Ford F550 Hi-Rai Bucket Truck"),
+        )
+
+    def test_multiple_raw_asset_descriptions_collapse_to_same_cleaned_equipment_mapping_key(self) -> None:
+        self.assertEqual(
+            derive_equipment_mapping_key("567/2021 Chevy 2500 Pick Up"),
+            derive_equipment_mapping_key("890/2022 Chevrolet 2500 Pick Up"),
+        )
+
+
     def test_raw_only_equipment_config_normalizes_without_keyword_fallback(self) -> None:
         record = Record(
             record_type=EQUIPMENT,
@@ -357,9 +433,9 @@ class NormalizationRuleTests(unittest.TestCase):
         with patch(
             "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
             return_value={
-                "raw_mappings": {"627/2025 FORD TRANSIT VAN": "Utility Van"},
+                "raw_mappings": {"FORD TRANSIT VAN": "Utility Van"},
                 "saved_mappings": [
-                    {"raw_description": "627/2025 FORD TRANSIT VAN", "target_category": "Utility Van"}
+                    {"raw_description": "FORD TRANSIT VAN", "target_category": "Utility Van"}
                 ],
             },
         ), patch(
@@ -379,6 +455,8 @@ class NormalizationRuleTests(unittest.TestCase):
 
         self.assertEqual(normalized_record.equipment_category, "Utility Van")
         self.assertEqual(normalized_record.recap_equipment_slot_id, "equipment_1")
+        self.assertEqual(normalized_record.equipment_description, "627/2025 FORD TRANSIT VAN")
+        self.assertEqual(normalized_record.equipment_mapping_key, "FORD TRANSIT VAN")
 
     def test_unmapped_raw_equipment_description_no_longer_falls_back_to_keyword_matching(self) -> None:
         record = Record(
@@ -445,7 +523,7 @@ class NormalizationRuleTests(unittest.TestCase):
 
         with patch(
             "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
-            return_value={"raw_mappings": {"627/2025 FORD TRANSIT VAN": "Utility Van"}},
+            return_value={"raw_mappings": {"FORD TRANSIT VAN": "Utility Van"}},
         ), patch(
             "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
             return_value={
@@ -485,7 +563,7 @@ class NormalizationRuleTests(unittest.TestCase):
 
         with patch(
             "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
-            return_value={"raw_mappings": {"627/2025 FORD TRANSIT VAN": "Not In Profile"}},
+            return_value={"raw_mappings": {"FORD TRANSIT VAN": "Not In Profile"}},
         ), patch(
             "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
             return_value={
@@ -528,7 +606,7 @@ class NormalizationRuleTests(unittest.TestCase):
 
         with patch(
             "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
-            return_value={"raw_mappings": {"627/2025 FORD TRANSIT VAN": "Utility Van"}},
+            return_value={"raw_mappings": {"FORD TRANSIT VAN": "Utility Van"}},
         ), patch(
             "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
             return_value={
