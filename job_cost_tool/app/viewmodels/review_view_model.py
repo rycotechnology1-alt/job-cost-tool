@@ -12,7 +12,10 @@ from job_cost_tool.core.models.record import Record
 from job_cost_tool.services.normalization_service import normalize_records
 from job_cost_tool.services.parsing_service import parse_pdf
 from job_cost_tool.services.validation_service import validate_records
-from job_cost_tool.app.viewmodels.settings_view_model import persist_observed_labor_raw_values
+from job_cost_tool.app.viewmodels.settings_view_model import (
+    persist_observed_equipment_raw_values,
+    persist_observed_labor_raw_values,
+)
 
 
 class ReviewViewModel(QObject):
@@ -111,6 +114,22 @@ class ReviewViewModel(QObject):
             observed_values.append(raw_value)
         return observed_values
 
+    @property
+    def observed_equipment_raw_values(self) -> list[str]:
+        """Return actual observed raw equipment descriptions from the current review dataset."""
+        observed_values: list[str] = []
+        seen: set[str] = set()
+        for record in self._review_records:
+            raw_value = str(record.equipment_description or "").strip()
+            if not raw_value:
+                continue
+            normalized = raw_value.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            observed_values.append(raw_value)
+        return observed_values
+
     def load_pdf(self, file_path: str) -> None:
         """Run the parse-normalize-validate pipeline for a selected PDF."""
         self.current_pdf_path = file_path
@@ -135,6 +154,7 @@ class ReviewViewModel(QObject):
 
         self._review_records = list(normalized_records)
         self._persist_observed_labor_raw_values()
+        self._persist_observed_equipment_raw_values()
         self._record_ids = [self._build_record_id(index) for index, _ in enumerate(self._review_records)]
         self._revalidate_records()
         self._selected_record_id = self._record_ids[0] if self._record_ids else None
@@ -216,6 +236,19 @@ class ReviewViewModel(QObject):
             persist_observed_labor_raw_values(
                 profile_manager.get_active_profile_dir(),
                 self.observed_labor_raw_values,
+            )
+        except Exception:
+            return
+
+    def _persist_observed_equipment_raw_values(self) -> None:
+        """Persist newly observed equipment descriptions for editable profiles without interrupting review load."""
+        try:
+            profile_manager = ProfileManager()
+            if profile_manager.get_active_profile_name().strip().casefold() == "default":
+                return
+            persist_observed_equipment_raw_values(
+                profile_manager.get_active_profile_dir(),
+                self.observed_equipment_raw_values,
             )
         except Exception:
             return

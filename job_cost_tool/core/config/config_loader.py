@@ -218,6 +218,8 @@ class ConfigLoader:
         """Normalize compatible config formats into the app's current in-memory shape."""
         if config_name == "labor_mapping":
             return self._normalize_labor_mapping_config(loaded_config)
+        if config_name == "equipment_mapping":
+            return self._normalize_equipment_mapping_config(loaded_config)
         if config_name == "target_labor_classifications":
             capacity, template_labels = self._get_slot_context("labor_rows")
             return normalize_slot_config(
@@ -289,6 +291,80 @@ class ConfigLoader:
         normalized_config["saved_mappings"] = normalized_saved_rows
         return normalized_config
 
+    def _normalize_equipment_mapping_config(self, loaded_config: JsonDict) -> JsonDict:
+        """Normalize raw-first equipment mapping config while tolerating legacy keyword mappings.
+
+        raw_mappings and saved_mappings are the intended persisted source of
+        truth. keyword_mappings is synthesized only as an in-memory
+        compatibility view when older runtime fallback still expects it.
+        """
+        normalized_config = dict(loaded_config)
+
+        raw_mappings = loaded_config.get("raw_mappings", {}) if isinstance(loaded_config.get("raw_mappings"), dict) else {}
+        normalized_raw_mappings: JsonDict = {}
+        for raw_description, target_category in raw_mappings.items():
+            canonical_raw_description = " ".join(str(raw_description).strip().upper().split())
+            target_text = str(target_category).strip()
+            if canonical_raw_description and target_text:
+                normalized_raw_mappings[canonical_raw_description] = target_text
+
+        saved_mappings = loaded_config.get("saved_mappings", []) if isinstance(loaded_config.get("saved_mappings"), list) else []
+        normalized_saved_rows: list[JsonDict] = []
+        seen_raw_descriptions: set[str] = set()
+        for row in saved_mappings:
+            if not isinstance(row, dict):
+                continue
+            canonical_raw_description = " ".join(str(row.get("raw_description", "")).strip().upper().split())
+            if not canonical_raw_description:
+                continue
+            normalized_raw = canonical_raw_description.casefold()
+            if normalized_raw in seen_raw_descriptions:
+                continue
+            seen_raw_descriptions.add(normalized_raw)
+            normalized_saved_rows.append(
+                {
+                    "raw_description": canonical_raw_description,
+                    "target_category": str(row.get("target_category", "")).strip(),
+                }
+            )
+
+        keyword_mappings = loaded_config.get("keyword_mappings", {}) if isinstance(loaded_config.get("keyword_mappings"), dict) else {}
+        normalized_keyword_mappings: JsonDict = {}
+        for raw_description, target_category in keyword_mappings.items():
+            canonical_raw_description = " ".join(str(raw_description).strip().upper().split())
+            target_text = str(target_category).strip()
+            if canonical_raw_description and target_text:
+                normalized_keyword_mappings[canonical_raw_description] = target_text
+
+        if not normalized_raw_mappings and normalized_saved_rows:
+            normalized_raw_mappings = {
+                str(row.get("raw_description", "")).strip(): str(row.get("target_category", "")).strip()
+                for row in normalized_saved_rows
+                if str(row.get("target_category", "")).strip()
+            }
+        if not normalized_raw_mappings and normalized_keyword_mappings:
+            normalized_raw_mappings = dict(normalized_keyword_mappings)
+
+        if not normalized_saved_rows and normalized_raw_mappings:
+            normalized_saved_rows = [
+                {
+                    "raw_description": raw_description,
+                    "target_category": target_category,
+                }
+                for raw_description, target_category in normalized_raw_mappings.items()
+            ]
+
+        if not normalized_keyword_mappings and normalized_raw_mappings:
+            normalized_keyword_mappings = dict(normalized_raw_mappings)
+
+        # Keep keyword_mappings as a compatibility-only in-memory mirror for
+        # the temporary runtime fallback. The persisted config no longer needs
+        # to write it as a co-primary mapping model.
+        normalized_config["raw_mappings"] = normalized_raw_mappings
+        normalized_config["saved_mappings"] = normalized_saved_rows
+        normalized_config["keyword_mappings"] = normalized_keyword_mappings
+        return normalized_config
+
     def _get_slot_context(self, recap_key: str) -> tuple[int, list[str]]:
         """Return slot capacity and row-label order from the recap template map."""
         recap_map = self.get_recap_template_map()
@@ -349,6 +425,13 @@ class ConfigLoader:
                 self._validate_key_type(file_path, loaded_config, "raw_mappings", dict, "object")
             if "saved_mappings" in loaded_config:
                 self._validate_key_type(file_path, loaded_config, "saved_mappings", list, "array")
+        elif config_name == "equipment_mapping":
+            if "raw_mappings" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "raw_mappings", dict, "object")
+            if "saved_mappings" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "saved_mappings", list, "array")
+            if "keyword_mappings" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "keyword_mappings", dict, "object")
         elif config_name == "input_model":
             self._validate_key_type(file_path, loaded_config, "report_type", str, "string")
             self._validate_key_type(file_path, loaded_config, "section_headers", dict, "object")

@@ -11,6 +11,7 @@ from typing import Any
 from job_cost_tool.core.config.path_utils import get_app_settings_path, get_legacy_config_root, get_profiles_root
 
 _PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_DEFAULT_APP_SETTINGS = {"active_profile": "default", "default_profile_unlocked": False}
 
 
 class ProfileManager:
@@ -48,6 +49,18 @@ class ProfileManager:
         settings = self._load_app_settings()
         active_profile = str(settings.get("active_profile", "default")).strip()
         return active_profile or "default"
+
+    def is_default_profile_unlocked(self) -> bool:
+        """Return whether the built-in default profile is unlocked for editing."""
+        settings = self._load_app_settings()
+        return bool(settings.get("default_profile_unlocked", False))
+
+    def set_default_profile_unlocked(self, unlocked: bool) -> None:
+        """Persist the edit-lock state for the built-in default profile."""
+        settings = self._load_app_settings()
+        settings["default_profile_unlocked"] = bool(unlocked)
+        self._settings_path.parent.mkdir(parents=True, exist_ok=True)
+        self._settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 
     def get_active_profile_dir(self) -> Path:
         """Return the directory of the active profile, falling back to legacy config when needed."""
@@ -206,7 +219,7 @@ class ProfileManager:
     def _load_app_settings(self) -> dict[str, Any]:
         """Load the app settings file when present."""
         if not self._settings_path.is_file():
-            return {"active_profile": "default"}
+            return dict(_DEFAULT_APP_SETTINGS)
 
         try:
             with self._settings_path.open("r", encoding="utf-8-sig") as settings_file:
@@ -220,7 +233,9 @@ class ProfileManager:
             raise ValueError(
                 f"App settings file '{self._settings_path}' must contain a JSON object at the top level"
             )
-        return loaded_settings
+        normalized_settings = dict(_DEFAULT_APP_SETTINGS)
+        normalized_settings.update(loaded_settings)
+        return normalized_settings
 
     def _load_profile_metadata(self, profile_dir: Path) -> dict[str, Any]:
         """Load and validate a profile metadata file."""

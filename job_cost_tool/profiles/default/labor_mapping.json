@@ -3,46 +3,77 @@
     "20": "103",
     "21": "104"
   },
-  "aliases": {
-    "2B APP": "APP",
-    "8H APP": "APP",
-    "9I APP": "APP",
-    "APPRENTICE": "APP",
-    "APP": "APP",
-    "G": "G",
-    "GENERAL": "G",
-    "GF": "GF",
-    "GENERAL FM": "GF",
-    "F": "F",
-    "FOREMAN": "F",
-    "J": "J",
-    "JOURNEYMAN": "J",
-    "JOURNEYMAN LM": "J",
-    "LL": "LL",
-    "LEAD LINEMAN": "LL",
-    "EO": "EO",
-    "EQUIPMENT OPERATOR": "EO",
-    "GROUNDSMAN": "G"
-  },
-  "class_mappings": {
-    "103": {
-      "G": "103 General",
-      "GF": "103 General FM",
-      "F": "103 Foreman",
-      "J": "103 Journeyman",
-      "APP": "103 Apprentice"
-    },
-    "104": {
-      "GF": "104 General FM",
-      "F": "104 Foreman",
-      "LL": "104 Lead Lineman",
-      "J": "104 Journeyman LM",
-      "EO": "104 Equipment Operator",
-      "G": "104 Groundsman",
-      "APP": "104 Apprentice"
-    }
-  },
   "apprentice_aliases": [
     "APP"
+  ],
+  "raw_mappings": {
+    "104/2 APP": "104 Apprentice",
+    "104/5 APP": "104 Apprentice",
+    "104/DGM": "104 Groundsman",
+    "104/EO A": "104 Equipment Operator",
+    "104/EO B": "104 Equipment Operator",
+    "104/FM": "104 Foreman",
+    "104/GF": "104 General FM",
+    "104/GM": "104 Groundsman",
+    "104/HL": "104 Lead Lineman",
+    "104/LM": "104 Journeyman LM",
+    "42/F": "104 Foreman"
+  },
+  "saved_mappings": [
+    {
+      "raw_value": "104/2 APP",
+      "target_classification": "104 Apprentice",
+      "notes": ""
+    },
+    {
+      "raw_value": "104/5 APP",
+      "target_classification": "104 Apprentice",
+      "notes": ""
+    },
+    {
+      "raw_value": "104/DGM",
+      "target_classification": "104 Groundsman",
+      "notes": ""
+    },
+    {
+      "raw_value": "104/EO A",
+      "target_classification": "104 Equipment Operator",
+      "notes": ""
+    },
+    {
+      "raw_value": "104/EO B",
+      "target_classification": "104 Equipment Operator",
+      "notes": ""
+    },
+    {
+      "raw_value": "104/FM",
+      "target_classification": "104 Foreman",
+      "notes": ""
+    },
+    {
+      "raw_value": "104/GF",
+      "target_classification": "104 General FM",
+      "notes": ""
+    },
+    {
+      "raw_value": "104/GM",
+      "target_classification": "104 Groundsman",
+      "notes": ""
+    },
+    {
+      "raw_value": "104/HL",
+      "target_classification": "104 Lead Lineman",
+      "notes": ""
+    },
+    {
+      "raw_value": "104/LM",
+      "target_classification": "104 Journeyman LM",
+      "notes": ""
+    },
+    {
+      "raw_value": "42/F",
+      "target_classification": "104 Foreman",
+      "notes": ""
+    }
   ]
 }

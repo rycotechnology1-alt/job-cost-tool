@@ -7,6 +7,7 @@ from dataclasses import replace
 from unittest.mock import patch
 
 from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
+from job_cost_tool.core.normalization.equipment_normalizer import normalize_equipment_record
 from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
 from job_cost_tool.core.normalization.normalizer import normalize_records
 from job_cost_tool.services.validation_service import validate_records
@@ -331,6 +332,262 @@ class NormalizationRuleTests(unittest.TestCase):
 
         self.assertIsNone(normalized_record.recap_labor_classification)
         self.assertTrue(any("missing a raw labor class" in warning.casefold() for warning in normalized_record.warnings))
+
+
+    def test_raw_only_equipment_config_normalizes_without_keyword_fallback(self) -> None:
+        record = Record(
+            record_type=EQUIPMENT,
+            phase_code="31",
+            raw_description="Equipment line",
+            cost=50,
+            hours=2.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="627/2025 FORD TRANSIT VAN",
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Equipment source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            return_value={
+                "raw_mappings": {"627/2025 FORD TRANSIT VAN": "Utility Van"},
+                "saved_mappings": [
+                    {"raw_description": "627/2025 FORD TRANSIT VAN", "target_category": "Utility Van"}
+                ],
+            },
+        ), patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            return_value={
+                "classifications": ["Utility Van"],
+                "slots": [{"slot_id": "equipment_1", "label": "Utility Van", "active": True}],
+            },
+        ):
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+            normalized_record = normalize_equipment_record(record)
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+
+        self.assertEqual(normalized_record.equipment_category, "Utility Van")
+        self.assertEqual(normalized_record.recap_equipment_slot_id, "equipment_1")
+
+    def test_unmapped_raw_equipment_description_no_longer_falls_back_to_keyword_matching(self) -> None:
+        record = Record(
+            record_type=EQUIPMENT,
+            phase_code="31",
+            raw_description="Equipment line",
+            cost=50,
+            hours=2.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="627/2025 FORD TRANSIT VAN",
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Equipment source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            return_value={"keyword_mappings": {"FORD TRANSIT": "Utility Van"}},
+        ), patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            return_value={
+                "classifications": ["Utility Van"],
+                "slots": [{"slot_id": "equipment_1", "label": "Utility Van", "active": True}],
+            },
+        ):
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+            normalized_record = normalize_equipment_record(record)
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+
+        self.assertIsNone(normalized_record.equipment_category)
+        self.assertIsNone(normalized_record.recap_equipment_slot_id)
+        self.assertTrue(any("did not match" in warning.casefold() for warning in normalized_record.warnings))
+        self.assertEqual(normalized_record.confidence, 0.6)
+
+    def test_exact_raw_equipment_lookup_canonicalizes_spacing_and_case(self) -> None:
+        record = Record(
+            record_type=EQUIPMENT,
+            phase_code="31",
+            raw_description="Equipment line",
+            cost=50,
+            hours=2.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="  627/2025   ford   transit van  ",
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Equipment source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            return_value={"raw_mappings": {"627/2025 FORD TRANSIT VAN": "Utility Van"}},
+        ), patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            return_value={
+                "classifications": ["Utility Van"],
+                "slots": [{"slot_id": "equipment_1", "label": "Utility Van", "active": True}],
+            },
+        ):
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+            normalized_record = normalize_equipment_record(record)
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+
+        self.assertEqual(normalized_record.equipment_category, "Utility Van")
+
+    def test_invalid_raw_equipment_mapping_warns_and_remains_unmapped(self) -> None:
+        record = Record(
+            record_type=EQUIPMENT,
+            phase_code="31",
+            raw_description="Equipment line",
+            cost=50,
+            hours=2.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="627/2025 FORD TRANSIT VAN",
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Equipment source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            return_value={"raw_mappings": {"627/2025 FORD TRANSIT VAN": "Not In Profile"}},
+        ), patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            return_value={
+                "classifications": ["Utility Van"],
+                "slots": [{"slot_id": "equipment_1", "label": "Utility Van", "active": True}],
+            },
+        ):
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+            normalized_record = normalize_equipment_record(record)
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+
+        self.assertIsNone(normalized_record.equipment_category)
+        self.assertIsNone(normalized_record.recap_equipment_slot_id)
+        self.assertTrue(any("invalid target" in warning.casefold() for warning in normalized_record.warnings))
+        self.assertEqual(normalized_record.confidence, 0.6)
+
+    def test_inactive_raw_equipment_mapping_warns_and_remains_unmapped(self) -> None:
+        record = Record(
+            record_type=EQUIPMENT,
+            phase_code="31",
+            raw_description="Equipment line",
+            cost=50,
+            hours=2.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="627/2025 FORD TRANSIT VAN",
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Equipment source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            return_value={"raw_mappings": {"627/2025 FORD TRANSIT VAN": "Utility Van"}},
+        ), patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            return_value={
+                "classifications": ["Utility Van"],
+                "slots": [
+                    {"slot_id": "equipment_1", "label": "Utility Van", "active": False},
+                ],
+            },
+        ):
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+            normalized_record = normalize_equipment_record(record)
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+
+        self.assertIsNone(normalized_record.equipment_category)
+        self.assertIsNone(normalized_record.recap_equipment_slot_id)
+        self.assertTrue(any("inactive target" in warning.casefold() for warning in normalized_record.warnings))
+        self.assertEqual(normalized_record.confidence, 0.6)
+
+    def test_missing_equipment_description_still_warns_appropriately(self) -> None:
+        record = Record(
+            record_type=EQUIPMENT,
+            phase_code="31",
+            raw_description="Equipment line",
+            cost=50,
+            hours=2.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Equipment source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            return_value={"raw_mappings": {}},
+        ), patch(
+            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            return_value={"classifications": [], "slots": []},
+        ):
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+            normalized_record = normalize_equipment_record(record)
+            normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
+            normalize_equipment_record.__globals__["_get_target_equipment_classifications"].cache_clear()
+            normalize_equipment_record.__globals__["_get_active_equipment_slot_lookup"].cache_clear()
+
+        self.assertIsNone(normalized_record.equipment_category)
+        self.assertTrue(any("missing a raw equipment description" in warning.casefold() for warning in normalized_record.warnings))
 
     def test_family_routing_remains_intact_for_mixed_records(self) -> None:
         labor_record = Record(

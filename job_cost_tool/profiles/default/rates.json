@@ -1,4 +1,106 @@
 {
-  "labor_rates": {},
-  "equipment_rates": {}
+  "labor_rates": {
+    "103 General FM": {
+      "standard_rate": 172.94,
+      "overtime_rate": 232.74,
+      "double_time_rate": 292.55
+    },
+    "103 Foreman": {
+      "standard_rate": 162.94,
+      "overtime_rate": 217.75,
+      "double_time_rate": 272.55
+    },
+    "103 Journeyman": {
+      "standard_rate": 152.98,
+      "overtime_rate": 202.8,
+      "double_time_rate": 252.63
+    },
+    "103 Apprentice": {
+      "standard_rate": 125.73,
+      "overtime_rate": 163.1,
+      "double_time_rate": 200.47
+    },
+    "104 General FM": {
+      "standard_rate": 146.3,
+      "overtime_rate": 199.38,
+      "double_time_rate": 252.45
+    },
+    "104 Foreman": {
+      "standard_rate": 141.75,
+      "overtime_rate": 192.57,
+      "double_time_rate": 243.39
+    },
+    "104 Lead Lineman": {
+      "standard_rate": 137.19,
+      "overtime_rate": 185.76,
+      "double_time_rate": 234.34
+    },
+    "104 Journeyman LM": {
+      "standard_rate": 129.89,
+      "overtime_rate": 174.86,
+      "double_time_rate": 219.84
+    },
+    "104 Equipment Operator": {
+      "standard_rate": 112.65,
+      "overtime_rate": 150.87,
+      "double_time_rate": 189.1
+    },
+    "104 Groundsman": {
+      "standard_rate": 80.53,
+      "overtime_rate": 105.27,
+      "double_time_rate": 130.0
+    },
+    "104 Apprentice": {
+      "standard_rate": 108.37,
+      "overtime_rate": 148.85,
+      "double_time_rate": 189.32
+    }
+  },
+  "equipment_rates": {
+    "Excavator/ Drill Rig": {
+      "rate": 300.0
+    },
+    "Bucket Truck": {
+      "rate": 75.0
+    },
+    "Digger Derrick": {
+      "rate": 75.0
+    },
+    "Backyard Machine": {
+      "rate": 75.0
+    },
+    "3-Reel Trailer": {
+      "rate": 20.0
+    },
+    "Pick-up Truck": {
+      "rate": 25.0
+    },
+    "Utility Van": {
+      "rate": 30.0
+    },
+    "Winch Truck": {
+      "rate": 75.0
+    },
+    "Load Lugger": {
+      "rate": 75.0
+    },
+    "Power Fed Trailer": {
+      "rate": 45.0
+    },
+    "1-Reel Trailer": {
+      "rate": 20.0
+    },
+    "Boom Truck": {
+      "rate": 115.0
+    },
+    "Test Truck": {
+      "rate": 32.0
+    },
+    "Pulling/Tension Trailer": {
+      "rate": 55.0
+    },
+    "Pole Trailer": {
+      "rate": 30.0
+    }
+  }
 }

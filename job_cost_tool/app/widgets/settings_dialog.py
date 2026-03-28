@@ -42,6 +42,7 @@ class SettingsDialog(QDialog):
         self._set_active_button = QPushButton("Set Active Profile")
         self._duplicate_button = QPushButton("Duplicate Profile")
         self._delete_button = QPushButton("Delete Profile")
+        self._toggle_default_lock_button = QPushButton()
 
         self._labor_mapping_table = QTableWidget(0, 3)
         self._equipment_mapping_table = QTableWidget(0, 2)
@@ -127,6 +128,7 @@ class SettingsDialog(QDialog):
         actions_layout.addWidget(self._set_active_button)
         actions_layout.addWidget(self._duplicate_button)
         actions_layout.addWidget(self._delete_button)
+        actions_layout.addWidget(self._toggle_default_lock_button)
         actions_layout.addStretch(1)
 
         layout.addWidget(summary_group)
@@ -316,10 +318,15 @@ class SettingsDialog(QDialog):
         self._set_active_button.clicked.connect(self._set_active_profile)
         self._duplicate_button.clicked.connect(self._duplicate_profile)
         self._delete_button.clicked.connect(self._delete_profile)
+        self._toggle_default_lock_button.clicked.connect(self._toggle_default_profile_lock)
 
     def set_observed_labor_raw_values(self, values: list[str]) -> None:
         """Update temporary observed labor raw values used by the mapping editor."""
         self._view_model.set_observed_labor_raw_values(values)
+
+    def set_observed_equipment_raw_values(self, values: list[str]) -> None:
+        """Update temporary observed equipment descriptions used by the mapping editor."""
+        self._view_model.set_observed_equipment_raw_values(values)
 
     def _refresh_ui(self) -> None:
         """Refresh summary, available profiles, and editor tabs from the view-model."""
@@ -472,6 +479,38 @@ class SettingsDialog(QDialog):
         QMessageBox.information(self, "Profile Created", message)
         self.settings_changed.emit()
 
+    def _toggle_default_profile_lock(self) -> None:
+        """Unlock or re-lock the built-in default profile for editing."""
+        selected_profile_name = (self._selected_profile_name() or "").strip().casefold()
+        if selected_profile_name != "default":
+            return
+
+        if not self._view_model.is_default_profile_unlocked:
+            confirmation = QMessageBox.question(
+                self,
+                "Unlock Default Profile",
+                "You are about to edit the default profile. Are you sure?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirmation != QMessageBox.StandardButton.Yes:
+                return
+            try:
+                message = self._view_model.unlock_default_profile()
+            except Exception as exc:
+                QMessageBox.critical(self, "Profile Error", str(exc))
+                return
+            QMessageBox.information(self, "Profile Unlocked", message)
+        else:
+            try:
+                message = self._view_model.lock_default_profile()
+            except Exception as exc:
+                QMessageBox.critical(self, "Profile Error", str(exc))
+                return
+            QMessageBox.information(self, "Profile Locked", message)
+
+        self.settings_changed.emit()
+
     def _delete_profile(self) -> None:
         """Delete the currently selected non-default, non-active profile after confirmation."""
         profile_name = self._selected_profile_name()
@@ -613,9 +652,17 @@ class SettingsDialog(QDialog):
         selected_profile_name = self._selected_profile_name()
         active_profile_name = str(self._view_model.active_profile.get("profile_name", "")).strip()
         has_selection = bool(selected_profile_name)
+        selected_is_default = str(selected_profile_name or "").strip().casefold() == "default"
         self._set_active_button.setEnabled(has_selection and selected_profile_name != active_profile_name)
         self._duplicate_button.setEnabled(has_selection)
-        self._delete_button.setEnabled(has_selection)
+        self._delete_button.setEnabled(
+            has_selection and not selected_is_default and selected_profile_name != active_profile_name
+        )
+        self._toggle_default_lock_button.setVisible(selected_is_default)
+        self._toggle_default_lock_button.setEnabled(selected_is_default)
+        self._toggle_default_lock_button.setText(
+            "Lock Default Profile" if self._view_model.is_default_profile_unlocked else "Unlock Default Profile"
+        )
 
     def _selected_profile_name(self) -> Optional[str]:
         """Return the currently selected profile name from the table."""
@@ -721,7 +768,7 @@ class SettingsDialog(QDialog):
         editable_columns: set[int],
     ) -> None:
         """Apply read-only state for a mapping editor table."""
-        is_read_only = self._view_model.is_default_profile
+        is_read_only = not self._view_model.is_active_profile_editable
         status_label.setText(
             self._view_model.read_only_message if is_read_only else "Edit mappings for the active profile."
         )
@@ -741,7 +788,7 @@ class SettingsDialog(QDialog):
 
     def _update_rates_editor_state(self) -> None:
         """Apply read-only state for the rates editors."""
-        is_read_only = self._view_model.is_default_profile
+        is_read_only = not self._view_model.is_active_profile_editable
         self._rates_status_label.setText(
             self._view_model.read_only_message if is_read_only else "Edit rates for the active profile."
         )
@@ -800,7 +847,7 @@ class SettingsDialog(QDialog):
 
     def _update_classification_editor_state(self) -> None:
         """Apply read-only messaging and enabled state for classification slots."""
-        is_read_only = self._view_model.is_default_profile
+        is_read_only = not self._view_model.is_active_profile_editable
         if is_read_only:
             self._classification_status_label.setText(self._view_model.read_only_message)
         else:

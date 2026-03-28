@@ -144,6 +144,7 @@ class MainWindow(QMainWindow):
         """Open the settings/admin dialog for profile management."""
         dialog = SettingsDialog(self)
         dialog.set_observed_labor_raw_values(self._view_model.observed_labor_raw_values)
+        dialog.set_observed_equipment_raw_values(self._view_model.observed_equipment_raw_values)
         dialog.profile_changed.connect(self._handle_profile_changed)
         dialog.settings_changed.connect(self._handle_settings_saved)
         dialog.exec()

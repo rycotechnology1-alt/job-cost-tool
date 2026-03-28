@@ -20,6 +20,10 @@ _EMPLOYEE_SPLIT_RE = re.compile(r"^(?P<prefix>.*?)\s*/\s*(?P<employee_id>\d+)\s*
 _EQUIPMENT_DETAIL_RE = re.compile(
     r"^(?P<employee_name>.+?)\s+(?P<equipment_description>\d+/\d{4}.+?)\s*/\s*\d+\s*$"
 )
+_EQUIPMENT_TRAILING_COUNT_RE = re.compile(r"^(?P<equipment_description>.+?)\s*/\s*\d+\s*$")
+_EQUIPMENT_FALLBACK_NAME_RE = re.compile(
+    r"^(?P<employee_name>.+?,\s*[^,]+?)\s+(?P<equipment_description>.+)$"
+)
 _LABOR_TAIL_RE = re.compile(r"^(?P<employee_name>.+?)\s*\d+\s+Regular Earnings\s*$")
 _CLASS_PREFIX_WITH_FACTOR_RE = re.compile(
     r"^(?:(?P<union_code>\d+)\s*/\s*)?(?P<labor_class_raw>.+?)\s+(?P<factor>\d+\.\d{2})$"
@@ -107,7 +111,10 @@ def tokenize_pr_line(
     result["union_code"] = union_code
     result["labor_class_raw"] = labor_class_raw
 
-    employee_name, equipment_description = _parse_employee_and_equipment(remaining)
+    employee_name, equipment_description = _parse_employee_and_equipment(
+        remaining,
+        prefer_equipment_fallback=phase_family == EQUIPMENT,
+    )
     result["employee_name"] = employee_name
     result["equipment_description"] = equipment_description
 
@@ -300,8 +307,18 @@ def _parse_class_prefix(prefix: str) -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
-def _parse_employee_and_equipment(remaining: str) -> tuple[Optional[str], Optional[str]]:
-    """Parse employee and equipment text from the remaining PR detail body."""
+def _parse_employee_and_equipment(
+    remaining: str,
+    *,
+    prefer_equipment_fallback: bool = False,
+) -> tuple[Optional[str], Optional[str]]:
+    """Parse employee and equipment text from the remaining PR detail body.
+
+    Equipment extraction is intentionally permissive when a PR line already sits
+    inside an equipment phase. Preserving a messy-but-usable raw equipment tail
+    is safer for downstream review and keyword normalization than dropping the
+    description entirely when one narrow detail pattern misses.
+    """
     equipment_match = _EQUIPMENT_DETAIL_RE.match(remaining)
     if equipment_match:
         return (
@@ -314,7 +331,29 @@ def _parse_employee_and_equipment(remaining: str) -> tuple[Optional[str], Option
         return labor_match.group("employee_name").strip(), None
 
     stripped = remaining.strip()
-    return (stripped or None), None
+    if not stripped:
+        return None, None
+
+    if prefer_equipment_fallback and not _looks_like_labor_detail(stripped):
+        return _build_equipment_fallback_fields(stripped)
+
+    return stripped, None
+
+
+def _build_equipment_fallback_fields(remaining: str) -> tuple[Optional[str], Optional[str]]:
+    """Return a conservative raw equipment fallback when the strict pattern misses."""
+    equipment_description = remaining.strip()
+    trailing_count_match = _EQUIPMENT_TRAILING_COUNT_RE.match(equipment_description)
+    if trailing_count_match:
+        equipment_description = trailing_count_match.group("equipment_description").strip()
+
+    employee_name = remaining.strip()
+    name_match = _EQUIPMENT_FALLBACK_NAME_RE.match(equipment_description)
+    if name_match:
+        employee_name = name_match.group("employee_name").strip()
+        equipment_description = name_match.group("equipment_description").strip()
+
+    return (employee_name or None), (equipment_description or None)
 
 
 def _looks_like_labor_detail(remaining: str) -> bool:

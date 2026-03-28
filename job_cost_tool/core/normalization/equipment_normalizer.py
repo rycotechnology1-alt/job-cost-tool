@@ -33,16 +33,26 @@ def _get_active_equipment_slot_lookup() -> dict[str, dict[str, Any]]:
 
 
 def normalize_equipment_record(record: Record) -> Record:
-    """Apply config-driven equipment normalization to a parsed record."""
+    """Apply config-driven equipment normalization to a parsed record.
+
+    Runtime equipment normalization is now fully raw-first: exact configured
+    raw descriptions are the sole runtime mapping source of truth.
+    """
     warnings = list(record.warnings)
-    equipment_target_label = _map_equipment_description(record.equipment_description)
-    slot_id, equipment_category = _resolve_equipment_slot(equipment_target_label)
+    equipment_target_label = None
 
     if record.equipment_description is None:
         warnings.append("Equipment record is missing a raw equipment description for recap mapping.")
-    elif equipment_target_label is None:
+    else:
+        equipment_target_label, raw_mapping_warning = _map_raw_equipment_description(record.equipment_description)
+        if raw_mapping_warning:
+            warnings.append(raw_mapping_warning)
+
+    slot_id, equipment_category = _resolve_equipment_slot(equipment_target_label)
+
+    if record.equipment_description is not None and equipment_target_label is None:
         warnings.append("Equipment description did not match a configured target equipment category.")
-    elif slot_id is None:
+    elif equipment_target_label is not None and slot_id is None:
         warnings.append("Equipment record mapped to a category that is not active for the current profile.")
 
     return replace(
@@ -55,31 +65,27 @@ def normalize_equipment_record(record: Record) -> Record:
     )
 
 
-def _map_equipment_description(equipment_description: Optional[str]) -> Optional[str]:
-    """Map a raw equipment description to a configured recap target."""
+def _map_raw_equipment_description(equipment_description: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Map an exact raw equipment description first and return any config warning."""
     if equipment_description is None:
-        return None
+        return None, None
 
     mapping = _get_equipment_mapping()
-    keyword_mappings = mapping.get("keyword_mappings", {})
-    if not isinstance(keyword_mappings, dict):
-        return None
+    raw_mappings = mapping.get("raw_mappings", {})
+    if not isinstance(raw_mappings, dict):
+        return None, None
 
-    description = equipment_description.casefold()
-    matches: list[tuple[int, str]] = []
-    for keyword, target in keyword_mappings.items():
-        normalized_keyword = str(keyword).casefold()
-        if normalized_keyword in description:
-            matches.append((len(normalized_keyword), str(target).strip()))
-
-    if not matches:
-        return None
-
-    matches.sort(key=lambda item: item[0], reverse=True)
-    target = matches[0][1]
+    raw_key = _canonicalize_equipment_description(equipment_description)
+    target = str(raw_mappings.get(raw_key, "")).strip()
+    if not raw_key or not target:
+        return None, None
     if target not in _get_target_equipment_classifications():
-        return None
-    return target
+        return None, f"Equipment raw mapping '{raw_key}' points to invalid target '{target}'."
+    slot_id, _ = _resolve_equipment_slot(target)
+    if slot_id is None:
+        return None, f"Equipment raw mapping '{raw_key}' points to inactive target '{target}'."
+    return target, None
+
 
 
 def _resolve_equipment_slot(target_label: Optional[str]) -> tuple[Optional[str], Optional[str]]:
@@ -92,6 +98,11 @@ def _resolve_equipment_slot(target_label: Optional[str]) -> tuple[Optional[str],
     if not slot:
         return None, None
     return str(slot.get("slot_id") or "").strip() or None, str(slot.get("label") or "").strip() or None
+
+
+def _canonicalize_equipment_description(value: str) -> str:
+    """Canonicalize equipment descriptions conservatively for raw-first matching."""
+    return " ".join(str(value).strip().upper().split())
 
 
 def _reduce_confidence(confidence: float, is_uncertain: bool) -> float:
@@ -110,3 +121,5 @@ def _dedupe_warnings(warnings: list[str]) -> list[str]:
             unique_warnings.append(warning)
             seen.add(warning)
     return unique_warnings
+
+

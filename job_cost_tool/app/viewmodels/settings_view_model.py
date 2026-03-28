@@ -34,6 +34,7 @@ class SettingsViewModel(QObject):
         self._labor_rate_rows: list[dict[str, str]] = []
         self._equipment_rate_rows: list[dict[str, str]] = []
         self._observed_labor_raw_values: list[str] = []
+        self._observed_equipment_raw_values: list[str] = []
         self.reload()
 
     @property
@@ -78,14 +79,29 @@ class SettingsViewModel(QObject):
 
     @property
     def is_default_profile(self) -> bool:
-        """Return True when the active profile should remain read-only."""
+        """Return True when the active profile is the built-in default profile."""
         profile_name = str(self._active_profile.get("profile_name", "")).strip().casefold()
         return profile_name == "default"
 
     @property
+    def is_default_profile_locked(self) -> bool:
+        """Return True when the default profile is selected and still locked for editing."""
+        return self.is_default_profile and not self._profile_manager.is_default_profile_unlocked()
+
+    @property
+    def is_active_profile_editable(self) -> bool:
+        """Return True when the active profile may be edited in settings."""
+        return not self.is_default_profile_locked
+
+    @property
+    def is_default_profile_unlocked(self) -> bool:
+        """Return True when the built-in default profile has been explicitly unlocked."""
+        return self._profile_manager.is_default_profile_unlocked()
+
+    @property
     def read_only_message(self) -> str:
-        """Return the standard read-only message for the default profile."""
-        return "Default profile is read-only. Duplicate it to make changes."
+        """Return the standard read-only message for the locked default profile."""
+        return "Default profile is locked. Unlock it to make changes."
 
     @property
     def labor_rate_rows(self) -> list[dict[str, str]]:
@@ -142,6 +158,18 @@ class SettingsViewModel(QObject):
         self.reload()
         return f"Deleted profile {metadata.get('display_name', profile_name)} ({metadata.get('profile_name', profile_name)})."
 
+    def unlock_default_profile(self) -> str:
+        """Unlock the built-in default profile for editing and persist that state."""
+        self._profile_manager.set_default_profile_unlocked(True)
+        self.reload()
+        return "Default profile is now unlocked for editing."
+
+    def lock_default_profile(self) -> str:
+        """Re-lock the built-in default profile for editing and persist that state."""
+        self._profile_manager.set_default_profile_unlocked(False)
+        self.reload()
+        return "Default profile has been locked."
+
     def set_observed_labor_raw_values(self, values: list[str]) -> None:
         """Update temporary observed labor raw values used as mapping candidates."""
         observed_values = _dedupe_casefold_preserving_order(values)
@@ -151,7 +179,14 @@ class SettingsViewModel(QObject):
         self._reload_active_profile_config_data()
         self.state_changed.emit()
 
-
+    def set_observed_equipment_raw_values(self, values: list[str]) -> None:
+        """Update temporary observed equipment descriptions used as mapping candidates."""
+        observed_values = _dedupe_casefold_preserving_order(values)
+        if observed_values == self._observed_equipment_raw_values:
+            return
+        self._observed_equipment_raw_values = observed_values
+        self._reload_active_profile_config_data()
+        self.state_changed.emit()
 
     def save_labor_mappings(self, rows: list[dict[str, str]]) -> str:
         """Validate and persist labor mapping rows for the active profile."""
@@ -205,35 +240,50 @@ class SettingsViewModel(QObject):
         return "Labor mappings saved successfully."
 
     def save_equipment_mappings(self, rows: list[dict[str, str]]) -> str:
-        """Validate and persist equipment mapping rows for the active profile."""
+        """Validate and persist raw-first equipment mapping rows for the active profile."""
         self._ensure_active_profile_is_editable()
         profile_dir = self._active_profile_dir()
         loader = ConfigLoader(config_dir=profile_dir)
         existing_config = loader.get_equipment_mapping()
         valid_targets = set(self._equipment_classifications)
 
-        keyword_mappings: dict[str, str] = {}
-        seen_patterns: set[str] = set()
+        saved_mappings: list[dict[str, str]] = []
+        seen_raw_descriptions: set[str] = set()
+
         for row in rows:
-            raw_pattern = str(row.get("raw_pattern", "")).strip()
+            raw_description = str(row.get("raw_description") or row.get("raw_pattern") or "").strip()
             target_category = str(row.get("target_category", "")).strip()
-            if not raw_pattern:
-                raise ValueError("Equipment mapping rows must include a raw description or pattern.")
-            if not target_category:
-                raise ValueError(f"Equipment mapping '{raw_pattern}' is missing a target category.")
-            if target_category not in valid_targets:
+            if not raw_description:
+                raise ValueError("Equipment mapping rows must include a raw description.")
+            if target_category and target_category not in valid_targets:
                 raise ValueError(
-                    f"Equipment mapping '{raw_pattern}' references unknown target category '{target_category}'."
+                    f"Equipment mapping '{raw_description}' references unknown target category '{target_category}'."
                 )
 
-            normalized_pattern = raw_pattern.casefold()
-            if normalized_pattern in seen_patterns:
-                raise ValueError(f"Duplicate equipment mapping pattern '{raw_pattern}' is not allowed.")
-            seen_patterns.add(normalized_pattern)
-            keyword_mappings[raw_pattern] = target_category
+            canonical_raw_description = _canonicalize_equipment_description(raw_description)
+            normalized_raw_description = canonical_raw_description.casefold()
+            if normalized_raw_description in seen_raw_descriptions:
+                raise ValueError(
+                    f"Duplicate equipment mapping raw description '{raw_description}' is not allowed."
+                )
+            seen_raw_descriptions.add(normalized_raw_description)
+            saved_mappings.append(
+                {
+                    "raw_description": canonical_raw_description,
+                    "target_category": target_category,
+                }
+            )
 
-        new_config = dict(existing_config)
-        new_config["keyword_mappings"] = keyword_mappings
+        # Equipment mapping persistence is now raw-first. Save exact admin rows
+        # and direct raw lookups only; ConfigLoader can still synthesize an
+        # in-memory keyword_mappings compatibility view for the current runtime fallback.
+        new_config = {
+            key: value
+            for key, value in dict(existing_config).items()
+            if key != "keyword_mappings"
+        }
+        new_config["raw_mappings"] = _build_raw_equipment_mappings_from_rows(saved_mappings)
+        new_config["saved_mappings"] = _normalize_saved_equipment_mapping_rows(saved_mappings)
         _write_json_file(profile_dir / "equipment_mapping.json", new_config)
         clear_profile_dependent_caches()
         self.reload()
@@ -424,7 +474,10 @@ class SettingsViewModel(QObject):
             labor_mapping,
             observed_raw_values=self._observed_labor_raw_values,
         )
-        self._equipment_mapping_rows = _build_equipment_mapping_rows(equipment_mapping)
+        self._equipment_mapping_rows = _build_equipment_mapping_rows(
+            equipment_mapping,
+            observed_raw_descriptions=self._observed_equipment_raw_values,
+        )
         self._labor_rate_rows = _build_labor_rate_rows(rates, self._labor_classifications)
         self._equipment_rate_rows = _build_equipment_rate_rows(rates, self._equipment_classifications)
 
@@ -440,11 +493,13 @@ class SettingsViewModel(QObject):
 
         summary = dict(metadata)
         summary["template_path"] = str(template_path) if template_path else "-"
+        summary["default_profile_locked"] = self.is_default_profile_locked
+        summary["default_profile_unlocked"] = self.is_default_profile_unlocked
         return summary
 
     def _ensure_active_profile_is_editable(self) -> None:
         """Raise when the active profile is intentionally read-only."""
-        if self.is_default_profile:
+        if not self.is_active_profile_editable:
             raise ValueError(self.read_only_message)
 
     def _active_profile_dir(self) -> Path:
@@ -547,6 +602,71 @@ def persist_observed_labor_raw_values(profile_dir: Path, observed_raw_values: li
 
     updated_mapping = dict(labor_mapping)
     updated_mapping["saved_mappings"] = _normalize_saved_labor_mapping_rows(base_rows)
+    _write_json_file(config_path, updated_mapping)
+    clear_profile_dependent_caches()
+    return True
+
+
+def persist_observed_equipment_raw_values(profile_dir: Path, observed_raw_descriptions: list[str]) -> bool:
+    """Persist newly observed equipment descriptions as unmapped saved-mapping placeholders."""
+    if profile_dir.name.strip().casefold() == "default":
+        return False
+
+    observed_values = _dedupe_casefold_preserving_order(observed_raw_descriptions)
+    if not observed_values:
+        return False
+
+    config_path = profile_dir / "equipment_mapping.json"
+    if not config_path.is_file():
+        return False
+
+    try:
+        with config_path.open("r", encoding="utf-8-sig") as config_file:
+            equipment_mapping = json.load(config_file)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    if not isinstance(equipment_mapping, dict):
+        return False
+
+    base_rows = _normalize_saved_equipment_mapping_rows(
+        _build_equipment_mapping_rows(equipment_mapping)
+    )
+    if not base_rows:
+        base_rows = _build_saved_equipment_rows_from_raw_mappings(
+            _normalize_raw_equipment_mappings(equipment_mapping.get("raw_mappings", {}))
+        )
+
+    seen_raw_descriptions = {
+        str(row.get("raw_description", "")).strip().casefold()
+        for row in base_rows
+        if str(row.get("raw_description", "")).strip()
+    }
+
+    did_update = False
+    for raw_description in observed_values:
+        canonical_raw_description = _canonicalize_equipment_description(raw_description)
+        if not canonical_raw_description or canonical_raw_description.casefold() in seen_raw_descriptions:
+            continue
+        seen_raw_descriptions.add(canonical_raw_description.casefold())
+        base_rows.append(
+            {
+                "raw_description": canonical_raw_description,
+                "target_category": "",
+            }
+        )
+        did_update = True
+
+    if not did_update:
+        return False
+
+    updated_mapping = {
+        key: value
+        for key, value in dict(equipment_mapping).items()
+        if key != "keyword_mappings"
+    }
+    updated_mapping["saved_mappings"] = _normalize_saved_equipment_mapping_rows(base_rows)
+    updated_mapping["raw_mappings"] = _build_raw_equipment_mappings_from_rows(updated_mapping["saved_mappings"])
     _write_json_file(config_path, updated_mapping)
     clear_profile_dependent_caches()
     return True
@@ -655,21 +775,119 @@ def _build_raw_mappings_from_rows(rows: list[dict[str, str]]) -> dict[str, str]:
             raw_mappings[raw_value] = target_classification
     return raw_mappings
 
-def _build_equipment_mapping_rows(equipment_mapping: dict[str, Any]) -> list[dict[str, str]]:
-    """Flatten equipment mapping config into editable rows."""
-    keyword_mappings = equipment_mapping.get("keyword_mappings", {})
-    if not isinstance(keyword_mappings, dict):
+def _normalize_saved_equipment_mapping_rows(saved_mappings: Any) -> list[dict[str, str]]:
+    """Normalize saved equipment editor rows while preserving blank unmapped placeholders."""
+    if not isinstance(saved_mappings, list):
         return []
+
+    normalized_rows: list[dict[str, str]] = []
+    seen_raw_descriptions: set[str] = set()
+    for row in saved_mappings:
+        if not isinstance(row, dict):
+            continue
+        raw_description = _canonicalize_equipment_description(
+            str(row.get("raw_description") or row.get("raw_pattern") or "").strip()
+        )
+        if not raw_description:
+            continue
+        normalized_raw = raw_description.casefold()
+        if normalized_raw in seen_raw_descriptions:
+            continue
+        seen_raw_descriptions.add(normalized_raw)
+        normalized_rows.append(
+            {
+                "raw_description": raw_description,
+                "target_category": str(row.get("target_category", "")).strip(),
+            }
+        )
+    return normalized_rows
+
+
+def _normalize_raw_equipment_mappings(raw_mappings: Any) -> dict[str, str]:
+    """Normalize direct raw equipment mappings into canonical exact keys."""
+    if not isinstance(raw_mappings, dict):
+        return {}
+
+    normalized_mappings: dict[str, str] = {}
+    for raw_description, target_category in raw_mappings.items():
+        canonical_raw_description = _canonicalize_equipment_description(str(raw_description).strip())
+        target_text = str(target_category).strip()
+        if canonical_raw_description and target_text:
+            normalized_mappings[canonical_raw_description] = target_text
+    return normalized_mappings
+
+
+def _build_saved_equipment_rows_from_raw_mappings(raw_mappings: dict[str, str]) -> list[dict[str, str]]:
+    """Materialize raw equipment mapping entries into admin-facing row data."""
     rows = [
         {
-            "raw_pattern": str(raw_pattern).strip(),
-            "target_category": str(target_category).strip(),
+            "raw_description": raw_description,
+            "target_category": target_category,
         }
-        for raw_pattern, target_category in keyword_mappings.items()
-        if str(raw_pattern).strip()
+        for raw_description, target_category in raw_mappings.items()
     ]
-    rows.sort(key=lambda row: row["raw_pattern"].casefold())
+    rows.sort(key=lambda row: (row["target_category"].casefold(), row["raw_description"].casefold()))
     return rows
+
+
+def _build_raw_equipment_mappings_from_rows(rows: list[dict[str, str]]) -> dict[str, str]:
+    """Build the exact persisted raw equipment mapping lookup from saved editor rows."""
+    raw_mappings: dict[str, str] = {}
+    for row in rows:
+        raw_description = _canonicalize_equipment_description(
+            str(row.get("raw_description") or row.get("raw_pattern") or "").strip()
+        )
+        target_category = str(row.get("target_category", "")).strip()
+        if raw_description and target_category:
+            raw_mappings[raw_description] = target_category
+    return raw_mappings
+
+def _build_equipment_mapping_rows(
+    equipment_mapping: dict[str, Any],
+    *,
+    observed_raw_descriptions: list[str] | None = None,
+) -> list[dict[str, str]]:
+    """Flatten raw-first equipment mapping rows and observed values into editor rows."""
+    saved_rows = _normalize_saved_equipment_mapping_rows(equipment_mapping.get("saved_mappings", []))
+
+    if saved_rows:
+        rows = saved_rows
+    else:
+        raw_mappings = _normalize_raw_equipment_mappings(equipment_mapping.get("raw_mappings", {}))
+        if raw_mappings:
+            rows = _build_saved_equipment_rows_from_raw_mappings(raw_mappings)
+        else:
+            rows = _build_saved_equipment_rows_from_raw_mappings(
+                _normalize_raw_equipment_mappings(equipment_mapping.get("keyword_mappings", {}))
+            )
+
+    seen_raw_descriptions = {
+        str(row.get("raw_description", "")).strip().casefold()
+        for row in rows
+        if str(row.get("raw_description", "")).strip()
+    }
+
+    for raw_description in observed_raw_descriptions or []:
+        raw_description_text = _canonicalize_equipment_description(str(raw_description).strip())
+        if not raw_description_text or raw_description_text.casefold() in seen_raw_descriptions:
+            continue
+        seen_raw_descriptions.add(raw_description_text.casefold())
+        rows.append(
+            {
+                "raw_description": raw_description_text,
+                "target_category": "",
+            }
+        )
+
+    rows.sort(key=lambda row: (row["target_category"].casefold(), row["raw_description"].casefold()))
+    return [
+        {
+            "raw_description": str(row.get("raw_description", "")).strip(),
+            "raw_pattern": str(row.get("raw_description", "")).strip(),
+            "target_category": str(row.get("target_category", "")).strip(),
+        }
+        for row in rows
+    ]
 
 
 def _build_labor_rate_rows(rates: dict[str, Any], classifications: list[str]) -> list[dict[str, str]]:
@@ -919,18 +1137,35 @@ def _rename_equipment_mapping_config_targets(
     equipment_mapping: dict[str, Any],
     rename_map: dict[str, str],
 ) -> dict[str, Any]:
-    """Rename equipment target classifications inside the equipment mapping config."""
-    if not rename_map:
-        return dict(equipment_mapping)
-
+    """Rename equipment target classifications inside the raw-first equipment mapping config."""
     updated_config = dict(equipment_mapping)
-    keyword_mappings = equipment_mapping.get("keyword_mappings", {})
-    updated_keyword_mappings: dict[str, str] = {}
-    if isinstance(keyword_mappings, dict):
-        for raw_pattern, target in keyword_mappings.items():
-            target_text = str(target).strip()
-            updated_keyword_mappings[str(raw_pattern).strip()] = rename_map.get(target_text, target_text)
-    updated_config["keyword_mappings"] = updated_keyword_mappings
+
+    raw_mappings = _normalize_raw_equipment_mappings(equipment_mapping.get("raw_mappings", {}))
+    if raw_mappings or "raw_mappings" in equipment_mapping:
+        updated_config["raw_mappings"] = {
+            raw_description: rename_map.get(target_category, target_category)
+            for raw_description, target_category in raw_mappings.items()
+        }
+
+    saved_rows = _normalize_saved_equipment_mapping_rows(equipment_mapping.get("saved_mappings", []))
+    if saved_rows or "saved_mappings" in equipment_mapping:
+        updated_config["saved_mappings"] = [
+            {
+                "raw_description": str(row.get("raw_description", "")).strip(),
+                "target_category": rename_map.get(
+                    str(row.get("target_category", "")).strip(),
+                    str(row.get("target_category", "")).strip(),
+                ),
+            }
+            for row in saved_rows
+        ]
+
+    keyword_mappings = _normalize_raw_equipment_mappings(equipment_mapping.get("keyword_mappings", {}))
+    if keyword_mappings or "keyword_mappings" in equipment_mapping:
+        updated_config["keyword_mappings"] = {
+            raw_description: rename_map.get(target_category, target_category)
+            for raw_description, target_category in keyword_mappings.items()
+        }
     return updated_config
 
 
@@ -1042,11 +1277,11 @@ def _validate_equipment_classification_references(
     valid_targets = {value.casefold(): value for value in valid_classifications}
 
     for row in rows:
-        raw_pattern = str(row.get("raw_pattern", "")).strip()
+        raw_description = str(row.get("raw_description") or row.get("raw_pattern") or "").strip()
         target_category = str(row.get("target_category", "")).strip()
         if target_category and target_category.casefold() not in valid_targets:
             raise ValueError(
-                f"Equipment classification '{target_category}' is still referenced by equipment mapping '{raw_pattern}'. "
+                f"Equipment classification '{target_category}' is still referenced by equipment mapping '{raw_description}'. "
                 "Update mappings first."
             )
 
@@ -1107,6 +1342,11 @@ def _canonicalize_labor_token(value: str) -> str:
     """Canonicalize labor mapping tokens consistently with labor normalization."""
     collapsed = " ".join(str(value).strip().upper().split())
     return collapsed.replace("APPRENTICESHIP", "APP")
+
+
+def _canonicalize_equipment_description(value: str) -> str:
+    """Canonicalize raw equipment descriptions conservatively for raw-first matching."""
+    return " ".join(str(value).strip().upper().split())
 
 
 def _stringify_rate(value: Any) -> str:
