@@ -6,9 +6,11 @@ import json
 import shutil
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from job_cost_tool.app.viewmodels.review_view_model import ReviewViewModel
 from job_cost_tool.app.viewmodels.settings_view_model import (
-    _FALLBACK_LABOR_MAPPING_GROUP,
+    SettingsViewModel,
     _active_labels_from_slots,
     _build_label_rename_map,
     _build_labor_mapping_rows,
@@ -18,12 +20,13 @@ from job_cost_tool.app.viewmodels.settings_view_model import (
     _rename_labor_mapping_config_targets,
     _rename_rates_config_targets,
     _rename_recap_template_map_targets,
-    _resolve_labor_mapping_group,
     _validate_equipment_classification_references,
     _validate_labor_classification_references,
     _validate_slot_rows,
+    persist_observed_labor_raw_values,
 )
 from job_cost_tool.core.config import ConfigLoader, ProfileManager
+from job_cost_tool.core.models.record import Record
 
 
 TEST_ROOT = Path("job_cost_tool/tests/_profile_tmp")
@@ -153,6 +156,30 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertIsNone(manager.get_profile_dir("alt_profile"))
         self.assertFalse((TEST_ROOT / "profiles" / "alt_profile").exists())
 
+    def test_config_loader_normalizes_raw_first_labor_mapping_structure(self) -> None:
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "labor_mapping.json",
+            {
+                "raw_mappings": {" 103/f ": "103 Journeyman"},
+                "saved_mappings": [
+                    {"raw_value": "103/f", "target_classification": "103 Journeyman", "notes": "keep"},
+                    {"raw_value": "104/eo", "target_classification": "", "notes": "todo"},
+                ],
+            },
+        )
+
+        loader = ConfigLoader(config_dir=(TEST_ROOT / "profiles" / "default"))
+        labor_mapping = loader.get_labor_mapping()
+
+        self.assertEqual(labor_mapping["raw_mappings"], {"103/F": "103 Journeyman"})
+        self.assertEqual(
+            labor_mapping["saved_mappings"],
+            [
+                {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep"},
+                {"raw_value": "104/EO", "target_classification": "", "notes": "todo"},
+            ],
+        )
+
     def test_config_loader_migrates_old_classification_list_to_slots_using_template_capacity(self) -> None:
         self._write_json(
             TEST_ROOT / "profiles" / "default" / "target_labor_classifications.json",
@@ -220,37 +247,6 @@ class ProfileConfigTests(unittest.TestCase):
                 valid_classifications=["Utility Van"],
             )
 
-    def test_labor_mapping_group_resolution_does_not_require_numeric_prefixes(self) -> None:
-        labor_mapping = {
-            "phase_defaults": {"20": "contract_a"},
-            "class_mappings": {
-                "contract_a": {
-                    "J": "Journeyman A",
-                    "F": "Foreman A",
-                }
-            },
-        }
-
-        resolved_group = _resolve_labor_mapping_group(
-            raw_value="J",
-            target_classification="Journeyman A",
-            labor_mapping=labor_mapping,
-        )
-        self.assertEqual(resolved_group, "contract_a")
-
-    def test_labor_mapping_group_resolution_accepts_explicit_group_prefix(self) -> None:
-        labor_mapping = {
-            "phase_defaults": {},
-            "class_mappings": {},
-        }
-
-        resolved_group = _resolve_labor_mapping_group(
-            raw_value="contract_b/J",
-            target_classification="Custom Journeyman",
-            labor_mapping=labor_mapping,
-        )
-        self.assertEqual(resolved_group, "contract_b")
-
     def test_classification_rename_map_updates_profile_references(self) -> None:
         labor_rename_map = _build_label_rename_map(
             ["Old Journeyman", "Foreman"],
@@ -263,8 +259,12 @@ class ProfileConfigTests(unittest.TestCase):
 
         updated_labor_mapping = _rename_labor_mapping_config_targets(
             {
+                "raw_mappings": {"103/J": "Old Journeyman"},
+                "saved_mappings": [
+                    {"raw_value": "103/J", "target_classification": "Old Journeyman", "notes": "note"},
+                ],
                 "class_mappings": {"contract_a": {"J": "Old Journeyman"}},
-                "mapping_notes": {"J|Old Journeyman": "note"},
+                "mapping_notes": {"103/J|Old Journeyman": "note"},
             },
             labor_rename_map,
         )
@@ -289,97 +289,36 @@ class ProfileConfigTests(unittest.TestCase):
             equipment_rename_map,
         )
 
-        self.assertEqual(updated_labor_mapping["class_mappings"]["contract_a"]["J"], "New Journeyman")
-        self.assertIn("J|New Journeyman", updated_labor_mapping["mapping_notes"])
+        self.assertEqual(updated_labor_mapping["raw_mappings"]["103/J"], "New Journeyman")
+        self.assertEqual(
+            updated_labor_mapping["saved_mappings"],
+            [{"raw_value": "103/J", "target_classification": "New Journeyman", "notes": "note"}],
+        )
+        self.assertNotIn("class_mappings", updated_labor_mapping)
+        self.assertNotIn("mapping_notes", updated_labor_mapping)
         self.assertEqual(updated_equipment_mapping["keyword_mappings"]["truck"], "New Truck")
         self.assertIn("New Journeyman", updated_rates["labor_rates"])
         self.assertIn("New Truck", updated_rates["equipment_rates"])
         self.assertIn("New Journeyman", updated_recap_map["labor_rows"])
         self.assertIn("New Truck", updated_recap_map["equipment_rows"])
 
-    def test_labor_mapping_group_resolution_falls_back_for_new_custom_target(self) -> None:
-        labor_mapping = {
-            "phase_defaults": {"20": "contract_a", "21": "contract_b"},
-            "class_mappings": {
-                "contract_a": {"J": "Journeyman A"},
-                "contract_b": {"F": "Foreman B"},
-            },
-        }
-
-        resolved_group = _resolve_labor_mapping_group(
-            raw_value="F",
-            target_classification="Big Boy",
-            labor_mapping=labor_mapping,
-        )
-        self.assertEqual(resolved_group, _FALLBACK_LABOR_MAPPING_GROUP)
-
-    def test_build_labor_mapping_rows_omits_synthetic_fallback_group_rows(self) -> None:
-        rows = _build_labor_mapping_rows(
-            {
-                "aliases": {"F": "F"},
-                "class_mappings": {
-                    _FALLBACK_LABOR_MAPPING_GROUP: {"F": "Big Boy"},
-                },
-            }
-        )
-
-        self.assertEqual(rows, [{"raw_value": "F", "target_classification": "Big Boy", "notes": ""}])
-
-    def test_build_labor_mapping_rows_does_not_synthesize_group_based_raw_values(self) -> None:
+    def test_build_labor_mapping_rows_ignores_legacy_only_config_without_raw_first_rows(self) -> None:
         rows = _build_labor_mapping_rows(
             {
                 "aliases": {"103/F": "F"},
                 "class_mappings": {
-                    "103": {"F": "Foreman"},
-                    "104": {"F": "Foreman"},
-                },
-            }
-        )
-
-        self.assertEqual(rows, [{"raw_value": "103/F", "target_classification": "Foreman", "notes": ""}])
-
-    def test_build_labor_mapping_rows_preserves_true_prefixed_raw_values(self) -> None:
-        rows = _build_labor_mapping_rows(
-            {
-                "aliases": {"103/F": "F", "104/F": "F", "103/J": "J", "104/J": "J"},
-                "class_mappings": {
-                    "103": {"F": "103 Foreman", "J": "103 Journeyman"},
-                    "104": {"F": "104 Foreman", "J": "104 Journeyman"},
-                },
-            }
-        )
-
-        self.assertEqual(
-            rows,
-            [
-                {"raw_value": "103/F", "target_classification": "103 Foreman", "notes": ""},
-                {"raw_value": "103/J", "target_classification": "103 Journeyman", "notes": ""},
-                {"raw_value": "104/F", "target_classification": "104 Foreman", "notes": ""},
-                {"raw_value": "104/J", "target_classification": "104 Journeyman", "notes": ""},
-            ],
-        )
-
-    def test_build_labor_mapping_rows_legacy_plain_raw_value_does_not_expand_to_multiple_targets(self) -> None:
-        rows = _build_labor_mapping_rows(
-            {
-                "aliases": {"F": "F"},
-                "class_mappings": {
                     "103": {"F": "103 Foreman"},
-                    "104": {"F": "104 Foreman"},
                 },
+                "mapping_notes": {"103/F|103 Foreman": "legacy note"},
             }
         )
 
-        self.assertEqual(rows, [{"raw_value": "F", "target_classification": "", "notes": ""}])
+        self.assertEqual(rows, [])
 
     def test_build_labor_mapping_rows_prefers_explicit_saved_mappings(self) -> None:
         rows = _build_labor_mapping_rows(
             {
-                "aliases": {"103/F": "F"},
-                "class_mappings": {
-                    "103": {"F": "103 Foreman"},
-                    "104": {"F": "104 Foreman"},
-                },
+                "raw_mappings": {"103/F": "103 Foreman"},
                 "saved_mappings": [
                     {"raw_value": "103/F", "target_classification": "Big Boy", "notes": "keep me"},
                 ],
@@ -388,12 +327,11 @@ class ProfileConfigTests(unittest.TestCase):
 
         self.assertEqual(rows, [{"raw_value": "103/F", "target_classification": "Big Boy", "notes": "keep me"}])
 
-    def test_build_labor_mapping_rows_merges_observed_raw_values_without_inflating_saved_rows(self) -> None:
+    def test_build_labor_mapping_rows_merges_observed_raw_values_without_inflating_raw_first_rows(self) -> None:
         rows = _build_labor_mapping_rows(
             {
-                "aliases": {"103/F": "F"},
-                "class_mappings": {
-                    "103": {"F": "Foreman"},
+                "raw_mappings": {
+                    "103/F": "Foreman",
                 },
             },
             observed_raw_values=["103/F", "104/J", "J"],
@@ -407,6 +345,214 @@ class ProfileConfigTests(unittest.TestCase):
                 {"raw_value": "103/F", "target_classification": "Foreman", "notes": ""},
             ],
         )
+
+    def test_build_labor_mapping_rows_uses_raw_mappings_when_saved_rows_are_absent(self) -> None:
+        rows = _build_labor_mapping_rows(
+            {
+                "raw_mappings": {
+                    "103/F": "103 Foreman",
+                    "104/F": "104 Foreman",
+                },
+            }
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                {"raw_value": "103/F", "target_classification": "103 Foreman", "notes": ""},
+                {"raw_value": "104/F", "target_classification": "104 Foreman", "notes": ""},
+            ],
+        )
+
+    def test_save_labor_mappings_persists_raw_mappings_and_blank_saved_rows(self) -> None:
+        manager = self._build_manager()
+        manager.duplicate_profile(
+            source_profile_name="default",
+            new_profile_name="editable_profile",
+            display_name="Editable Profile",
+            description="Editable clone",
+        )
+        manager.set_active_profile("editable_profile")
+
+        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+            view_model = SettingsViewModel()
+            message = view_model.save_labor_mappings(
+                [
+                    {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "mapped"},
+                    {"raw_value": "104/EO", "target_classification": "", "notes": "review later"},
+                ]
+            )
+
+        saved_config = json.loads(
+            (TEST_ROOT / "profiles" / "editable_profile" / "labor_mapping.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(message, "Labor mappings saved successfully.")
+        self.assertEqual(saved_config["raw_mappings"], {"103/F": "103 Journeyman"})
+        self.assertEqual(
+            saved_config["saved_mappings"],
+            [
+                {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "mapped"},
+                {"raw_value": "104/EO", "target_classification": "", "notes": "review later"},
+            ],
+        )
+        self.assertNotIn("aliases", saved_config)
+        self.assertNotIn("class_mappings", saved_config)
+        self.assertNotIn("mapping_notes", saved_config)
+
+    def test_save_labor_mappings_rejects_duplicate_canonical_raw_keys(self) -> None:
+        manager = self._build_manager()
+        manager.duplicate_profile(
+            source_profile_name="default",
+            new_profile_name="editable_profile",
+            display_name="Editable Profile",
+            description="Editable clone",
+        )
+        manager.set_active_profile("editable_profile")
+
+        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+            view_model = SettingsViewModel()
+            with self.assertRaisesRegex(ValueError, "Duplicate labor mapping raw value"):
+                view_model.save_labor_mappings(
+                    [
+                        {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": ""},
+                        {"raw_value": "103/f", "target_classification": "103 Journeyman", "notes": ""},
+                    ]
+                )
+
+    def test_persist_observed_labor_raw_values_appends_new_placeholder_and_preserves_existing_rows(self) -> None:
+        profile_dir = TEST_ROOT / "profiles" / "editable_profile"
+        shutil.copytree(TEST_ROOT / "profiles" / "default", profile_dir)
+        self._write_json(
+            profile_dir / "profile.json",
+            {
+                "profile_name": "editable_profile",
+                "display_name": "Editable Profile",
+                "description": "Editable clone",
+                "version": "1.0",
+                "template_filename": "recap_template.xlsx",
+                "is_active": False,
+            },
+        )
+        self._write_json(
+            profile_dir / "labor_mapping.json",
+            {
+                "raw_mappings": {"103/F": "103 Journeyman"},
+                "saved_mappings": [
+                    {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep me"},
+                ],
+            },
+        )
+
+        did_update = persist_observed_labor_raw_values(profile_dir, ["103/F", "104/J"])
+        updated = json.loads((profile_dir / "labor_mapping.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(did_update)
+        self.assertEqual(updated["raw_mappings"], {"103/F": "103 Journeyman"})
+        self.assertEqual(
+            updated["saved_mappings"],
+            [
+                {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep me"},
+                {"raw_value": "104/J", "target_classification": "", "notes": ""},
+            ],
+        )
+
+    def test_persist_observed_labor_raw_values_does_not_duplicate_known_rows(self) -> None:
+        profile_dir = TEST_ROOT / "profiles" / "editable_profile"
+        shutil.copytree(TEST_ROOT / "profiles" / "default", profile_dir)
+        self._write_json(
+            profile_dir / "profile.json",
+            {
+                "profile_name": "editable_profile",
+                "display_name": "Editable Profile",
+                "description": "Editable clone",
+                "version": "1.0",
+                "template_filename": "recap_template.xlsx",
+                "is_active": False,
+            },
+        )
+        self._write_json(
+            profile_dir / "labor_mapping.json",
+            {
+                "raw_mappings": {"103/F": "103 Journeyman"},
+                "saved_mappings": [
+                    {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep me"},
+                ],
+            },
+        )
+
+        did_update = persist_observed_labor_raw_values(profile_dir, ["103/f", " 103/F "])
+        updated = json.loads((profile_dir / "labor_mapping.json").read_text(encoding="utf-8"))
+
+        self.assertFalse(did_update)
+        self.assertEqual(
+            updated["saved_mappings"],
+            [
+                {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep me"},
+            ],
+        )
+
+    def test_persist_observed_labor_raw_values_skips_default_profile_without_writing(self) -> None:
+        profile_dir = TEST_ROOT / "profiles" / "default"
+        original = json.loads((profile_dir / "labor_mapping.json").read_text(encoding="utf-8"))
+
+        did_update = persist_observed_labor_raw_values(profile_dir, ["103/F"])
+        updated = json.loads((profile_dir / "labor_mapping.json").read_text(encoding="utf-8"))
+
+        self.assertFalse(did_update)
+        self.assertEqual(updated, original)
+
+    def test_review_view_model_load_and_reload_trigger_observed_labor_persistence(self) -> None:
+        manager = self._build_manager()
+        manager.duplicate_profile(
+            source_profile_name="default",
+            new_profile_name="editable_profile",
+            display_name="Editable Profile",
+            description="Editable clone",
+        )
+        manager.set_active_profile("editable_profile")
+
+        record = Record(
+            record_type="labor",
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100.0,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="F",
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="source",
+        )
+
+        with patch("job_cost_tool.app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.parse_pdf",
+            return_value=[record],
+        ), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.normalize_records",
+            return_value=[record],
+        ), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.validate_records",
+            side_effect=lambda records: (records, []),
+        ), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.persist_observed_labor_raw_values"
+        ) as persist_mock:
+            view_model = ReviewViewModel()
+            view_model.load_pdf("sample.pdf")
+            view_model.reload_current_pdf()
+
+        self.assertEqual(persist_mock.call_count, 2)
+        first_call_args = persist_mock.call_args_list[0].args
+        second_call_args = persist_mock.call_args_list[1].args
+        self.assertEqual(first_call_args[0], manager.get_active_profile_dir())
+        self.assertEqual(first_call_args[1], ["103/F"])
+        self.assertEqual(second_call_args[1], ["103/F"])
 
     def test_dedupe_casefold_preserving_order_keeps_first_observed_value(self) -> None:
         self.assertEqual(

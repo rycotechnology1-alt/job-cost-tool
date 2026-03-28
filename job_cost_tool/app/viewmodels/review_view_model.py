@@ -7,11 +7,12 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 
-from job_cost_tool.core.config import ConfigLoader
+from job_cost_tool.core.config import ConfigLoader, ProfileManager
 from job_cost_tool.core.models.record import Record
 from job_cost_tool.services.normalization_service import normalize_records
 from job_cost_tool.services.parsing_service import parse_pdf
 from job_cost_tool.services.validation_service import validate_records
+from job_cost_tool.app.viewmodels.settings_view_model import persist_observed_labor_raw_values
 
 
 class ReviewViewModel(QObject):
@@ -133,6 +134,7 @@ class ReviewViewModel(QObject):
             return
 
         self._review_records = list(normalized_records)
+        self._persist_observed_labor_raw_values()
         self._record_ids = [self._build_record_id(index) for index, _ in enumerate(self._review_records)]
         self._revalidate_records()
         self._selected_record_id = self._record_ids[0] if self._record_ids else None
@@ -204,6 +206,19 @@ class ReviewViewModel(QObject):
             prefix="Changes applied.",
         )
         self.state_changed.emit()
+
+    def _persist_observed_labor_raw_values(self) -> None:
+        """Persist newly observed labor raw values for editable profiles without interrupting review load."""
+        try:
+            profile_manager = ProfileManager()
+            if profile_manager.get_active_profile_name().strip().casefold() == "default":
+                return
+            persist_observed_labor_raw_values(
+                profile_manager.get_active_profile_dir(),
+                self.observed_labor_raw_values,
+            )
+        except Exception:
+            return
 
     def _revalidate_records(self) -> None:
         """Re-run validation using the current in-memory normalized records."""

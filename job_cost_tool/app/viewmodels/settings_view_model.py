@@ -13,7 +13,6 @@ from PySide6.QtCore import QObject, Signal
 from job_cost_tool.core.config import ConfigLoader, ProfileManager
 from job_cost_tool.core.config.classification_slots import build_slot_config_from_rows
 
-_FALLBACK_LABOR_MAPPING_GROUP = "*"
 
 
 class SettingsViewModel(QObject):
@@ -152,6 +151,8 @@ class SettingsViewModel(QObject):
         self._reload_active_profile_config_data()
         self.state_changed.emit()
 
+
+
     def save_labor_mappings(self, rows: list[dict[str, str]]) -> str:
         """Validate and persist labor mapping rows for the active profile."""
         self._ensure_active_profile_is_editable()
@@ -160,11 +161,7 @@ class SettingsViewModel(QObject):
         existing_config = loader.get_labor_mapping()
         valid_targets = set(self._labor_classifications)
 
-        aliases: dict[str, str] = {}
-        class_mappings: dict[str, dict[str, str]] = {}
-        mapping_notes: dict[str, str] = {}
         saved_mappings: list[dict[str, str]] = []
-        seen_pairs: set[tuple[str, str]] = set()
         seen_raw_keys: set[str] = set()
 
         for row in rows:
@@ -173,32 +170,17 @@ class SettingsViewModel(QObject):
             note = str(row.get("notes", "")).strip()
             if not raw_value:
                 raise ValueError("Labor mapping rows must include a raw value.")
-            if not target_classification:
-                continue
-            if target_classification not in valid_targets:
+
+            raw_key = _canonicalize_labor_token(raw_value)
+            if raw_key in seen_raw_keys:
+                raise ValueError(f"Duplicate labor mapping raw value '{raw_value}' is not allowed.")
+            seen_raw_keys.add(raw_key)
+
+            if target_classification and target_classification not in valid_targets:
                 raise ValueError(
                     f"Labor mapping '{raw_value}' references unknown target classification '{target_classification}'."
                 )
 
-            raw_key = _canonicalize_labor_token(raw_value)
-            canonical_alias = _derive_labor_alias(raw_value)
-            labor_group = _resolve_labor_mapping_group(
-                raw_value=raw_value,
-                target_classification=target_classification,
-                labor_mapping=existing_config,
-            )
-            duplicate_pair = (raw_key, target_classification)
-            if duplicate_pair in seen_pairs:
-                raise ValueError(
-                    f"Duplicate labor mapping entry found for '{raw_value}' -> '{target_classification}'."
-                )
-            if raw_key in seen_raw_keys:
-                raise ValueError(f"Duplicate labor mapping raw value '{raw_value}' is not allowed.")
-            seen_pairs.add(duplicate_pair)
-            seen_raw_keys.add(raw_key)
-
-            aliases[raw_key] = canonical_alias
-            class_mappings.setdefault(labor_group, {})[canonical_alias] = target_classification
             saved_mappings.append(
                 {
                     "raw_value": raw_key,
@@ -206,17 +188,16 @@ class SettingsViewModel(QObject):
                     "notes": note,
                 }
             )
-            if note:
-                mapping_notes[f"{raw_key}|{target_classification}"] = note
 
-        new_config = dict(existing_config)
-        new_config["aliases"] = aliases
-        new_config["class_mappings"] = class_mappings
-        new_config["saved_mappings"] = saved_mappings
-        if mapping_notes:
-            new_config["mapping_notes"] = mapping_notes
-        else:
-            new_config.pop("mapping_notes", None)
+        # Labor mapping persistence is now raw-first. Save exact admin rows and direct
+        # raw lookups only, and stop regenerating legacy alias/group fields here.
+        new_config = {
+            key: value
+            for key, value in dict(existing_config).items()
+            if key not in {"aliases", "class_mappings", "mapping_notes"}
+        }
+        new_config["raw_mappings"] = _build_raw_mappings_from_rows(saved_mappings)
+        new_config["saved_mappings"] = _normalize_saved_labor_mapping_rows(saved_mappings)
 
         _write_json_file(profile_dir / "labor_mapping.json", new_config)
         clear_profile_dependent_caches()
@@ -509,55 +490,88 @@ def clear_profile_dependent_caches() -> None:
             cache_function.cache_clear()
 
 
+
+def persist_observed_labor_raw_values(profile_dir: Path, observed_raw_values: list[str]) -> bool:
+    """Persist newly observed labor raw values as unmapped saved-mapping placeholders."""
+    if profile_dir.name.strip().casefold() == "default":
+        return False
+
+    observed_values = _dedupe_casefold_preserving_order(observed_raw_values)
+    if not observed_values:
+        return False
+
+    config_path = profile_dir / "labor_mapping.json"
+    if not config_path.is_file():
+        return False
+
+    try:
+        with config_path.open("r", encoding="utf-8-sig") as config_file:
+            labor_mapping = json.load(config_file)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    if not isinstance(labor_mapping, dict):
+        return False
+
+    base_rows = _normalize_saved_labor_mapping_rows(
+        _build_labor_mapping_rows(labor_mapping, observed_raw_values=None)
+    )
+    if not base_rows:
+        base_rows = _build_saved_rows_from_raw_mappings(
+            _normalize_raw_labor_mappings(labor_mapping.get("raw_mappings", {}))
+        )
+
+    seen_raw_values = {
+        str(row.get("raw_value", "")).strip().casefold()
+        for row in base_rows
+        if str(row.get("raw_value", "")).strip()
+    }
+
+    did_update = False
+    for raw_value in observed_values:
+        raw_key = _canonicalize_labor_token(raw_value)
+        if not raw_key or raw_key.casefold() in seen_raw_values:
+            continue
+        seen_raw_values.add(raw_key.casefold())
+        base_rows.append(
+            {
+                "raw_value": raw_key,
+                "target_classification": "",
+                "notes": "",
+            }
+        )
+        did_update = True
+
+    if not did_update:
+        return False
+
+    updated_mapping = dict(labor_mapping)
+    updated_mapping["saved_mappings"] = _normalize_saved_labor_mapping_rows(base_rows)
+    _write_json_file(config_path, updated_mapping)
+    clear_profile_dependent_caches()
+    return True
+
+
 def _build_labor_mapping_rows(
     labor_mapping: dict[str, Any],
     *,
     observed_raw_values: list[str] | None = None,
 ) -> list[dict[str, str]]:
-    """Flatten explicit saved mappings and observed raw values into editor rows."""
-    aliases = labor_mapping.get("aliases", {}) if isinstance(labor_mapping.get("aliases"), dict) else {}
-    class_mappings = labor_mapping.get("class_mappings", {}) if isinstance(labor_mapping.get("class_mappings"), dict) else {}
-    notes = labor_mapping.get("mapping_notes", {}) if isinstance(labor_mapping.get("mapping_notes"), dict) else {}
-    saved_mappings = labor_mapping.get("saved_mappings", []) if isinstance(labor_mapping.get("saved_mappings"), list) else []
+    """Flatten raw-first labor mapping rows and observed values into editor rows."""
+    saved_rows = _normalize_saved_labor_mapping_rows(labor_mapping.get("saved_mappings", []))
 
-    rows: list[dict[str, str]] = []
-    seen_raw_values: set[str] = set()
-
-    if saved_mappings:
-        for row in saved_mappings:
-            if not isinstance(row, dict):
-                continue
-            raw_value_text = _canonicalize_labor_token(str(row.get("raw_value", "")).strip())
-            target_classification = str(row.get("target_classification", "")).strip()
-            note = str(row.get("notes", "")).strip()
-            if not raw_value_text or not target_classification:
-                continue
-            normalized_raw = raw_value_text.casefold()
-            if normalized_raw in seen_raw_values:
-                continue
-            seen_raw_values.add(normalized_raw)
-            rows.append(
-                {
-                    "raw_value": raw_value_text,
-                    "target_classification": target_classification,
-                    "notes": note,
-                }
-            )
+    if saved_rows:
+        rows = saved_rows
     else:
-        for raw_value, canonical_alias in aliases.items():
-            row = _build_legacy_labor_mapping_row(
-                raw_value=str(raw_value).strip(),
-                canonical_alias=str(canonical_alias).strip(),
-                class_mappings=class_mappings,
-                notes=notes,
-            )
-            if row is None:
-                continue
-            normalized_raw = row["raw_value"].casefold()
-            if normalized_raw in seen_raw_values:
-                continue
-            seen_raw_values.add(normalized_raw)
-            rows.append(row)
+        rows = _build_saved_rows_from_raw_mappings(
+            _normalize_raw_labor_mappings(labor_mapping.get("raw_mappings", {}))
+        )
+
+    seen_raw_values = {
+        str(row.get("raw_value", "")).strip().casefold()
+        for row in rows
+        if str(row.get("raw_value", "")).strip()
+    }
 
     for raw_value in observed_raw_values or []:
         raw_value_text = _canonicalize_labor_token(str(raw_value).strip())
@@ -576,68 +590,70 @@ def _build_labor_mapping_rows(
     return rows
 
 
-def _build_legacy_labor_mapping_row(
-    *,
-    raw_value: str,
-    canonical_alias: str,
-    class_mappings: dict[str, Any],
-    notes: dict[str, Any],
-) -> dict[str, str] | None:
-    """Build one labor mapping row from legacy config without synthesizing new raw keys."""
-    raw_value_text = _canonicalize_labor_token(raw_value)
-    canonical_alias_text = str(canonical_alias).strip()
-    if not raw_value_text or not canonical_alias_text:
-        return None
+def _normalize_saved_labor_mapping_rows(saved_mappings: Any) -> list[dict[str, str]]:
+    """Normalize saved labor editor rows while preserving blank unmapped placeholders."""
+    if not isinstance(saved_mappings, list):
+        return []
 
-    note_targets = {
-        str(note_key).partition("|")[2].strip()
-        for note_key in notes
-        if str(note_key).partition("|")[0].strip().casefold() == raw_value_text.casefold()
-        and str(note_key).partition("|")[2].strip()
-    }
-    if len(note_targets) == 1:
-        target_classification = next(iter(note_targets))
-        return {
-            "raw_value": raw_value_text,
+    normalized_rows: list[dict[str, str]] = []
+    seen_raw_values: set[str] = set()
+    for row in saved_mappings:
+        if not isinstance(row, dict):
+            continue
+        raw_value = _canonicalize_labor_token(str(row.get("raw_value", "")).strip())
+        if not raw_value:
+            continue
+        normalized_raw = raw_value.casefold()
+        if normalized_raw in seen_raw_values:
+            continue
+        seen_raw_values.add(normalized_raw)
+        normalized_rows.append(
+            {
+                "raw_value": raw_value,
+                "target_classification": str(row.get("target_classification", "")).strip(),
+                "notes": str(row.get("notes", "")).strip(),
+            }
+        )
+    return normalized_rows
+
+
+def _normalize_raw_labor_mappings(raw_mappings: Any) -> dict[str, str]:
+    """Normalize direct raw labor mappings into canonical exact keys."""
+    if not isinstance(raw_mappings, dict):
+        return {}
+
+    normalized_mappings: dict[str, str] = {}
+    for raw_value, target_classification in raw_mappings.items():
+        raw_key = _canonicalize_labor_token(str(raw_value).strip())
+        target_text = str(target_classification).strip()
+        if raw_key and target_text:
+            normalized_mappings[raw_key] = target_text
+    return normalized_mappings
+
+
+def _build_saved_rows_from_raw_mappings(raw_mappings: dict[str, str]) -> list[dict[str, str]]:
+    """Materialize raw mapping entries into admin-facing row data."""
+    rows = [
+        {
+            "raw_value": raw_value,
             "target_classification": target_classification,
-            "notes": str(notes.get(f"{raw_value_text}|{target_classification}", "")).strip(),
+            "notes": "",
         }
+        for raw_value, target_classification in raw_mappings.items()
+    ]
+    rows.sort(key=lambda row: (row["target_classification"].casefold(), row["raw_value"].casefold()))
+    return rows
 
-    explicit_group = _parse_explicit_labor_group(raw_value_text)
-    if explicit_group:
-        group_mappings = class_mappings.get(explicit_group, {}) if isinstance(class_mappings, dict) else {}
-        if isinstance(group_mappings, dict):
-            target_classification = str(group_mappings.get(canonical_alias_text, "")).strip()
-            if target_classification:
-                return {
-                    "raw_value": raw_value_text,
-                    "target_classification": target_classification,
-                    "notes": str(notes.get(f"{raw_value_text}|{target_classification}", "")).strip(),
-                }
 
-    matched_targets: list[str] = []
-    if isinstance(class_mappings, dict):
-        for group_mappings in class_mappings.values():
-            if not isinstance(group_mappings, dict):
-                continue
-            target_classification = str(group_mappings.get(canonical_alias_text, "")).strip()
-            if target_classification and target_classification not in matched_targets:
-                matched_targets.append(target_classification)
-
-    if len(matched_targets) == 1:
-        target_classification = matched_targets[0]
-        return {
-            "raw_value": raw_value_text,
-            "target_classification": target_classification,
-            "notes": str(notes.get(f"{raw_value_text}|{target_classification}", "")).strip(),
-        }
-
-    return {
-        "raw_value": raw_value_text,
-        "target_classification": "",
-        "notes": "",
-    }
-
+def _build_raw_mappings_from_rows(rows: list[dict[str, str]]) -> dict[str, str]:
+    """Build the exact persisted raw mapping lookup from saved editor rows."""
+    raw_mappings: dict[str, str] = {}
+    for row in rows:
+        raw_value = _canonicalize_labor_token(str(row.get("raw_value", "")).strip())
+        target_classification = str(row.get("target_classification", "")).strip()
+        if raw_value and target_classification:
+            raw_mappings[raw_value] = target_classification
+    return raw_mappings
 
 def _build_equipment_mapping_rows(equipment_mapping: dict[str, Any]) -> list[dict[str, str]]:
     """Flatten equipment mapping config into editable rows."""
@@ -864,47 +880,40 @@ def _apply_label_renames_to_rows(
     return remapped_rows
 
 
+
 def _rename_labor_mapping_config_targets(
     labor_mapping: dict[str, Any],
     rename_map: dict[str, str],
 ) -> dict[str, Any]:
-    """Rename labor target classifications inside the labor mapping config."""
-    if not rename_map:
-        return dict(labor_mapping)
+    """Rename labor target classifications inside the raw-first labor mapping config."""
+    updated_config = {
+        key: value
+        for key, value in dict(labor_mapping).items()
+        if key not in {"aliases", "class_mappings", "mapping_notes"}
+    }
 
-    updated_config = dict(labor_mapping)
-    class_mappings = labor_mapping.get("class_mappings", {})
-    updated_class_mappings: dict[str, dict[str, str]] = {}
-    if isinstance(class_mappings, dict):
-        for group, group_mappings in class_mappings.items():
-            if not isinstance(group_mappings, dict):
-                continue
-            updated_group: dict[str, str] = {}
-            for alias, target in group_mappings.items():
-                target_text = str(target).strip()
-                updated_group[str(alias).strip()] = rename_map.get(target_text, target_text)
-            updated_class_mappings[str(group).strip()] = updated_group
-    updated_config["class_mappings"] = updated_class_mappings
+    raw_mappings = _normalize_raw_labor_mappings(labor_mapping.get("raw_mappings", {}))
+    if raw_mappings or "raw_mappings" in labor_mapping:
+        updated_config["raw_mappings"] = {
+            raw_key: rename_map.get(target_classification, target_classification)
+            for raw_key, target_classification in raw_mappings.items()
+        }
 
-    mapping_notes = labor_mapping.get("mapping_notes", {})
-    if isinstance(mapping_notes, dict):
-        updated_notes: dict[str, str] = {}
-        for note_key, note_value in mapping_notes.items():
-            raw_key, separator, target_value = str(note_key).partition("|")
-            if separator:
-                updated_target = rename_map.get(target_value.strip(), target_value.strip())
-                updated_key = f"{raw_key}|{updated_target}"
-            else:
-                updated_key = str(note_key)
-            if updated_key in updated_notes and updated_notes[updated_key] != str(note_value):
-                raise ValueError(
-                    f"Labor mapping note collision detected while renaming classification references for '{updated_key}'."
-                )
-            updated_notes[updated_key] = str(note_value)
-        updated_config["mapping_notes"] = updated_notes
+    saved_rows = _normalize_saved_labor_mapping_rows(labor_mapping.get("saved_mappings", []))
+    if saved_rows or "saved_mappings" in labor_mapping:
+        updated_config["saved_mappings"] = [
+            {
+                "raw_value": str(row.get("raw_value", "")).strip(),
+                "target_classification": rename_map.get(
+                    str(row.get("target_classification", "")).strip(),
+                    str(row.get("target_classification", "")).strip(),
+                ),
+                "notes": str(row.get("notes", "")).strip(),
+            }
+            for row in saved_rows
+        ]
 
     return updated_config
-
 
 def _rename_equipment_mapping_config_targets(
     equipment_mapping: dict[str, Any],
@@ -1092,87 +1101,6 @@ def _write_json_files(payloads: dict[Path, dict[str, Any]]) -> None:
         for temp_path, _ in temp_paths:
             if temp_path.exists():
                 temp_path.unlink()
-
-
-def _resolve_labor_mapping_group(
-    raw_value: str,
-    target_classification: str,
-    labor_mapping: dict[str, Any],
-) -> str:
-    """Resolve the labor mapping group without assuming target label prefixes."""
-    explicit_group = _parse_explicit_labor_group(raw_value)
-    if explicit_group:
-        return explicit_group
-
-    candidate_groups = _find_groups_for_target_classification(target_classification, labor_mapping)
-    if len(candidate_groups) == 1:
-        return candidate_groups[0]
-    if len(candidate_groups) > 1:
-        joined_groups = ", ".join(candidate_groups)
-        raise ValueError(
-            f"Labor mapping '{raw_value}' -> '{target_classification}' matches multiple labor groups ({joined_groups}). "
-            "Use a raw value like 'group/alias' to choose the intended group explicitly."
-        )
-
-    phase_defaults = labor_mapping.get("phase_defaults", {})
-    if isinstance(phase_defaults, dict):
-        phase_groups = []
-        seen_phase_groups: set[str] = set()
-        for value in phase_defaults.values():
-            group = str(value).strip()
-            if group and group not in seen_phase_groups:
-                phase_groups.append(group)
-                seen_phase_groups.add(group)
-        if len(phase_groups) == 1:
-            return phase_groups[0]
-
-    class_mappings = labor_mapping.get("class_mappings", {})
-    if isinstance(class_mappings, dict):
-        available_groups = [str(group).strip() for group in class_mappings if str(group).strip()]
-        if len(available_groups) == 1:
-            return available_groups[0]
-
-    return _FALLBACK_LABOR_MAPPING_GROUP
-
-
-def _parse_explicit_labor_group(raw_value: str) -> str | None:
-    """Parse an explicit labor group from a raw value like 'group/alias'."""
-    if "/" not in raw_value:
-        return None
-    group_text = raw_value.split("/", 1)[0].strip()
-    return group_text or None
-
-
-def _find_groups_for_target_classification(
-    target_classification: str,
-    labor_mapping: dict[str, Any],
-) -> list[str]:
-    """Find existing labor groups already associated with a target classification."""
-    class_mappings = labor_mapping.get("class_mappings", {})
-    if not isinstance(class_mappings, dict):
-        return []
-
-    target_casefold = target_classification.casefold()
-    matched_groups: list[str] = []
-    for group, group_mappings in class_mappings.items():
-        if not isinstance(group_mappings, dict):
-            continue
-        for mapped_value in group_mappings.values():
-            if str(mapped_value).strip().casefold() == target_casefold:
-                group_text = str(group).strip()
-                if group_text and group_text not in matched_groups:
-                    matched_groups.append(group_text)
-                break
-    return matched_groups
-
-
-def _derive_labor_alias(raw_value: str) -> str:
-    """Derive the canonical alias token used in labor class mappings."""
-    if "/" in raw_value:
-        alias_source = raw_value.split("/")[-1]
-    else:
-        alias_source = raw_value
-    return _canonicalize_labor_token(alias_source)
 
 
 def _canonicalize_labor_token(value: str) -> str:

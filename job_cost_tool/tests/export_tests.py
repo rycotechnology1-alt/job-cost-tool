@@ -213,10 +213,12 @@ class ExportWorkflowTests(unittest.TestCase):
         worksheet = load_workbook(self.output_path)["Recap"]
         self.assertEqual(worksheet["B6"].value, "Sample Project")
         self.assertEqual(worksheet["G6"].value, "JOB-100")
+        self.assertEqual(worksheet["A14"].value, "103 Journeyman")
         self.assertEqual(worksheet["B14"].value, 8)
         self.assertEqual(worksheet["E14"].value, 199.5)
         self.assertEqual(worksheet["F14"].value, 299.25)
         self.assertEqual(worksheet["G14"].value, 399)
+        self.assertEqual(worksheet["A32"].value, "Pick-up Truck")
         self.assertEqual(worksheet["B32"].value, 2)
         self.assertEqual(worksheet["D32"].value, 88)
         self.assertEqual(worksheet["A46"].value, "Vendor A")
@@ -268,10 +270,60 @@ class ExportWorkflowTests(unittest.TestCase):
             export_records_to_recap(records, str(self.template_path), str(self.output_path))
 
         worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["A14"].value, "Big Boy")
         self.assertEqual(worksheet["B14"].value, 8)
         self.assertEqual(worksheet["E14"].value, 210)
         self.assertEqual(worksheet["F14"].value, 315)
         self.assertEqual(worksheet["G14"].value, 420)
+
+    def test_export_uses_active_equipment_slot_labels_after_profile_label_rename(self) -> None:
+        renamed_equipment_slot_config = {
+            "slots": [
+                {"slot_id": "equipment_1", "label": "Big Rig", "active": True},
+                {"slot_id": "equipment_2", "label": "Utility Van", "active": True},
+            ],
+            "classifications": ["Big Rig", "Utility Van"],
+        }
+        renamed_equipment_row_slots = {
+            **TEST_EQUIPMENT_ROW_SLOTS,
+            "equipment_1": {
+                "slot_id": "equipment_1",
+                "label": "Big Rig",
+                "active": True,
+                "template_label": "Pick-up Truck",
+                "mapping": TEST_TEMPLATE_MAP["equipment_rows"]["Pick-up Truck"],
+            },
+        }
+        renamed_rates = {
+            **TARGET_RATES,
+            "equipment_rates": {
+                "Big Rig": {"rate": 99.0},
+                "Utility Van": TARGET_RATES["equipment_rates"]["Utility Van"],
+            },
+        }
+
+        with patch(
+            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_target_equipment_classifications",
+            return_value=renamed_equipment_slot_config,
+        ), patch(
+            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_rates",
+            return_value=renamed_rates,
+        ), patch(
+            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_equipment_row_slots",
+            return_value=renamed_equipment_row_slots,
+        ):
+            recap_mapper._get_target_equipment_classifications.cache_clear()
+            recap_mapper._get_active_equipment_slots.cache_clear()
+            recap_mapper._get_active_equipment_slot_lookup.cache_clear()
+            recap_mapper._get_rates.cache_clear()
+
+            records = [self._equipment_record(category="Big Rig", recap_slot_id="equipment_1", hours=2)]
+            export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["A32"].value, "Big Rig")
+        self.assertEqual(worksheet["B32"].value, 2)
+        self.assertEqual(worksheet["D32"].value, 99)
 
     def test_export_fails_on_section_overflow(self) -> None:
         records = [

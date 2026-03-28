@@ -1,4 +1,4 @@
-"""Config loading utilities for the Job Cost Tool."""
+﻿"""Config loading utilities for the Job Cost Tool."""
 
 from __future__ import annotations
 
@@ -213,8 +213,11 @@ class ConfigLoader:
         self._cache[config_name] = normalized_config
         return normalized_config
 
+
     def _normalize_loaded_config(self, config_name: str, loaded_config: JsonDict) -> JsonDict:
         """Normalize compatible config formats into the app's current in-memory shape."""
+        if config_name == "labor_mapping":
+            return self._normalize_labor_mapping_config(loaded_config)
         if config_name == "target_labor_classifications":
             capacity, template_labels = self._get_slot_context("labor_rows")
             return normalize_slot_config(
@@ -232,6 +235,59 @@ class ConfigLoader:
                 template_labels=template_labels,
             )
         return loaded_config
+
+    def _normalize_labor_mapping_config(self, loaded_config: JsonDict) -> JsonDict:
+        """Normalize raw-first labor mapping config while tolerating legacy fields."""
+        normalized_config = dict(loaded_config)
+
+        raw_mappings = loaded_config.get("raw_mappings", {}) if isinstance(loaded_config.get("raw_mappings"), dict) else {}
+        normalized_raw_mappings: JsonDict = {}
+        for raw_key, target_classification in raw_mappings.items():
+            canonical_raw_key = " ".join(str(raw_key).strip().upper().split()).replace("APPRENTICESHIP", "APP")
+            target_text = str(target_classification).strip()
+            if canonical_raw_key and target_text:
+                normalized_raw_mappings[canonical_raw_key] = target_text
+
+        saved_mappings = loaded_config.get("saved_mappings", []) if isinstance(loaded_config.get("saved_mappings"), list) else []
+        normalized_saved_rows: list[JsonDict] = []
+        seen_raw_values: set[str] = set()
+        for row in saved_mappings:
+            if not isinstance(row, dict):
+                continue
+            canonical_raw_key = " ".join(str(row.get("raw_value", "")).strip().upper().split()).replace("APPRENTICESHIP", "APP")
+            if not canonical_raw_key:
+                continue
+            normalized_raw = canonical_raw_key.casefold()
+            if normalized_raw in seen_raw_values:
+                continue
+            seen_raw_values.add(normalized_raw)
+            normalized_saved_rows.append(
+                {
+                    "raw_value": canonical_raw_key,
+                    "target_classification": str(row.get("target_classification", "")).strip(),
+                    "notes": str(row.get("notes", "")).strip(),
+                }
+            )
+
+        if not normalized_saved_rows and normalized_raw_mappings:
+            normalized_saved_rows = [
+                {
+                    "raw_value": raw_key,
+                    "target_classification": target_classification,
+                    "notes": "",
+                }
+                for raw_key, target_classification in normalized_raw_mappings.items()
+            ]
+        if not normalized_raw_mappings and normalized_saved_rows:
+            normalized_raw_mappings = {
+                str(row.get("raw_value", "")).strip(): str(row.get("target_classification", "")).strip()
+                for row in normalized_saved_rows
+                if str(row.get("target_classification", "")).strip()
+            }
+
+        normalized_config["raw_mappings"] = normalized_raw_mappings
+        normalized_config["saved_mappings"] = normalized_saved_rows
+        return normalized_config
 
     def _get_slot_context(self, recap_key: str) -> tuple[int, list[str]]:
         """Return slot capacity and row-label order from the recap template map."""
@@ -273,6 +329,7 @@ class ConfigLoader:
             }
         return slot_rows
 
+
     def _validate_top_level_structure(
         self,
         config_name: str,
@@ -287,7 +344,12 @@ class ConfigLoader:
                     f"Config file '{file_path}' is missing required top-level key '{key}'"
                 )
 
-        if config_name == "input_model":
+        if config_name == "labor_mapping":
+            if "raw_mappings" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "raw_mappings", dict, "object")
+            if "saved_mappings" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "saved_mappings", list, "array")
+        elif config_name == "input_model":
             self._validate_key_type(file_path, loaded_config, "report_type", str, "string")
             self._validate_key_type(file_path, loaded_config, "section_headers", dict, "object")
         elif config_name == "recap_template_map":

@@ -10,8 +10,6 @@ from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots
 from job_cost_tool.core.models.record import LABOR, Record
 
-_FALLBACK_LABOR_MAPPING_GROUP = "*"
-
 
 @lru_cache(maxsize=1)
 def _get_labor_mapping() -> dict[str, Any]:
@@ -34,32 +32,43 @@ def _get_active_labor_slot_lookup() -> dict[str, dict[str, Any]]:
     return build_slot_lookup(get_active_slots(config, slot_prefix="labor"))
 
 
+
 def normalize_labor_record(record: Record) -> Record:
-    """Apply config-driven labor normalization to a parsed record."""
+    """Apply raw-first labor normalization to a parsed labor record."""
     warnings = list(record.warnings)
     labor_mapping = _get_labor_mapping()
     target_classifications = _get_target_labor_classifications()
 
-    labor_group = _resolve_labor_group(record, labor_mapping)
-    labor_class_normalized = _normalize_labor_class(record.labor_class_raw, labor_mapping)
-    recap_target_label = _map_to_target_classification(
-        labor_group=labor_group,
-        labor_class_normalized=labor_class_normalized,
+    labor_raw_key = _derive_labor_raw_key(record)
+    labor_class_normalized = _canonicalize_raw_labor_class(record.labor_class_raw)
+    raw_target_label, raw_mapping_state = _map_raw_key_to_target_classification(
+        labor_raw_key=labor_raw_key,
         labor_mapping=labor_mapping,
         target_classifications=target_classifications,
     )
-    slot_id, recap_labor_classification = _resolve_labor_slot(recap_target_label)
 
-    if labor_group is None:
-        warnings.append("Labor record could not be aligned to a configured labor group.")
-    if record.labor_class_raw is None:
+    slot_id: Optional[str] = None
+    recap_labor_classification: Optional[str] = None
+
+    if raw_target_label is not None:
+        slot_id, recap_labor_classification = _resolve_labor_slot(raw_target_label)
+        if slot_id is None:
+            raw_mapping_state = "inactive"
+
+    if record.labor_class_raw is None or not str(record.labor_class_raw).strip():
         warnings.append("Labor record is missing a raw labor class for recap mapping.")
-    elif labor_class_normalized is None:
-        warnings.append("Labor acronym did not match any configured labor alias.")
-    if recap_target_label is None:
-        warnings.append("Labor record could not be mapped to a target recap labor classification.")
-    elif slot_id is None:
-        warnings.append("Labor record mapped to a classification that is not active for the current profile.")
+    elif raw_mapping_state == "missing" and labor_raw_key:
+        warnings.append(
+            f"Labor raw value '{labor_raw_key}' is not mapped to a target recap labor classification."
+        )
+    elif raw_mapping_state == "invalid" and labor_raw_key:
+        warnings.append(
+            f"Labor raw value '{labor_raw_key}' maps to a target recap labor classification that is not valid for the active profile."
+        )
+    elif raw_mapping_state == "inactive" and labor_raw_key:
+        warnings.append(
+            f"Labor raw value '{labor_raw_key}' maps to a classification that is not active for the current profile."
+        )
 
     return replace(
         record,
@@ -72,77 +81,51 @@ def normalize_labor_record(record: Record) -> Record:
     )
 
 
-def _resolve_labor_group(record: Record, labor_mapping: dict[str, Any]) -> Optional[str]:
-    """Resolve the labor mapping group using union code first, then phase defaults."""
-    if record.union_code:
-        return record.union_code.strip()
-
-    phase_defaults = labor_mapping.get("phase_defaults", {})
-    if not isinstance(phase_defaults, dict) or record.phase_code is None:
+def _derive_labor_raw_key(record: Record) -> Optional[str]:
+    """Build the exact labor raw key used for direct raw-mapping lookups."""
+    raw_labor_class = str(record.labor_class_raw or "").strip()
+    if not raw_labor_class:
         return None
-    phase_default = phase_defaults.get(record.phase_code)
-    return str(phase_default).strip() if phase_default else None
+
+    canonical_labor_class = _canonicalize_token(raw_labor_class)
+    union_code = str(record.union_code or "").strip()
+    if union_code:
+        return f"{_canonicalize_token(union_code)}/{canonical_labor_class}"
+    return canonical_labor_class or None
 
 
-def _normalize_labor_class(raw_labor_class: Optional[str], labor_mapping: dict[str, Any]) -> Optional[str]:
-    """Normalize a raw labor class token to a configured canonical alias."""
+
+def _canonicalize_raw_labor_class(raw_labor_class: Optional[str]) -> Optional[str]:
+    """Return the canonical raw labor class token for traceable display/use."""
     if raw_labor_class is None:
         return None
-
-    canonical_key = _canonicalize_token(raw_labor_class)
-    aliases = labor_mapping.get("aliases", {})
-    if not isinstance(aliases, dict):
-        return canonical_key or None
-
-    normalized_value = aliases.get(canonical_key)
-    if normalized_value is not None:
-        return str(normalized_value).strip() or None
-
-    return canonical_key or None
+    canonical_value = _canonicalize_token(raw_labor_class)
+    return canonical_value or None
 
 
-def _map_to_target_classification(
-    labor_group: Optional[str],
-    labor_class_normalized: Optional[str],
+
+def _map_raw_key_to_target_classification(
+    labor_raw_key: Optional[str],
     labor_mapping: dict[str, Any],
     target_classifications: set[str],
-) -> Optional[str]:
-    """Map a canonical labor class to a configured recap target label."""
-    if labor_group is None or labor_class_normalized is None:
-        return None
+) -> tuple[Optional[str], str]:
+    """Map an exact labor raw key to a target recap classification when configured."""
+    if not labor_raw_key:
+        return None, "missing"
 
-    class_mappings = labor_mapping.get("class_mappings", {})
-    if not isinstance(class_mappings, dict):
-        return None
+    raw_mappings = labor_mapping.get("raw_mappings", {})
+    if not isinstance(raw_mappings, dict):
+        return None, "missing"
 
-    group_mappings = class_mappings.get(labor_group, {})
-    if not isinstance(group_mappings, dict):
-        group_mappings = {}
-
-    target = group_mappings.get(labor_class_normalized)
+    target = raw_mappings.get(labor_raw_key)
     if target is None:
-        apprentice_aliases = labor_mapping.get("apprentice_aliases", [])
-        apprentice_alias_set = {str(item).strip() for item in apprentice_aliases if str(item).strip()}
-        if labor_class_normalized in apprentice_alias_set:
-            target = group_mappings.get("APP")
-
-    if target is None:
-        fallback_mappings = class_mappings.get(_FALLBACK_LABOR_MAPPING_GROUP, {})
-        if isinstance(fallback_mappings, dict):
-            target = fallback_mappings.get(labor_class_normalized)
-            if target is None:
-                apprentice_aliases = labor_mapping.get("apprentice_aliases", [])
-                apprentice_alias_set = {str(item).strip() for item in apprentice_aliases if str(item).strip()}
-                if labor_class_normalized in apprentice_alias_set:
-                    target = fallback_mappings.get("APP")
-
-    if target is None:
-        return None
+        return None, "missing"
 
     target_value = str(target).strip()
-    if target_value not in target_classifications:
-        return None
-    return target_value
+    if not target_value or target_value not in target_classifications:
+        return None, "invalid"
+    return target_value, "matched"
+
 
 
 def _resolve_labor_slot(target_label: Optional[str]) -> tuple[Optional[str], Optional[str]]:
@@ -157,10 +140,12 @@ def _resolve_labor_slot(target_label: Optional[str]) -> tuple[Optional[str], Opt
     return str(slot.get("slot_id") or "").strip() or None, str(slot.get("label") or "").strip() or None
 
 
+
 def _canonicalize_token(value: str) -> str:
     """Convert a raw token into a lookup-friendly canonical form."""
     collapsed = " ".join(value.strip().upper().split())
     return collapsed.replace("APPRENTICESHIP", "APP")
+
 
 
 def _reduce_confidence(confidence: float, is_uncertain: bool) -> float:
@@ -168,6 +153,7 @@ def _reduce_confidence(confidence: float, is_uncertain: bool) -> float:
     if not is_uncertain:
         return confidence
     return min(confidence, 0.6)
+
 
 
 def _dedupe_warnings(warnings: list[str]) -> list[str]:

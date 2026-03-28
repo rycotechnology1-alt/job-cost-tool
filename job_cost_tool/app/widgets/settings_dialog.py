@@ -370,10 +370,12 @@ class SettingsDialog(QDialog):
     def _refresh_labor_mapping_table(self) -> None:
         """Refresh the labor mapping editor table."""
         rows = self._view_model.labor_mapping_rows
+        self._clear_table_widgets(self._labor_mapping_table)
+        self._labor_mapping_table.clearContents()
         self._labor_mapping_table.setRowCount(len(rows))
         labor_targets = self._view_model.labor_classifications
         for row_index, row in enumerate(rows):
-            self._labor_mapping_table.setItem(row_index, 0, QTableWidgetItem(row.get("raw_value", "")))
+            self._set_read_only_item(self._labor_mapping_table, row_index, 0, row.get("raw_value", ""))
             self._set_combo_cell(
                 self._labor_mapping_table,
                 row_index,
@@ -631,7 +633,8 @@ class SettingsDialog(QDialog):
         """Append a new editable labor mapping row."""
         row_index = self._labor_mapping_table.rowCount()
         self._labor_mapping_table.insertRow(row_index)
-        self._labor_mapping_table.setItem(row_index, 0, QTableWidgetItem(""))
+        self._labor_mapping_table.removeCellWidget(row_index, 0)
+        self._set_read_only_item(self._labor_mapping_table, row_index, 0, "")
         self._set_combo_cell(self._labor_mapping_table, row_index, 1, self._view_model.labor_classifications, "")
         self._labor_mapping_table.setItem(row_index, 2, QTableWidgetItem(""))
 
@@ -694,7 +697,7 @@ class SettingsDialog(QDialog):
             add_button=self._labor_mapping_add_button,
             remove_button=self._labor_mapping_remove_button,
             save_button=self._labor_mapping_save_button,
-            editable_columns={0, 2},
+            editable_columns={2},
         )
         self._update_mapping_editor_state(
             table=self._equipment_mapping_table,
@@ -779,6 +782,22 @@ class SettingsDialog(QDialog):
                 if widget is not None:
                     widget.setEnabled(enabled)
 
+    def _clear_table_widgets(self, table: QTableWidget) -> None:
+        """Remove and dispose existing cell widgets before repopulating a table."""
+        for row_index in range(table.rowCount()):
+            for column_index in range(table.columnCount()):
+                self._dispose_cell_widget(table, row_index, column_index)
+
+    def _dispose_cell_widget(self, table: QTableWidget, row_index: int, column_index: int) -> None:
+        """Fully remove a cell widget so it cannot remain painted over the table."""
+        widget = table.cellWidget(row_index, column_index)
+        if widget is None:
+            return
+        table.removeCellWidget(row_index, column_index)
+        widget.hide()
+        widget.setParent(None)
+        widget.deleteLater()
+
     def _update_classification_editor_state(self) -> None:
         """Apply read-only messaging and enabled state for classification slots."""
         is_read_only = self._view_model.is_default_profile
@@ -850,6 +869,7 @@ class SettingsDialog(QDialog):
         current_text: str,
     ) -> None:
         """Set a combo-box cell widget for a mapping target column."""
+        self._dispose_cell_widget(table, row_index, column_index)
         combo_box = QComboBox()
         combo_box.addItem("")
         combo_box.addItems(options)
@@ -858,6 +878,7 @@ class SettingsDialog(QDialog):
 
     def _set_read_only_item(self, table: QTableWidget, row_index: int, column_index: int, value: str) -> None:
         """Insert a non-editable table item."""
+        self._dispose_cell_widget(table, row_index, column_index)
         item = QTableWidgetItem(value)
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         table.setItem(row_index, column_index, item)

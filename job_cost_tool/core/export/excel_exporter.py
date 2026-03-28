@@ -45,6 +45,8 @@ def export_to_excel(template_path: str, output_path: str, recap_payload: dict[st
     _clear_header_fields(worksheet, mapping.get("header_fields", {}))
 
     _write_header_fields(worksheet, recap_payload.get("header", {}), mapping.get("header_fields", {}))
+    _write_fixed_row_labels(worksheet, labor_row_slots, "labor")
+    _write_fixed_row_labels(worksheet, equipment_row_slots, "equipment")
     _write_labor_values(worksheet, recap_payload.get("labor", {}), labor_row_slots)
     _write_labor_rates(worksheet, recap_payload.get("labor_rates", {}), labor_row_slots)
     _write_equipment_values(worksheet, recap_payload.get("equipment", {}), equipment_row_slots)
@@ -151,6 +153,9 @@ def _clear_fixed_inputs(
         row_mapping = slot_info.get("mapping", {})
         if not isinstance(row_mapping, dict):
             continue
+        label_cell = _get_fixed_row_label_cell(slot_info, "labor")
+        if label_cell:
+            worksheet[str(label_cell)].value = None
         for key in ("st_hours", "ot_hours", "dt_hours", "st_rate", "ot_rate", "dt_rate"):
             cell_ref = row_mapping.get(key)
             if cell_ref:
@@ -162,6 +167,9 @@ def _clear_fixed_inputs(
         row_mapping = slot_info.get("mapping", {})
         if not isinstance(row_mapping, dict):
             continue
+        label_cell = _get_fixed_row_label_cell(slot_info, "equipment")
+        if label_cell:
+            worksheet[str(label_cell)].value = None
         for key in ("hours_qty", "rate"):
             cell_ref = row_mapping.get(key)
             if cell_ref:
@@ -199,6 +207,20 @@ def _write_header_fields(
         if not isinstance(mapping_entry, dict) or "cell" not in mapping_entry:
             continue
         worksheet[str(mapping_entry["cell"])].value = value
+
+
+def _write_fixed_row_labels(
+    worksheet: Worksheet,
+    row_slots: dict[str, Any],
+    family: str,
+) -> None:
+    """Write active slot labels into the fixed recap row label cells."""
+    for slot_info in row_slots.values():
+        if not isinstance(slot_info, dict):
+            continue
+        label_cell = _get_fixed_row_label_cell(slot_info, family)
+        label = str(slot_info.get("label") or "").strip() if bool(slot_info.get("active")) else ""
+        worksheet[str(label_cell)].value = label or None
 
 
 def _write_labor_values(
@@ -281,6 +303,29 @@ def _get_fixed_row_mapping(row_slots: dict[str, Any], slot_id: str, family: str)
     if not isinstance(row_mapping, dict):
         raise ValueError(f"Recap template map is missing cell mappings for {family} slot '{slot_id}'.")
     return row_mapping
+
+
+def _get_fixed_row_label_cell(slot_info: dict[str, Any], family: str) -> str:
+    """Return the label cell for a fixed recap row, deriving it from the mapped row when needed."""
+    explicit_cell = str(slot_info.get("label_cell") or "").strip()
+    if explicit_cell:
+        return explicit_cell
+
+    row_mapping = slot_info.get("mapping", {})
+    if not isinstance(row_mapping, dict):
+        slot_id = str(slot_info.get("slot_id") or "").strip() or "unknown"
+        raise ValueError(f"Recap template map is missing cell mappings for {family} slot '{slot_id}'.")
+
+    for key in ("st_hours", "ot_hours", "dt_hours", "st_rate", "ot_rate", "dt_rate", "hours_qty", "rate"):
+        cell_ref = str(row_mapping.get(key) or "").strip()
+        if not cell_ref:
+            continue
+        row_number = "".join(character for character in cell_ref if character.isdigit())
+        if row_number:
+            return f"A{row_number}"
+
+    slot_id = str(slot_info.get("slot_id") or "").strip() or "unknown"
+    raise ValueError(f"Recap template map is missing a label cell for {family} slot '{slot_id}'.")
 
 
 def _write_list_section(

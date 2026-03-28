@@ -1,11 +1,12 @@
-﻿"""Focused normalization tests for narrow business-rule exceptions."""
+"""Focused normalization tests for narrow business-rule exceptions."""
 
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
-from job_cost_tool.core.models.record import LABOR, MATERIAL, Record
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
 from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
 from job_cost_tool.core.normalization.normalizer import normalize_records
 from job_cost_tool.services.validation_service import validate_records
@@ -14,7 +15,104 @@ from job_cost_tool.services.validation_service import validate_records
 class NormalizationRuleTests(unittest.TestCase):
     """Verify targeted normalization business rules."""
 
-    def test_custom_fallback_labor_mapping_normalizes_without_explicit_group(self) -> None:
+    def test_exact_raw_labor_mapping_wins_over_legacy_fallback(self) -> None:
+        record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="F",
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Labor source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            return_value={
+                "raw_mappings": {"103/F": "Big Boy"},
+                "aliases": {"F": "F"},
+                "class_mappings": {"103": {"F": "Legacy Foreman"}},
+                "apprentice_aliases": [],
+            },
+        ), patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            return_value={
+                "classifications": ["Big Boy", "Legacy Foreman"],
+                "slots": [
+                    {"slot_id": "labor_1", "label": "Big Boy", "active": True},
+                    {"slot_id": "labor_2", "label": "Legacy Foreman", "active": True},
+                ],
+            },
+        ):
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+            normalized_record = normalize_labor_record(record)
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+
+        self.assertEqual(normalized_record.recap_labor_classification, "Big Boy")
+        self.assertEqual(normalized_record.recap_labor_slot_id, "labor_1")
+        self.assertEqual(normalized_record.record_type_normalized, LABOR)
+
+    def test_raw_mappings_only_config_normalizes_without_legacy_fields(self) -> None:
+        record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="F",
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Labor source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            return_value={
+                "raw_mappings": {"103/F": "Big Boy"},
+                "saved_mappings": [
+                    {"raw_value": "103/F", "target_classification": "Big Boy", "notes": ""}
+                ],
+            },
+        ), patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            return_value={
+                "classifications": ["Big Boy"],
+                "slots": [{"slot_id": "labor_1", "label": "Big Boy", "active": True}],
+            },
+        ):
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+            normalized_record = normalize_labor_record(record)
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+
+        self.assertEqual(normalized_record.recap_labor_classification, "Big Boy")
+        self.assertEqual(normalized_record.recap_labor_slot_id, "labor_1")
+        self.assertEqual(normalized_record.record_type_normalized, LABOR)
+
+    def test_unmapped_raw_labor_key_no_longer_falls_back_to_legacy_mapping(self) -> None:
         record = Record(
             record_type=LABOR,
             phase_code="20",
@@ -43,16 +141,274 @@ class NormalizationRuleTests(unittest.TestCase):
             },
         ), patch(
             "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
-            return_value={"classifications": ["Big Boy"]},
+            return_value={
+                "classifications": ["Big Boy"],
+                "slots": [{"slot_id": "labor_1", "label": "Big Boy", "active": True}],
+            },
         ):
             normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
             normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
             normalized_record = normalize_labor_record(record)
             normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
             normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+
+        self.assertIsNone(normalized_record.recap_labor_classification)
+        self.assertIsNone(normalized_record.recap_labor_slot_id)
+        self.assertEqual(normalized_record.labor_class_normalized, "F")
+        self.assertTrue(
+            any("999/F" in warning and "not mapped" in warning.casefold() for warning in normalized_record.warnings)
+        )
+        self.assertEqual(normalized_record.confidence, 0.6)
+
+    def test_exact_raw_mapping_lookup_canonicalizes_spacing_and_case(self) -> None:
+        record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100,
+            hours=8.0,
+            hour_type="ST",
+            union_code=" 103 ",
+            labor_class_raw="  f  ",
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Labor source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            return_value={
+                "raw_mappings": {"103/F": "Big Boy"},
+            },
+        ), patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            return_value={
+                "classifications": ["Big Boy"],
+                "slots": [{"slot_id": "labor_1", "label": "Big Boy", "active": True}],
+            },
+        ):
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+            normalized_record = normalize_labor_record(record)
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
 
         self.assertEqual(normalized_record.recap_labor_classification, "Big Boy")
-        self.assertEqual(normalized_record.record_type_normalized, LABOR)
+        self.assertEqual(normalized_record.labor_class_normalized, "F")
+
+    def test_invalid_raw_mapping_target_warns_and_remains_unmapped(self) -> None:
+        record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="F",
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Labor source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            return_value={
+                "raw_mappings": {"103/F": "Not In Profile"},
+                "aliases": {"F": "F"},
+                "class_mappings": {"103": {"F": "103 Foreman"}},
+                "apprentice_aliases": [],
+            },
+        ), patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            return_value={
+                "classifications": ["103 Foreman"],
+                "slots": [{"slot_id": "labor_1", "label": "103 Foreman", "active": True}],
+            },
+        ):
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+            normalized_record = normalize_labor_record(record)
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+
+        self.assertIsNone(normalized_record.recap_labor_classification)
+        self.assertTrue(
+            any("103/F" in warning and "not valid" in warning.casefold() for warning in normalized_record.warnings)
+        )
+
+    def test_inactive_raw_mapping_target_warns_and_remains_unmapped(self) -> None:
+        record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="F",
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Labor source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            return_value={"raw_mappings": {"103/F": "Big Boy"}},
+        ), patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            return_value={
+                "classifications": ["Big Boy"],
+                "slots": [{"slot_id": "labor_1", "label": "Big Boy", "active": False}],
+            },
+        ):
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+            normalized_record = normalize_labor_record(record)
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+
+        self.assertIsNone(normalized_record.recap_labor_classification)
+        self.assertTrue(any("not active" in warning.casefold() for warning in normalized_record.warnings))
+
+    def test_missing_labor_class_raw_still_warns_appropriately(self) -> None:
+        record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Labor source",
+        )
+
+        with patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            return_value={"raw_mappings": {}},
+        ), patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            return_value={"classifications": [], "slots": []},
+        ):
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+            normalized_record = normalize_labor_record(record)
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+
+        self.assertIsNone(normalized_record.recap_labor_classification)
+        self.assertTrue(any("missing a raw labor class" in warning.casefold() for warning in normalized_record.warnings))
+
+    def test_family_routing_remains_intact_for_mixed_records(self) -> None:
+        labor_record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100,
+            hours=8.0,
+            hour_type="ST",
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Labor source",
+        )
+        equipment_record = Record(
+            record_type=EQUIPMENT,
+            phase_code="31",
+            raw_description="Equipment line",
+            cost=50,
+            hours=2.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Equipment source",
+        )
+        material_record = Record(
+            record_type=MATERIAL,
+            phase_code="50",
+            raw_description="Material line",
+            cost=25,
+            hours=None,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Material source",
+        )
+
+        phase_cache = normalize_records.__globals__["_get_phase_mapping"]
+        phase_cache.cache_clear()
+        with patch(
+            "job_cost_tool.core.normalization.normalizer.ConfigLoader.get_phase_mapping",
+            return_value={},
+        ), patch(
+            "job_cost_tool.core.normalization.normalizer.normalize_labor_record",
+            side_effect=lambda record: replace(record, warnings=record.warnings + ["labor path"]),
+        ), patch(
+            "job_cost_tool.core.normalization.normalizer.normalize_equipment_record",
+            side_effect=lambda record: replace(record, warnings=record.warnings + ["equipment path"]),
+        ), patch(
+            "job_cost_tool.core.normalization.normalizer.normalize_material_record",
+            side_effect=lambda record: replace(record, warnings=record.warnings + ["material path"]),
+        ):
+            normalized_records = normalize_records([labor_record, equipment_record, material_record])
+        phase_cache.cache_clear()
+
+        self.assertIn("labor path", normalized_records[0].warnings)
+        self.assertIn("equipment path", normalized_records[1].warnings)
+        self.assertIn("material path", normalized_records[2].warnings)
 
     def test_phase_50_job_reimbursement_normalizes_to_employee_expense_material(self) -> None:
         record = Record(
