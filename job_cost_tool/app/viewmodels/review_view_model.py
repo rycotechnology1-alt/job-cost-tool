@@ -94,6 +94,22 @@ class ReviewViewModel(QObject):
         """Return True when export would be allowed if implemented."""
         return bool(self._records) and not self._blocking_issues and not self.is_processing
 
+    @property
+    def observed_labor_raw_values(self) -> list[str]:
+        """Return actual observed raw labor values from the current review dataset."""
+        observed_values: list[str] = []
+        seen: set[str] = set()
+        for record in self._review_records:
+            raw_value = self._format_observed_labor_raw_value(record)
+            if raw_value is None:
+                continue
+            normalized = raw_value.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            observed_values.append(raw_value)
+        return observed_values
+
     def load_pdf(self, file_path: str) -> None:
         """Run the parse-normalize-validate pipeline for a selected PDF."""
         self.current_pdf_path = file_path
@@ -245,6 +261,14 @@ class ReviewViewModel(QObject):
         labor_options = [str(item) for item in labor_config.get("classifications", []) if str(item).strip()]
         equipment_options = [str(item) for item in equipment_config.get("classifications", []) if str(item).strip()]
         return labor_options, equipment_options
+
+    def _format_observed_labor_raw_value(self, record: Record) -> str | None:
+        """Build a true observed labor raw value from parsed source fields only."""
+        labor_class_raw = str(record.labor_class_raw or "").strip()
+        union_code = str(record.union_code or "").strip()
+        if not labor_class_raw:
+            return None
+        return f"{union_code}/{labor_class_raw}" if union_code else labor_class_raw
 
     def _apply_slot_backed_updates(self, allowed_updates: dict[str, object]) -> None:
         """Resolve stable slot ids for edited labor and equipment selections."""

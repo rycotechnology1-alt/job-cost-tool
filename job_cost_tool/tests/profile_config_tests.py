@@ -13,6 +13,7 @@ from job_cost_tool.app.viewmodels.settings_view_model import (
     _build_label_rename_map,
     _build_labor_mapping_rows,
     _build_slot_label_rename_map,
+    _dedupe_casefold_preserving_order,
     _rename_equipment_mapping_config_targets,
     _rename_labor_mapping_config_targets,
     _rename_rates_config_targets,
@@ -323,6 +324,95 @@ class ProfileConfigTests(unittest.TestCase):
         )
 
         self.assertEqual(rows, [{"raw_value": "F", "target_classification": "Big Boy", "notes": ""}])
+
+    def test_build_labor_mapping_rows_does_not_synthesize_group_based_raw_values(self) -> None:
+        rows = _build_labor_mapping_rows(
+            {
+                "aliases": {"103/F": "F"},
+                "class_mappings": {
+                    "103": {"F": "Foreman"},
+                    "104": {"F": "Foreman"},
+                },
+            }
+        )
+
+        self.assertEqual(rows, [{"raw_value": "103/F", "target_classification": "Foreman", "notes": ""}])
+
+    def test_build_labor_mapping_rows_preserves_true_prefixed_raw_values(self) -> None:
+        rows = _build_labor_mapping_rows(
+            {
+                "aliases": {"103/F": "F", "104/F": "F", "103/J": "J", "104/J": "J"},
+                "class_mappings": {
+                    "103": {"F": "103 Foreman", "J": "103 Journeyman"},
+                    "104": {"F": "104 Foreman", "J": "104 Journeyman"},
+                },
+            }
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                {"raw_value": "103/F", "target_classification": "103 Foreman", "notes": ""},
+                {"raw_value": "103/J", "target_classification": "103 Journeyman", "notes": ""},
+                {"raw_value": "104/F", "target_classification": "104 Foreman", "notes": ""},
+                {"raw_value": "104/J", "target_classification": "104 Journeyman", "notes": ""},
+            ],
+        )
+
+    def test_build_labor_mapping_rows_legacy_plain_raw_value_does_not_expand_to_multiple_targets(self) -> None:
+        rows = _build_labor_mapping_rows(
+            {
+                "aliases": {"F": "F"},
+                "class_mappings": {
+                    "103": {"F": "103 Foreman"},
+                    "104": {"F": "104 Foreman"},
+                },
+            }
+        )
+
+        self.assertEqual(rows, [{"raw_value": "F", "target_classification": "", "notes": ""}])
+
+    def test_build_labor_mapping_rows_prefers_explicit_saved_mappings(self) -> None:
+        rows = _build_labor_mapping_rows(
+            {
+                "aliases": {"103/F": "F"},
+                "class_mappings": {
+                    "103": {"F": "103 Foreman"},
+                    "104": {"F": "104 Foreman"},
+                },
+                "saved_mappings": [
+                    {"raw_value": "103/F", "target_classification": "Big Boy", "notes": "keep me"},
+                ],
+            }
+        )
+
+        self.assertEqual(rows, [{"raw_value": "103/F", "target_classification": "Big Boy", "notes": "keep me"}])
+
+    def test_build_labor_mapping_rows_merges_observed_raw_values_without_inflating_saved_rows(self) -> None:
+        rows = _build_labor_mapping_rows(
+            {
+                "aliases": {"103/F": "F"},
+                "class_mappings": {
+                    "103": {"F": "Foreman"},
+                },
+            },
+            observed_raw_values=["103/F", "104/J", "J"],
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                {"raw_value": "104/J", "target_classification": "", "notes": ""},
+                {"raw_value": "J", "target_classification": "", "notes": ""},
+                {"raw_value": "103/F", "target_classification": "Foreman", "notes": ""},
+            ],
+        )
+
+    def test_dedupe_casefold_preserving_order_keeps_first_observed_value(self) -> None:
+        self.assertEqual(
+            _dedupe_casefold_preserving_order(["103/F", "103/f", " J ", "J", ""]),
+            ["103/F", "J"],
+        )
 
     def test_validate_slot_rows_rejects_duplicate_active_labels(self) -> None:
         existing_slots = [

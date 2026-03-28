@@ -317,6 +317,10 @@ class SettingsDialog(QDialog):
         self._duplicate_button.clicked.connect(self._duplicate_profile)
         self._delete_button.clicked.connect(self._delete_profile)
 
+    def set_observed_labor_raw_values(self, values: list[str]) -> None:
+        """Update temporary observed labor raw values used by the mapping editor."""
+        self._view_model.set_observed_labor_raw_values(values)
+
     def _refresh_ui(self) -> None:
         """Refresh summary, available profiles, and editor tabs from the view-model."""
         self._refresh_profile_summary()
