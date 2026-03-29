@@ -261,6 +261,14 @@ This section should only include meaningful product/architecture changes, not ev
 - **Risks introduced:**  
 - **Follow-up needed:**  
 
+### [2026-03-29] Parser skips orphan header/filter lines before record emission
+- **What changed:** Tightened the report parser so non-transaction lines with no structured fields are dropped instead of becoming low-confidence `other` records, and added parser regression coverage for the Vista/Viewpoint header-filter case.
+- **Why:** Report metadata/filter text was leaking into review as junk records and blockers in some PDFs.
+- **Area:** Core engine / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Very low risk of dropping unsupported orphan lines that have no transaction marker and no parseable structure.
+- **Follow-up needed:** Add fixture-backed parser coverage for more report-header variants if additional customer PDFs surface them.
+
 ---
 
 # 8) Known migration risks

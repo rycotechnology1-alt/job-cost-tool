@@ -117,17 +117,30 @@ def _flush_pending_line(
     if pending_line is None:
         return None
 
-    records.append(_build_record_from_line(pending_line, context))
+    tokenized = tokenize_detail_line(
+        line=pending_line.text,
+        transaction_type=None,
+        phase_code=context.phase_code,
+        phase_name_raw=context.phase_name_raw,
+    )
+    if not _should_emit_record(pending_line, tokenized):
+        return None
+
+    records.append(_build_record_from_line(pending_line, context, tokenized))
     return None
 
 
-def _build_record_from_line(pending_line: _PendingLine, context: _ParseContext) -> Record:
+def _build_record_from_line(
+    pending_line: _PendingLine,
+    context: _ParseContext,
+    tokenized: Optional[TokenizationResult] = None,
+) -> Record:
     """Build a raw Record from an assembled detail line."""
     warnings: list[str] = []
     if context.phase_code is None:
         warnings.append("No active phase context was identified for this line.")
 
-    tokenized = tokenize_detail_line(
+    tokenized = tokenized or tokenize_detail_line(
         line=pending_line.text,
         transaction_type=None,
         phase_code=context.phase_code,
@@ -187,6 +200,21 @@ def _resolve_record_type(context_record_type: str, tokenized: TokenizationResult
     if tokenized_family in {LABOR, EQUIPMENT, MATERIAL}:
         return tokenized_family
     return OTHER
+
+
+def _should_emit_record(pending_line: _PendingLine, tokenized: TokenizationResult) -> bool:
+    """Return True when an assembled line carries enough structure to keep.
+
+    Header/filter metadata can slip past the line classifier when it is not a
+    known boilerplate string. If such a line never started with a recognized
+    transaction marker and tokenization found no structured fields, treat it as
+    non-record report text instead of emitting a low-confidence junk record.
+    """
+    if pending_line.started_with_transaction:
+        return True
+    if tokenized["transaction_type"] is not None:
+        return True
+    return bool(tokenized["has_meaningful_fields"])
 
 
 def _extract_project_header(line: str) -> Optional[tuple[str, str]]:
