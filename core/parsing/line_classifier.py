@@ -13,6 +13,7 @@ _PHASE_HEADER_RE = re.compile(
     r"^(?P<phase_code>\d{1,3})(?:\s*\.\s*){0,2}\s+(?P<phase_name>[A-Za-z].+?)\s*$"
 )
 _PAGE_FOOTER_RE = re.compile(r"\bPage\s+\d+\s+\d{2}/\d{2}/\d{2}\b", re.IGNORECASE)
+_ALWAYS_SUPPORTED_TRANSACTION_TYPES = ("JC",)
 
 
 @lru_cache(maxsize=1)
@@ -23,11 +24,20 @@ def _get_input_model() -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _get_transaction_types() -> tuple[str, ...]:
-    """Return configured transaction type markers."""
+    """Return configured transaction type markers plus globally supported corrections.
+
+    JC entries are review-relevant correction lines and must always act as a
+    record boundary, even for older profiles whose input_model.json predates
+    explicit JC support.
+    """
     transaction_types = _get_input_model().get("transaction_types", [])
-    if not isinstance(transaction_types, list):
-        return tuple()
-    return tuple(str(item).upper() for item in transaction_types)
+    configured = [] if not isinstance(transaction_types, list) else [str(item).upper() for item in transaction_types]
+
+    ordered_markers: list[str] = []
+    for marker in [*configured, *_ALWAYS_SUPPORTED_TRANSACTION_TYPES]:
+        if marker and marker not in ordered_markers:
+            ordered_markers.append(marker)
+    return tuple(ordered_markers)
 
 
 @lru_cache(maxsize=1)

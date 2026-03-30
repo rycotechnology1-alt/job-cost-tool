@@ -48,5 +48,37 @@ class ReportParserTests(unittest.TestCase):
         self.assertIn("No active phase context was identified for this line.", records[0].warnings)
 
 
+    def test_consecutive_jc_lines_are_emitted_as_separate_records(self) -> None:
+        pages = [
+            {
+                "page_number": 2,
+                "text": "\n".join(
+                    [
+                        "31 . . Internal Equip. Charges",
+                        "JC 02/04/26 Equipment from 230566 to 260089 (JCA 0078) -4.00 -152.00",
+                        "JC 02/09/26 Equipment from 230566 to 260089 (JCA 0078) -8.00 -304.00",
+                        "JC 02/09/26 Equipment from 230566 to 260089 (JCA 0078) -6.00 -228.00",
+                    ]
+                ),
+            }
+        ]
+
+        records = parse_report_pages(pages)
+
+        self.assertEqual(len(records), 3)
+        self.assertEqual([record.transaction_type for record in records], ["JC", "JC", "JC"])
+        self.assertEqual(
+            [record.source_line_text for record in records],
+            [
+                "JC 02/04/26 Equipment from 230566 to 260089 (JCA 0078) -4.00 -152.00",
+                "JC 02/09/26 Equipment from 230566 to 260089 (JCA 0078) -8.00 -304.00",
+                "JC 02/09/26 Equipment from 230566 to 260089 (JCA 0078) -6.00 -228.00",
+            ],
+        )
+        self.assertTrue(all(record.record_type == "equipment" for record in records))
+        self.assertTrue(all(record.transaction_type == "JC" for record in records))
+
+
+
 if __name__ == "__main__":
     unittest.main()

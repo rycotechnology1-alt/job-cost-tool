@@ -261,6 +261,14 @@ This section should only include meaningful product/architecture changes, not ev
 - **Risks introduced:**  
 - **Follow-up needed:**  
 
+### [2026-03-29] Parser treats JC correction lines as global record boundaries
+- **What changed:** Added global JC transaction-start recognition so consecutive JC lines flush and emit as separate parsed records instead of being concatenated.
+- **Why:** Review-relevant accounting correction lines were being merged together, hiding individual positive/negative adjustments from the user.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that older customer-specific report variants using JC in a non-transaction context could now split more aggressively, though the required `JC <date>` structure keeps the rule narrow.
+- **Follow-up needed:** If JC lines need richer parsing later, add tokenizer-level handling without changing the record-boundary rule.
+
 ### [2026-03-29] Parser skips orphan header/filter lines before record emission
 - **What changed:** Tightened the report parser so non-transaction lines with no structured fields are dropped instead of becoming low-confidence `other` records, and added parser regression coverage for the Vista/Viewpoint header-filter case.
 - **Why:** Report metadata/filter text was leaking into review as junk records and blockers in some PDFs.

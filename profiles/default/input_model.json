@@ -5,6 +5,6 @@
     "equipment": ["Internal Equip. Charges"],
     "material": ["Material-Electrical", "Other Job Cost"]
   },
-  "transaction_types": ["PR", "AP"],
+  "transaction_types": ["PR", "AP", "JC"],
   "ignore_patterns": ["Totals:", "Grand Total", "continued..."]
 }
