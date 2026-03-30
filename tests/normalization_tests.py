@@ -6,7 +6,7 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, SUBCONTRACTOR, Record
 from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
 from job_cost_tool.core.normalization.equipment_normalizer import normalize_equipment_record
 from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
@@ -777,6 +777,45 @@ class NormalizationRuleTests(unittest.TestCase):
         self.assertFalse(any("missing a vendor name" in warning.casefold() for warning in normalized_record.warnings))
         self.assertEqual(blocking_issues, [])
         self.assertEqual(validated_record.vendor_name_normalized, "Employee Expense")
+
+
+    def test_phase_40_subcontracted_ap_normalizes_as_subcontractor(self) -> None:
+        record = Record(
+            record_type=SUBCONTRACTOR,
+            phase_code="40",
+            raw_description="974 CJ Shaughnessy Crane 24942 / TR# 108 / 1 / APCo: 2 / SL#-Item 842600.001-1",
+            cost=6000.0,
+            hours=0.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name="CJ Shaughnessy Crane",
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            transaction_type="AP",
+            phase_name_raw="Subcontracted",
+            vendor_id_raw="974",
+            source_page=1,
+            source_line_text="AP 03/20/26 974 CJ Shaughnessy Crane 24942 / TR# 108 / 1 / APCo: 2 / SL#-Item 842600.001-1 0.00 6,000.00",
+        )
+
+        phase_cache = normalize_records.__globals__["_get_phase_mapping"]
+        phase_cache.cache_clear()
+        with patch(
+            "job_cost_tool.core.normalization.normalizer.ConfigLoader.get_phase_mapping",
+            return_value={"40": "SUBCONTRACTOR"},
+        ):
+            normalized_record = normalize_records([record])[0]
+        phase_cache.cache_clear()
+
+        self.assertEqual(normalized_record.phase_code, "40")
+        self.assertEqual(normalized_record.phase_name_raw, "Subcontracted")
+        self.assertEqual(normalized_record.record_type, SUBCONTRACTOR)
+        self.assertEqual(normalized_record.record_type_normalized, SUBCONTRACTOR)
+        self.assertEqual(normalized_record.vendor_name, "CJ Shaughnessy Crane")
 
 
 if __name__ == "__main__":

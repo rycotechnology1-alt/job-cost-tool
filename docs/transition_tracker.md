@@ -1,3 +1,11 @@
+### [2026-03-30] Phase-40 AP records preserve subcontractor family routing
+- **What changed:** Added subcontractor family support to the phase-aware parsing and normalization path so AP records under `40 . . Subcontracted` no longer fall through to material typing.
+- **Why:** The parser was preserving phase 40 context correctly, but the config-backed family-routing stack did not represent subcontracted behavior, so both raw and normalized type drifted to material.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk of changing behavior for reports that implicitly relied on phase 40 falling through to material, though that behavior was incorrect for subcontracted entries.
+- **Follow-up needed:** Add fixture-backed coverage for other subcontracted AP report variants if more examples surface.
+
 # Transition Tracker
 
 ## Purpose

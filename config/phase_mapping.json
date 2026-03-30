@@ -1,7 +1,8 @@
-﻿{
+{
   "20": "LABOR",
   "21": "LABOR",
   "31": "EQUIPMENT",
   "11": "MATERIAL",
-  "50": "MATERIAL"
+  "50": "MATERIAL",
+  "40": "SUBCONTRACTOR"
 }

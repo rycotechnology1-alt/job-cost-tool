@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from job_cost_tool.core.models.record import SUBCONTRACTOR
 from job_cost_tool.core.parsing.report_parser import parse_report_pages
 
 
@@ -109,6 +110,31 @@ class ReportParserTests(unittest.TestCase):
             "103/J 1.00 / 1716 / Dorsey , Michael A5 Regular Earnings",
         )
 
+
+
+    def test_phase_40_subcontracted_ap_record_keeps_subcontractor_raw_type(self) -> None:
+        pages = [
+            {
+                "page_number": 1,
+                "text": "\n".join(
+                    [
+                        "40 . . Subcontracted",
+                        "AP 03/20/26 974 CJ Shaughnessy Crane 24942 / TR# 108 / 1 / APCo: 2 / SL#-Item 842600.001-1 0.00 6,000.00",
+                        "quote",
+                    ]
+                ),
+            }
+        ]
+
+        records = parse_report_pages(pages)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].phase_code, "40")
+        self.assertEqual(records[0].phase_name_raw, "Subcontracted")
+        self.assertEqual(records[0].transaction_type, "AP")
+        self.assertEqual(records[0].record_type, SUBCONTRACTOR)
+        self.assertEqual(records[0].vendor_id_raw, "974")
+        self.assertEqual(records[0].vendor_name, "CJ Shaughnessy Crane")
 
 
 if __name__ == "__main__":

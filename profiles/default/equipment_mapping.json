@@ -1,5 +1,8 @@
 {
   "raw_mappings": {
+    "CHEVROLET SILVERADO": "Pick-up Truck",
+    "INTERNATIONAL KNUCKLEBOOM FLATBED H.R.": "Boom Truck",
+    "PETERBILT 567 CRANE": "Boom Truck",
     "CHEVROLET 6500 26FT BOX TRUCK (LOOPS)": "Box Truck",
     "DODGE RAM 3500 BOX/UTILITY TRUCK": "Box Truck",
     "DODGE RAM 5500 BOX/UTILTY BODY": "Box Truck",
@@ -13,9 +16,6 @@
     "ISUZU 16' BOX TRUCK": "Box Truck",
     "ISUZU 16FT BOX TRUCK W/LIFT GATE": "Box Truck",
     "ISUZU BOX TRUCK": "Box Truck",
-    "WESTERN STAR HI-RAIL BUCKET TRUCK": "Bucket Truck",
-    "INTERNATIONAL KNUCKLEBOOM FLATBED H.R.": "Boom Truck",
-    "PETERBILT 567 CRANE": "Boom Truck",
     "DODGE BUCKET/MH": "Bucket Truck",
     "DODGE RAM 5500 BUCKET TRUCK": "Bucket Truck",
     "DODGE RAM 5500 BUCKET/MAT HANDLER": "Bucket Truck",
@@ -28,6 +28,7 @@
     "FORD F600 BUCKET/MAT HANDLER TRUCK": "Bucket Truck",
     "FREIGHTLINER BUCKET/MAT HANDLER": "Bucket Truck",
     "FREIGHTLINER BUCKET/MH": "Bucket Truck",
+    "WESTERN STAR HI-RAIL BUCKET TRUCK": "Bucket Truck",
     "C 618/2025 FREIGHTLINER DIGGER DERRICK/1 -5.00 -300.00": "Digger Derrick",
     "FORD F750 DIGGER DERRICK": "Digger Derrick",
     "FREIGHTLINER DIGGER DERRICK": "Digger Derrick",
@@ -82,6 +83,10 @@
       "target_category": ""
     },
     {
+      "raw_description": "ALTEC TRACKED BACK YARD DIGGER DERRICK",
+      "target_category": ""
+    },
+    {
       "raw_description": "B 456/2018 FREIGHTLINER DIGGER DERRICK/1 -8.00 -480.00",
       "target_category": ""
     },
@@ -98,20 +103,16 @@
       "target_category": ""
     },
     {
-      "raw_description": "CHEVROLET 6500 26FT BOX TRUCK (LOOPS)",
-      "target_category": "Box Truck"
+      "raw_description": "CHEVROLET SILVERADO",
+      "target_category": "Pick-up Truck"
     },
     {
       "raw_description": "CHEVROLET UTILITY BODY W/LIFT GATE",
       "target_category": ""
     },
     {
-      "raw_description": "DODGE RAM 3500 BOX/UTILITY TRUCK",
-      "target_category": "Box Truck"
-    },
-    {
-      "raw_description": "DODGE RAM 5500 BOX/UTILTY BODY",
-      "target_category": "Box Truck"
+      "raw_description": "DODGE RAM PICK-UP",
+      "target_category": ""
     },
     {
       "raw_description": "E 577/2022 DODGE RAM 5500 BUCKET/MH/1 -8.00 -304.00",
@@ -122,24 +123,20 @@
       "target_category": ""
     },
     {
-      "raw_description": "FORD E350 BOX TRUCK",
-      "target_category": "Box Truck"
+      "raw_description": "FORD F150 EXTENEDE CAB PICK UP TRUCK",
+      "target_category": ""
     },
     {
-      "raw_description": "FORD E350 BOX/VAN",
-      "target_category": "Box Truck"
+      "raw_description": "FORD F150 EXTENEDED CAB PICK-UP TRUCK",
+      "target_category": ""
     },
     {
-      "raw_description": "FORD F350 BOX TRUCK",
-      "target_category": "Box Truck"
+      "raw_description": "FORD F150 PICK UP TRUCK",
+      "target_category": ""
     },
     {
-      "raw_description": "FORD F550 BOX TRUCK",
-      "target_category": "Box Truck"
-    },
-    {
-      "raw_description": "FORD F600 BOX TRUCK",
-      "target_category": "Box Truck"
+      "raw_description": "FORD F250 CREW CAB PICK UP TRUCK",
+      "target_category": ""
     },
     {
       "raw_description": "FORD F650 10FT DUMP TRUCK",
@@ -158,14 +155,6 @@
       "target_category": ""
     },
     {
-      "raw_description": "FREIGHTLINER BOX TRUCK",
-      "target_category": "Box Truck"
-    },
-    {
-      "raw_description": "GMC 3500 BOX TRUCK",
-      "target_category": "Box Truck"
-    },
-    {
       "raw_description": "HINO 15' CRASH TRUCK",
       "target_category": ""
     },
@@ -178,16 +167,8 @@
       "target_category": ""
     },
     {
-      "raw_description": "ISUZU 16' BOX TRUCK",
-      "target_category": "Box Truck"
-    },
-    {
-      "raw_description": "ISUZU 16FT BOX TRUCK W/LIFT GATE",
-      "target_category": "Box Truck"
-    },
-    {
-      "raw_description": "ISUZU BOX TRUCK",
-      "target_category": "Box Truck"
+      "raw_description": "INT'L ROCK TRUCK H.R.",
+      "target_category": ""
     },
     {
       "raw_description": "ISUZU NPRHD RACK TRUCK",
@@ -246,16 +227,64 @@
       "target_category": ""
     },
     {
-      "raw_description": "WESTERN STAR HI-RAIL BUCKET TRUCK",
-      "target_category": "Bucket Truck"
-    },
-    {
       "raw_description": "INTERNATIONAL KNUCKLEBOOM FLATBED H.R.",
       "target_category": "Boom Truck"
     },
     {
       "raw_description": "PETERBILT 567 CRANE",
       "target_category": "Boom Truck"
+    },
+    {
+      "raw_description": "CHEVROLET 6500 26FT BOX TRUCK (LOOPS)",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "DODGE RAM 3500 BOX/UTILITY TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "DODGE RAM 5500 BOX/UTILTY BODY",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FORD E350 BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FORD E350 BOX/VAN",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FORD F350 BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FORD F550 BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FORD F600 BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FREIGHTLINER BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "GMC 3500 BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "ISUZU 16' BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "ISUZU 16FT BOX TRUCK W/LIFT GATE",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "ISUZU BOX TRUCK",
+      "target_category": "Box Truck"
     },
     {
       "raw_description": "DODGE BUCKET/MH",
@@ -303,6 +332,10 @@
     },
     {
       "raw_description": "FREIGHTLINER BUCKET/MH",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "WESTERN STAR HI-RAIL BUCKET TRUCK",
       "target_category": "Bucket Truck"
     },
     {

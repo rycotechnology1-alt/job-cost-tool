@@ -7,7 +7,7 @@ from functools import lru_cache
 from typing import List, Optional
 
 from job_cost_tool.core.config import ConfigLoader
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, Record
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, SUBCONTRACTOR, Record
 from job_cost_tool.core.normalization.equipment_normalizer import normalize_equipment_record
 from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
 from job_cost_tool.core.normalization.material_normalizer import normalize_material_record
@@ -65,7 +65,7 @@ def _normalize_family_label(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
     normalized_value = value.strip().casefold()
-    if normalized_value in {LABOR, EQUIPMENT, MATERIAL, OTHER}:
+    if normalized_value in {LABOR, EQUIPMENT, MATERIAL, SUBCONTRACTOR, OTHER}:
         return normalized_value
     return None
 

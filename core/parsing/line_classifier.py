@@ -7,7 +7,7 @@ from functools import lru_cache
 from typing import Any, Optional
 
 from job_cost_tool.core.config import ConfigLoader
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, SUBCONTRACTOR
 
 _PHASE_HEADER_RE = re.compile(
     r"^(?P<phase_code>\d{1,3})(?:\s*\.\s*\d{1,3}\s*\.)?(?:\s*\.\s*){0,2}\s+(?P<phase_name>[A-Za-z].+?)\s*$"
@@ -145,6 +145,8 @@ def infer_record_type_from_phase(phase_name: Optional[str]) -> str:
                 return EQUIPMENT
             if section_name == "material":
                 return MATERIAL
+            if section_name == "subcontractor":
+                return SUBCONTRACTOR
     return OTHER
 
 
