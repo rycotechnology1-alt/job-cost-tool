@@ -80,5 +80,36 @@ class ReportParserTests(unittest.TestCase):
 
 
 
+    def test_phase_header_with_dotted_subphase_updates_context_for_following_pr_record(self) -> None:
+        pages = [
+            {
+                "page_number": 1,
+                "text": "\n".join(
+                    [
+                        "20 . . Labor-Electricians",
+                        "PR 03/11/26 103/J 1.00 / 1716 / Dorsey , Michael A5 Regular Earnings 8.00 ST 973.98",
+                        "Total For Phase: 20 . . 8.00 973.98",
+                        "29 .999. Labor-Non-Job Related Time",
+                        "PR 03/12/26 103/J 1.00 / 1716 / Dorsey , Michael A5 Regular Earnings 8.00 ST 973.98",
+                    ]
+                ),
+            }
+        ]
+
+        records = parse_report_pages(pages)
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0].phase_code, "20")
+        self.assertEqual(records[0].phase_name_raw, "Labor-Electricians")
+        self.assertEqual(records[1].phase_code, "29")
+        self.assertEqual(records[1].phase_name_raw, "Labor-Non-Job Related Time")
+        self.assertEqual(records[1].transaction_type, "PR")
+        self.assertEqual(
+            records[1].raw_description,
+            "103/J 1.00 / 1716 / Dorsey , Michael A5 Regular Earnings",
+        )
+
+
+
 if __name__ == "__main__":
     unittest.main()

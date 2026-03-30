@@ -261,6 +261,14 @@ This section should only include meaningful product/architecture changes, not ev
 - **Risks introduced:**  
 - **Follow-up needed:**  
 
+### [2026-03-29] Parser preserves phase context for dotted phase headers
+- **What changed:** Broadened phase-header recognition to accept dotted subphase formats like `29 .999. Labor-Non-Job Related Time`, so following detail lines inherit the correct active phase context.
+- **Why:** A valid PR labor line under phase 29 was being assigned the prior phase 20 context because the phase 29 header format was not recognized.
+- **Area:** Core engine / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk of matching an unintended line as a phase header, but the pattern still requires a leading numeric phase code and a letter-led phase name.
+- **Follow-up needed:** Add fixture-backed coverage for any other observed phase-header variants if more Vista/Viewpoint reports surface them.
+
 ### [2026-03-29] Parser treats JC correction lines as global record boundaries
 - **What changed:** Added global JC transaction-start recognition so consecutive JC lines flush and emit as separate parsed records instead of being concatenated.
 - **Why:** Review-relevant accounting correction lines were being merged together, hiding individual positive/negative adjustments from the user.

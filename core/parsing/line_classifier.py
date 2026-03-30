@@ -10,7 +10,7 @@ from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER
 
 _PHASE_HEADER_RE = re.compile(
-    r"^(?P<phase_code>\d{1,3})(?:\s*\.\s*){0,2}\s+(?P<phase_name>[A-Za-z].+?)\s*$"
+    r"^(?P<phase_code>\d{1,3})(?:\s*\.\s*\d{1,3}\s*\.)?(?:\s*\.\s*){0,2}\s+(?P<phase_name>[A-Za-z].+?)\s*$"
 )
 _PAGE_FOOTER_RE = re.compile(r"\bPage\s+\d+\s+\d{2}/\d{2}/\d{2}\b", re.IGNORECASE)
 _ALWAYS_SUPPORTED_TRANSACTION_TYPES = ("JC",)
