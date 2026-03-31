@@ -1,59 +1,59 @@
 {
   "labor_rates": {
     "103 General FM": {
-      "standard_rate": 172.94,
-      "overtime_rate": 232.74,
-      "double_time_rate": 292.55
+      "standard_rate": 199.0,
+      "overtime_rate": 268.0,
+      "double_time_rate": 338.0
     },
     "103 Foreman": {
-      "standard_rate": 162.94,
-      "overtime_rate": 217.75,
-      "double_time_rate": 272.55
+      "standard_rate": 188.0,
+      "overtime_rate": 251.0,
+      "double_time_rate": 315.0
     },
     "103 Journeyman": {
-      "standard_rate": 152.98,
-      "overtime_rate": 202.8,
-      "double_time_rate": 252.63
+      "standard_rate": 176.0,
+      "overtime_rate": 233.0,
+      "double_time_rate": 291.0
     },
     "103 Apprentice": {
-      "standard_rate": 125.73,
-      "overtime_rate": 163.1,
-      "double_time_rate": 200.47
+      "standard_rate": 144.0,
+      "overtime_rate": 187.0,
+      "double_time_rate": 231.0
     },
     "104 General FM": {
-      "standard_rate": 146.3,
-      "overtime_rate": 199.38,
-      "double_time_rate": 252.45
+      "standard_rate": 174.0,
+      "overtime_rate": 238.0,
+      "double_time_rate": 304.0
     },
     "104 Foreman": {
-      "standard_rate": 141.75,
-      "overtime_rate": 192.57,
-      "double_time_rate": 243.39
+      "standard_rate": 166.0,
+      "overtime_rate": 227.0,
+      "double_time_rate": 289.0
     },
     "104 Lead Lineman": {
-      "standard_rate": 137.19,
-      "overtime_rate": 185.76,
-      "double_time_rate": 234.34
+      "standard_rate": 161.0,
+      "overtime_rate": 219.0,
+      "double_time_rate": 278.0
     },
     "104 Journeyman LM": {
-      "standard_rate": 129.89,
-      "overtime_rate": 174.86,
-      "double_time_rate": 219.84
+      "standard_rate": 152.0,
+      "overtime_rate": 206.0,
+      "double_time_rate": 260.0
     },
     "104 Equipment Operator": {
-      "standard_rate": 112.65,
-      "overtime_rate": 150.87,
-      "double_time_rate": 189.1
+      "standard_rate": 132.0,
+      "overtime_rate": 177.0,
+      "double_time_rate": 224.0
     },
     "104 Groundsman": {
-      "standard_rate": 80.53,
-      "overtime_rate": 105.27,
-      "double_time_rate": 130.0
+      "standard_rate": 94.0,
+      "overtime_rate": 123.0,
+      "double_time_rate": 153.0
     },
     "104 Apprentice": {
-      "standard_rate": 108.37,
-      "overtime_rate": 148.85,
-      "double_time_rate": 189.32
+      "standard_rate": 128.0,
+      "overtime_rate": 168.0,
+      "double_time_rate": 209.0
     }
   },
   "equipment_rates": {
@@ -61,10 +61,10 @@
       "rate": 300.0
     },
     "Bucket Truck": {
-      "rate": 75.0
+      "rate": 80.0
     },
     "Digger Derrick": {
-      "rate": 75.0
+      "rate": 80.0
     },
     "Backyard Machine": {
       "rate": 75.0
@@ -73,34 +73,34 @@
       "rate": 20.0
     },
     "Pick-up Truck": {
-      "rate": 25.0
+      "rate": 34.0
     },
     "Utility Van": {
-      "rate": 30.0
+      "rate": 35.0
     },
     "Winch Truck": {
-      "rate": 75.0
+      "rate": 80.0
     },
     "Load Lugger": {
-      "rate": 75.0
+      "rate": 80.0
     },
     "Power Fed Trailer": {
-      "rate": 45.0
+      "rate": 55.0
     },
     "1-Reel Trailer": {
-      "rate": 20.0
+      "rate": 25.0
     },
     "Boom Truck": {
-      "rate": 115.0
+      "rate": 125.0
     },
     "Box Truck": {
       "rate": 32.0
     },
     "Pulling/Tension Trailer": {
-      "rate": 55.0
+      "rate": 60.0
     },
     "Pole Trailer": {
-      "rate": 30.0
+      "rate": 33.0
     }
   }
 }
