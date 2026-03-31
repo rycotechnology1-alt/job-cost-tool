@@ -1,3 +1,11 @@
+### [2026-03-31] Export now suppresses low-value subcontractor descriptions
+- **What changed:** Subcontractor recap export rows still preserve subcontractor name and amount, but the description column is now intentionally written blank instead of echoing raw source description text.
+- **Why:** The current subcontractor raw description adds noise rather than useful signal in the recap workbook, and this is better handled as an export-layer presentation choice than as a parsing or normalization change.
+- **Area:** Core engine / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that users who relied on raw subcontractor description text in export will now see blank cells, though the underlying record data remains available for future richer export behavior.
+- **Follow-up needed:** If subcontractor descriptions become valuable later, reintroduce them through an intentional export mapping rule or configuration option instead of dumping raw source text by default.
+
 ### [2026-03-30] Material overflow export now preserves vendors by first appearance order
 - **What changed:** Made material vendor ordering explicit before overflow collapse: vendors now retain first-seen order from the reviewed record list, and only vendors beyond the final preservable slot are rolled into `Additional Vendors`.
 - **Why:** Overflow export was already template-driven, but the preserved-vendor selection rule was not explicit enough and could feel arbitrary without a defined ordering contract.

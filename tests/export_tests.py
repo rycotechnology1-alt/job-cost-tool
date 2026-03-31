@@ -10,7 +10,7 @@ from unittest.mock import patch
 from openpyxl import Workbook, load_workbook
 
 import job_cost_tool.core.export.recap_mapper as recap_mapper
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, SUBCONTRACTOR, Record
 from job_cost_tool.services.export_service import export_records_to_recap
 from job_cost_tool.services.validation_service import validate_records
 
@@ -333,6 +333,18 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["B32"].value, 2)
         self.assertEqual(worksheet["D32"].value, 99)
 
+    def test_export_leaves_subcontractor_description_cells_blank(self) -> None:
+        records = [
+            self._subcontractor_record(vendor="CJ Shaughnessy Crane", description="Raw subcontractor source text", cost=6000)
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["E46"].value, "CJ Shaughnessy Crane")
+        self.assertIsNone(worksheet["F46"].value)
+        self.assertEqual(worksheet["G46"].value, 6000)
+
     def test_export_collapses_material_vendor_overflow_into_additional_vendors(self) -> None:
         records = [
             self._material_record(vendor=f"Vendor {index}", cost=10 + index)
@@ -620,6 +632,31 @@ class ExportWorkflowTests(unittest.TestCase):
             source_page=1,
             source_line_text="Material source",
             record_type_normalized=MATERIAL,
+            recap_labor_classification=None,
+            vendor_name_normalized=vendor,
+        )
+
+    def _subcontractor_record(self, vendor: str, description: str, cost: float) -> Record:
+        return Record(
+            record_type=SUBCONTRACTOR,
+            phase_code="40",
+            raw_description=description,
+            cost=cost,
+            hours=None,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=vendor,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="Subcontractor source",
+            record_type_normalized=SUBCONTRACTOR,
             recap_labor_classification=None,
             vendor_name_normalized=vendor,
         )

@@ -338,7 +338,13 @@ def _collapse_material_overflow_rows(rows: list[dict[str, Any]], capacity: int) 
 
 
 def _build_subcontractor_values(records: list[Record]) -> list[dict[str, Any]]:
-    """Group subcontractor-oriented records into recap rows."""
+    """Group subcontractor-oriented records into recap rows.
+
+    The export currently leaves subcontractor descriptions blank on purpose.
+    We still keep the underlying raw description available on records and in the
+    grouping key so future richer export behavior can opt back into it without
+    changing parsing or normalization.
+    """
     grouped_values: OrderedDict[tuple[str, str], Decimal] = OrderedDict()
 
     for record in records:
@@ -352,8 +358,8 @@ def _build_subcontractor_values(records: list[Record]) -> list[dict[str, Any]]:
         grouped_values[key] += Decimal(str(record.cost))
 
     return [
-        {"name": name, "description": description, "amount": _to_number(amount)}
-        for (name, description), amount in grouped_values.items()
+        {"name": name, "description": "", "amount": _to_number(amount)}
+        for (name, _description), amount in grouped_values.items()
     ]
 
 
