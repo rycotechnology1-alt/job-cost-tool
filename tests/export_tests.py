@@ -148,9 +148,14 @@ class ExportWorkflowTests(unittest.TestCase):
         recap_mapper._get_active_labor_slot_lookup.cache_clear()
         recap_mapper._get_active_equipment_slot_lookup.cache_clear()
         recap_mapper._get_rates.cache_clear()
+        recap_mapper._get_material_section_capacity.cache_clear()
 
         self.recap_map_patch = patch(
             "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_recap_template_map",
+            return_value=TEST_TEMPLATE_MAP,
+        )
+        self.recap_map_mapper_patch = patch(
+            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_recap_template_map",
             return_value=TEST_TEMPLATE_MAP,
         )
         self.labor_row_slots_patch = patch(
@@ -174,6 +179,7 @@ class ExportWorkflowTests(unittest.TestCase):
             return_value=TARGET_RATES,
         )
         self.recap_map_patch.start()
+        self.recap_map_mapper_patch.start()
         self.labor_row_slots_patch.start()
         self.equipment_row_slots_patch.start()
         self.labor_patch.start()
@@ -181,6 +187,7 @@ class ExportWorkflowTests(unittest.TestCase):
         self.rates_patch.start()
 
         self.addCleanup(self.recap_map_patch.stop)
+        self.addCleanup(self.recap_map_mapper_patch.stop)
         self.addCleanup(self.labor_row_slots_patch.stop)
         self.addCleanup(self.equipment_row_slots_patch.stop)
         self.addCleanup(self.labor_patch.stop)
@@ -193,6 +200,7 @@ class ExportWorkflowTests(unittest.TestCase):
         self.addCleanup(recap_mapper._get_active_labor_slot_lookup.cache_clear)
         self.addCleanup(recap_mapper._get_active_equipment_slot_lookup.cache_clear)
         self.addCleanup(recap_mapper._get_rates.cache_clear)
+        self.addCleanup(recap_mapper._get_material_section_capacity.cache_clear)
         self.addCleanup(self._cleanup_temp_dir)
 
     def test_export_fails_when_blockers_exist(self) -> None:
@@ -325,14 +333,91 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["B32"].value, 2)
         self.assertEqual(worksheet["D32"].value, 99)
 
-    def test_export_fails_on_section_overflow(self) -> None:
+    def test_export_collapses_material_vendor_overflow_into_additional_vendors(self) -> None:
         records = [
             self._material_record(vendor=f"Vendor {index}", cost=10 + index)
             for index in range(8)
         ]
 
-        with self.assertRaisesRegex(ValueError, "Material section exceeds template capacity"):
-            export_records_to_recap(records, str(self.template_path), str(self.output_path))
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["A46"].value, "Vendor 0")
+        self.assertEqual(worksheet["B46"].value, 10)
+        self.assertEqual(worksheet["A47"].value, "Vendor 1")
+        self.assertEqual(worksheet["B47"].value, 11)
+        self.assertEqual(worksheet["A48"].value, "Vendor 2")
+        self.assertEqual(worksheet["B48"].value, 12)
+        self.assertEqual(worksheet["A49"].value, "Vendor 3")
+        self.assertEqual(worksheet["B49"].value, 13)
+        self.assertEqual(worksheet["A50"].value, "Vendor 4")
+        self.assertEqual(worksheet["B50"].value, 14)
+        self.assertEqual(worksheet["A51"].value, "Vendor 5")
+        self.assertEqual(worksheet["B51"].value, 15)
+        self.assertEqual(worksheet["A52"].value, "Additional Vendors")
+        self.assertEqual(worksheet["B52"].value, 33)
+        self.assertEqual(worksheet["B53"].value, "=SUM(B46:B52)")
+
+    def test_material_overflow_uses_current_template_capacity(self) -> None:
+        smaller_template_map = {
+            **TEST_TEMPLATE_MAP,
+            "materials_section": {
+                **TEST_TEMPLATE_MAP["materials_section"],
+                "end_row": 48,
+            },
+        }
+        records = [
+            self._material_record(vendor=f"Vendor {index}", cost=10 + index)
+            for index in range(4)
+        ]
+
+        with patch(
+            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_recap_template_map",
+            return_value=smaller_template_map,
+        ):
+            recap_mapper._get_material_section_capacity.cache_clear()
+            payload = recap_mapper.build_recap_payload(records)
+
+        self.assertEqual(
+            payload["materials"],
+            [
+                {"name": "Vendor 0", "amount": 10},
+                {"name": "Vendor 1", "amount": 11},
+                {"name": "Additional Vendors", "amount": 25},
+            ],
+        )
+
+    def test_material_overflow_preserves_vendors_by_first_appearance_order(self) -> None:
+        smaller_template_map = {
+            **TEST_TEMPLATE_MAP,
+            "materials_section": {
+                **TEST_TEMPLATE_MAP["materials_section"],
+                "end_row": 48,
+            },
+        }
+        records = [
+            self._material_record(vendor="Vendor C", cost=30),
+            self._material_record(vendor="Vendor A", cost=10),
+            self._material_record(vendor="Vendor C", cost=5),
+            self._material_record(vendor="Vendor B", cost=20),
+            self._material_record(vendor="Vendor D", cost=40),
+        ]
+
+        with patch(
+            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_recap_template_map",
+            return_value=smaller_template_map,
+        ):
+            recap_mapper._get_material_section_capacity.cache_clear()
+            payload = recap_mapper.build_recap_payload(records)
+
+        self.assertEqual(
+            payload["materials"],
+            [
+                {"name": "Vendor C", "amount": 35},
+                {"name": "Vendor A", "amount": 10},
+                {"name": "Additional Vendors", "amount": 60},
+            ],
+        )
 
     def test_export_fails_if_rate_target_cell_mapping_is_missing(self) -> None:
         broken_labor_row_slots = {
@@ -354,6 +439,44 @@ class ExportWorkflowTests(unittest.TestCase):
             records = [self._labor_record(recap_classification="103 Journeyman", recap_slot_id="labor_1", hours=8)]
             with self.assertRaisesRegex(ValueError, "missing 'st_rate'"):
                 export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+    def test_validation_blocks_missing_labor_hour_type_before_export(self) -> None:
+        records = [
+            self._labor_record(
+                recap_classification="103 Journeyman",
+                recap_slot_id="labor_1",
+                hours=-4,
+                hour_type=None,
+            )
+        ]
+
+        validated_records, blocking_issues = validate_records(records)
+
+        self.assertIn(
+            "Record on page 1 (phase 20, labor): Labor hour type is missing for export.",
+            blocking_issues,
+        )
+        self.assertIn(
+            "BLOCKING: Labor hour type is missing for export.",
+            validated_records[0].warnings,
+        )
+
+    def test_export_blocks_missing_labor_hour_type_before_recap_build(self) -> None:
+        records = [
+            self._labor_record(
+                recap_classification="103 Journeyman",
+                recap_slot_id="labor_1",
+                hours=-4,
+                hour_type=None,
+            )
+        ]
+
+        with patch("job_cost_tool.services.export_service.build_recap_payload") as build_payload_mock:
+            with self.assertRaisesRegex(ValueError, "Labor hour type is missing for export"):
+                export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        build_payload_mock.assert_not_called()
+
 
     def test_export_fails_if_template_missing(self) -> None:
         records = [self._labor_record(recap_classification="103 Journeyman", recap_slot_id="labor_1")]
@@ -422,6 +545,7 @@ class ExportWorkflowTests(unittest.TestCase):
         hours: float = 8,
         is_omitted: bool = False,
         recap_slot_id: str | None = None,
+        hour_type: str | None = "ST",
     ) -> Record:
         return Record(
             record_type=LABOR,
@@ -429,7 +553,7 @@ class ExportWorkflowTests(unittest.TestCase):
             raw_description="Labor line",
             cost=100,
             hours=hours,
-            hour_type="ST",
+            hour_type=hour_type,
             union_code="103",
             labor_class_raw="J",
             labor_class_normalized="J",

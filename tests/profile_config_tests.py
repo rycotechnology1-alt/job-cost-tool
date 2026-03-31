@@ -28,7 +28,7 @@ from job_cost_tool.app.viewmodels.settings_view_model import (
     persist_observed_labor_raw_values,
 )
 from job_cost_tool.core.config import ConfigLoader, ProfileManager
-from job_cost_tool.core.models.record import Record
+from job_cost_tool.core.models.record import LABOR, Record
 
 
 TEST_ROOT = Path("job_cost_tool/tests/_profile_tmp")
@@ -863,6 +863,53 @@ class ProfileConfigTests(unittest.TestCase):
                 {"raw_description": "FREIGHTLINER BUCKET/MH", "raw_pattern": "FREIGHTLINER BUCKET/MH", "target_category": ""},
             ],
         )
+
+    def test_review_view_model_surfaces_missing_labor_hour_type_as_blocking_issue(self) -> None:
+        record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Jay Dondero to 810500 warranty",
+            cost=-658.45,
+            hours=-4.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            transaction_type="JC",
+            phase_name_raw="Labor-Electricians",
+            source_page=1,
+            source_line_text="JC 01/07/26 Jay Dondero to 810500 warranty -4.00 -658.45",
+            record_type_normalized=LABOR,
+            recap_labor_slot_id="labor_1",
+            recap_labor_classification="103 Journeyman",
+        )
+
+        with patch(
+            "job_cost_tool.app.viewmodels.review_view_model.parse_pdf",
+            return_value=[record],
+        ), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.normalize_records",
+            return_value=[record],
+        ):
+            view_model = ReviewViewModel()
+            view_model.load_pdf("sample.pdf")
+
+        self.assertIn(
+            "Record on page 1 (phase 20, labor): Labor hour type is missing for export.",
+            view_model.blocking_issues,
+        )
+        self.assertFalse(view_model.can_export)
+        self.assertIn("Export blocked by 1 issue", view_model.status_text)
+        self.assertIn(
+            "BLOCKING: Labor hour type is missing for export.",
+            view_model.records[0].warnings,
+        )
+
 
     def test_review_view_model_load_and_reload_trigger_observed_labor_persistence(self) -> None:
         manager = self._build_manager()

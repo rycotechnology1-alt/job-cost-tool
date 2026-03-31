@@ -11,6 +11,7 @@ _BLOCKING_WARNING_PHRASES = (
     "not yet confidently classified",
     "did not begin with a recognized transaction marker",
 )
+_ALLOWED_LABOR_HOUR_TYPES = {"ST", "OT", "DT"}
 
 
 def get_record_warnings(record: Record) -> List[str]:
@@ -48,6 +49,13 @@ def get_record_blocking_issues(record: Record) -> List[str]:
     if normalized_family == LABOR:
         if not record.recap_labor_classification:
             issues.append("Recap labor classification is missing.")
+        if record.hours is None:
+            issues.append("Labor hours are missing for export.")
+        hour_type = (record.hour_type or "").strip().upper()
+        if not hour_type:
+            issues.append("Labor hour type is missing for export.")
+        elif hour_type not in _ALLOWED_LABOR_HOUR_TYPES:
+            issues.append(f"Unsupported labor hour type '{record.hour_type}'.")
     elif normalized_family == EQUIPMENT:
         if not record.equipment_category:
             issues.append("Equipment recap category is missing.")

@@ -1,4 +1,4 @@
-﻿"""Heuristics for classifying lines extracted from job cost report PDFs."""
+"""Heuristics for classifying lines extracted from job cost report PDFs."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, 
 _PHASE_HEADER_RE = re.compile(
     r"^(?P<phase_code>\d{1,3})(?:\s*\.\s*\d{1,3}\s*\.)?(?:\s*\.\s*){0,2}\s+(?P<phase_name>[A-Za-z].+?)\s*$"
 )
+_TRANSACTION_START_RE = re.compile(r"^(?P<marker>[A-Z]{2})\s+\d{2}/\d{2}/\d{2}\b")
 _PAGE_FOOTER_RE = re.compile(r"\bPage\s+\d+\s+\d{2}/\d{2}/\d{2}\b", re.IGNORECASE)
-_ALWAYS_SUPPORTED_TRANSACTION_TYPES = ("JC",)
 
 
 @lru_cache(maxsize=1)
@@ -24,20 +24,32 @@ def _get_input_model() -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _get_transaction_types() -> tuple[str, ...]:
-    """Return configured transaction type markers plus globally supported corrections.
+    """Return configured transaction markers for compatibility/cache invalidation.
 
-    JC entries are review-relevant correction lines and must always act as a
-    record boundary, even for older profiles whose input_model.json predates
-    explicit JC support.
+    Record-boundary detection now accepts any transaction-like ``TX mm/dd/yy``
+    row, but settings/config flows still clear this cache when input-model data
+    changes. Keep the helper available so those cache invalidation paths do not
+    have to know the parser no longer depends on the configured marker list.
     """
     transaction_types = _get_input_model().get("transaction_types", [])
-    configured = [] if not isinstance(transaction_types, list) else [str(item).upper() for item in transaction_types]
+    if not isinstance(transaction_types, list):
+        return tuple()
+    return tuple(str(item).upper() for item in transaction_types if str(item).strip())
 
-    ordered_markers: list[str] = []
-    for marker in [*configured, *_ALWAYS_SUPPORTED_TRANSACTION_TYPES]:
-        if marker and marker not in ordered_markers:
-            ordered_markers.append(marker)
-    return tuple(ordered_markers)
+
+@lru_cache(maxsize=1)
+def _get_phase_mapping() -> dict[str, str]:
+    """Return the cached phase-to-family mapping using canonical family labels."""
+    raw_phase_mapping = ConfigLoader().get_phase_mapping()
+    if not isinstance(raw_phase_mapping, dict):
+        return {}
+
+    normalized_phase_mapping: dict[str, str] = {}
+    for phase_code, family in raw_phase_mapping.items():
+        canonical_family = _normalize_family_label(str(family))
+        if canonical_family is not None:
+            normalized_phase_mapping[str(phase_code)] = canonical_family
+    return normalized_phase_mapping
 
 
 @lru_cache(maxsize=1)
@@ -125,9 +137,15 @@ def is_phase_header(line: str) -> bool:
 
 
 def is_transaction_start(line: str) -> bool:
-    """Return True when a line starts with a configured transaction type marker."""
+    """Return True when a line starts with a transaction-like marker and date.
+
+    The parser should preserve real report-body lines even when a transaction
+    code is not yet explicitly modeled. Treat any ``TX mm/dd/yy`` line as a new
+    detail boundary so corrections such as IC/JC records are not merged into
+    neighboring rows or dropped.
+    """
     normalized_line = line.strip()
-    return any(normalized_line.startswith(f"{marker} ") for marker in _get_transaction_types())
+    return _TRANSACTION_START_RE.match(normalized_line) is not None
 
 
 def infer_record_type_from_phase(phase_name: Optional[str]) -> str:
@@ -148,6 +166,18 @@ def infer_record_type_from_phase(phase_name: Optional[str]) -> str:
             if section_name == "subcontractor":
                 return SUBCONTRACTOR
     return OTHER
+
+
+def infer_record_type_from_phase_context(
+    phase_code: Optional[str],
+    phase_name: Optional[str],
+) -> str:
+    """Infer a raw family using phase-code mapping first, then phase-name hints."""
+    if phase_code is not None:
+        mapped_family = _get_phase_mapping().get(str(phase_code))
+        if mapped_family is not None:
+            return mapped_family
+    return infer_record_type_from_phase(phase_name)
 
 
 def is_detail_candidate(line: str) -> bool:
@@ -181,3 +211,12 @@ def _is_safe_boilerplate_remainder(text: str) -> bool:
         return True
     return all(character in " .:-_/()[]" for character in text)
 
+
+def _normalize_family_label(value: Optional[str]) -> Optional[str]:
+    """Normalize a family label to the canonical raw record-type form."""
+    if value is None:
+        return None
+    normalized_value = str(value).strip().casefold()
+    if normalized_value in {LABOR, EQUIPMENT, MATERIAL, SUBCONTRACTOR, OTHER}:
+        return normalized_value
+    return None

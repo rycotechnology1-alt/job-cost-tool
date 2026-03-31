@@ -6,15 +6,15 @@ import re
 from typing import Any, Optional
 
 from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER
-from job_cost_tool.core.parsing.line_classifier import infer_record_type_from_phase
+from job_cost_tool.core.parsing.line_classifier import infer_record_type_from_phase_context
 from job_cost_tool.core.parsing.types import TokenizationResult
 
 _TRANSACTION_RE = re.compile(r"^(?P<transaction_type>[A-Z]{2})\s+(?P<date>\d{2}/\d{2}/\d{2})\s+(?P<body>.+)$")
 _HOURS_TYPE_COST_RE = re.compile(
-    r"(?P<body>.+?)\s+(?P<hours>\d+\.\d{2})\s+(?P<hour_type>ST|OT|DT)\s+(?P<cost>[\d,]+\.\d{2})(?:\s+|$)"
+    r"(?P<body>.+?)\s+(?P<hours>[-+]?\d+\.\d{2})\s+(?P<hour_type>ST|OT|DT)\s+(?P<cost>[-+]?[\d,]+\.\d{2})(?:\s+|$)"
 )
 _HOURS_COST_RE = re.compile(
-    r"(?P<body>.+?)\s+(?P<hours>\d+\.\d{2})\s+(?P<cost>[\d,]+\.\d{2})(?:\s+|$)"
+    r"(?P<body>.+?)\s+(?P<hours>[-+]?\d+\.\d{2})\s+(?P<cost>[-+]?[\d,]+\.\d{2})(?:\s+|$)"
 )
 _EMPLOYEE_SPLIT_RE = re.compile(r"^(?P<prefix>.*?)\s*/\s*(?P<employee_id>\d+)\s*/\s*(?P<remaining>.+)$")
 _EQUIPMENT_DETAIL_RE = re.compile(
@@ -59,7 +59,7 @@ def tokenize_detail_line(
         cost=cost,
         hours=hours,
         hour_type=hour_type,
-        line_family=infer_record_type_from_phase(phase_name_raw),
+        line_family=infer_record_type_from_phase_context(phase_code, phase_name_raw),
     )
     result["warnings"].extend(warnings)
 
@@ -72,9 +72,9 @@ def tokenize_detail_line(
     elif parsed_transaction_type is None:
         result["warnings"].append("Detail line did not contain a recognized transaction marker.")
     else:
-        result["warnings"].append(
-            f"Transaction type '{parsed_transaction_type}' is not yet explicitly handled by the tokenizer."
-        )
+        # Unknown transaction codes still use generic phase-aware parsing.
+        # Preserve the line instead of treating it as unhandled junk.
+        pass
 
     result["parsed_field_count"] = _count_structured_fields(result)
     result["has_meaningful_fields"] = result["parsed_field_count"] > 0
@@ -88,7 +88,7 @@ def tokenize_pr_line(
     phase_name_raw: Optional[str],
 ) -> TokenizationResult:
     """Tokenize PR-style detail lines such as labor or equipment records."""
-    phase_family = infer_record_type_from_phase(phase_name_raw)
+    phase_family = infer_record_type_from_phase_context(phase_code, phase_name_raw)
     result = _base_result(
         transaction_type="PR",
         raw_description=line.strip(),
@@ -149,8 +149,7 @@ def tokenize_ap_line(
     phase_name_raw: Optional[str],
 ) -> TokenizationResult:
     """Tokenize AP-style detail lines such as materials or other job cost records."""
-    _ = phase_code
-    phase_family = infer_record_type_from_phase(phase_name_raw)
+    phase_family = infer_record_type_from_phase_context(phase_code, phase_name_raw)
     result = _base_result(
         transaction_type="AP",
         raw_description=line.strip(),

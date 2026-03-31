@@ -9,7 +9,7 @@ from typing import List, Optional
 from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, SUBCONTRACTOR, Record
 from job_cost_tool.core.parsing.line_classifier import (
     extract_phase_header,
-    infer_record_type_from_phase,
+    infer_record_type_from_phase_context,
     is_blank_line,
     is_detail_candidate,
     is_header_or_footer,
@@ -78,7 +78,7 @@ def parse_report_pages(pages: List[PDFPageData]) -> List[Record]:
                 phase_header = extract_phase_header(line)
                 if phase_header is not None:
                     context.phase_code, context.phase_name_raw = phase_header
-                    context.record_type = infer_record_type_from_phase(context.phase_name_raw)
+                    context.record_type = infer_record_type_from_phase_context(context.phase_code, context.phase_name_raw)
                 continue
 
             if not is_detail_candidate(line):

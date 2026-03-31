@@ -1,3 +1,35 @@
+### [2026-03-30] Material overflow export now preserves vendors by first appearance order
+- **What changed:** Made material vendor ordering explicit before overflow collapse: vendors now retain first-seen order from the reviewed record list, and only vendors beyond the final preservable slot are rolled into `Additional Vendors`.
+- **Why:** Overflow export was already template-driven, but the preserved-vendor selection rule was not explicit enough and could feel arbitrary without a defined ordering contract.
+- **Area:** Core engine / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk of changing exports that previously relied on incidental aggregation order, though the new rule is stable, predictable, and easy to explain.
+- **Follow-up needed:** If users later want a different vendor ordering strategy, make it a profile/template-level export setting rather than letting ordering drift implicitly in code.
+
+### [2026-03-30] Export now collapses material vendor overflow into a template-driven final row
+- **What changed:** Material vendor overflow no longer hard-fails recap export when it can fit by preserving vendors through the penultimate template row and aggregating the remainder into a final `Additional Vendors` row based on the active template's configured material-section capacity.
+- **Why:** The export model was treating any vendor overflow as fatal even when the fixed recap template could still preserve most vendors and safely aggregate the remainder without changing parsing, normalization, or review behavior.
+- **Area:** Core engine / Application services / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that overflow exports now trade per-vendor detail for a summed final row, though totals remain correct and the behavior is explicitly template-driven.
+- **Follow-up needed:** If users need full overflow visibility in the exported workbook later, add a formal overflow detail section or companion export rather than pushing template-capacity concepts back into parsing or normalization.
+
+### [2026-03-30] Validation now blocks labor export when hour type is missing
+- **What changed:** Added a validation-stage blocker for labor records that have exportable hours but no labor hour type, and aligned the recap export error path to report a clear missing-hour-type prerequisite instead of a late unsupported-`None` failure.
+- **Why:** JC correction lines can legitimately survive parsing with hours and cost but no explicit ST/OT/DT token; the workflow must surface that export-critical gap during review instead of only after the user clicks export.
+- **Area:** Core engine / Application services / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk of blocking labor records that previously slipped through to export, though that behavior was already inconsistent with actual export requirements.
+- **Follow-up needed:** If manual hour-type correction becomes a frequent workflow need, add a small domain-backed correction path instead of leaving users limited to omission or future parser inference.
+
+### [2026-03-30] Parser now treats transaction-like rows as retainable phase-aware detail lines
+- **What changed:** Hardened the parser so any `TX mm/dd/yy` row becomes a record boundary, signed numeric tail columns are parsed for generic detail lines, and phase-code mappings now participate directly in raw-family fallback.
+- **Why:** Several real reports were losing or mangling valid IC/JC/AP lines because unknown transaction codes were merged or dropped, negative values broke amount parsing, and family routing depended too heavily on transaction-specific token rules.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low-to-medium risk that a non-detail line beginning with a two-letter/date pattern could now be retained, though the rule is still anchored to report-body formatting and is safer than silently losing valid accounting rows.
+- **Follow-up needed:** The parser still relies on extracted text lines rather than true PDF spatial columns; if more edge cases surface, add fixture-backed column-aware extraction rather than reintroducing brittle string hacks.
+
 ### [2026-03-30] Phase-40 AP records preserve subcontractor family routing
 - **What changed:** Added subcontractor family support to the phase-aware parsing and normalization path so AP records under `40 . . Subcontracted` no longer fall through to material typing.
 - **Why:** The parser was preserving phase 40 context correctly, but the config-backed family-routing stack did not represent subcontracted behavior, so both raw and normalized type drifted to material.

@@ -62,6 +62,19 @@ def _get_rates() -> dict[str, Any]:
     return ConfigLoader().get_rates()
 
 
+@lru_cache(maxsize=1)
+def _get_material_section_capacity() -> int:
+    """Return the current template capacity for material vendor rows."""
+    mapping = ConfigLoader().get_recap_template_map()
+    section_mapping = mapping.get("materials_section", {}) if isinstance(mapping.get("materials_section"), dict) else {}
+    try:
+        start_row = int(section_mapping["start_row"])
+        end_row = int(section_mapping["end_row"])
+    except (KeyError, TypeError, ValueError):
+        return 0
+    return max(0, end_row - start_row + 1)
+
+
 def build_recap_payload(records: list[Record]) -> dict[str, Any]:
     """Build recap-oriented aggregated output from validated normalized records."""
     if not records:
@@ -118,6 +131,8 @@ def _validate_records_for_export(records: list[Record]) -> None:
             if record.hours is None:
                 raise ValueError(_record_error(record, "Labor hours are missing for export."))
             hour_type = (record.hour_type or "").strip().upper()
+            if not hour_type:
+                raise ValueError(_record_error(record, "Labor hour type is missing for export."))
             if hour_type not in _ALLOWED_HOUR_TYPES:
                 raise ValueError(_record_error(record, f"Unsupported labor hour type '{record.hour_type}'."))
         elif family == EQUIPMENT:
@@ -279,21 +294,47 @@ def _build_equipment_rate_values() -> dict[str, float]:
 
 
 def _build_material_values(records: list[Record]) -> list[dict[str, Any]]:
-    """Aggregate material-oriented records by normalized vendor name."""
-    material_totals: OrderedDict[str, Decimal] = OrderedDict()
+    """Aggregate material-oriented records by normalized vendor name.
+
+    Material vendor export order is explicit: vendors keep the order of first
+    appearance in the reviewed record list so overflow preservation is stable
+    and predictable across repeated exports of the same inputs.
+    """
+    vendor_order: list[str] = []
+    material_totals: dict[str, Decimal] = {}
 
     for record in records:
         if _infer_list_section(record) != "materials":
             continue
 
         vendor_name = (record.vendor_name_normalized or record.vendor_name or "").strip()
-        material_totals.setdefault(vendor_name, Decimal("0"))
+        if vendor_name not in material_totals:
+            vendor_order.append(vendor_name)
+            material_totals[vendor_name] = Decimal("0")
         material_totals[vendor_name] += Decimal(str(record.cost))
 
-    return [
-        {"name": vendor_name, "amount": _to_number(amount)}
-        for vendor_name, amount in material_totals.items()
+    rows = [
+        {"name": vendor_name, "amount": _to_number(material_totals[vendor_name])}
+        for vendor_name in vendor_order
     ]
+    return _collapse_material_overflow_rows(rows, _get_material_section_capacity())
+
+
+def _collapse_material_overflow_rows(rows: list[dict[str, Any]], capacity: int) -> list[dict[str, Any]]:
+    """Collapse vendor overflow into the template's final material row.
+
+    This is an export-only shaping rule driven by the current template
+    capacity. It preserves the first capacity-1 vendor rows and combines all
+    remaining vendors into the final available row as ``Additional Vendors``.
+    """
+    if capacity <= 0 or len(rows) <= capacity:
+        return rows
+
+    preserved_rows = rows[: max(0, capacity - 1)]
+    overflow_rows = rows[max(0, capacity - 1) :]
+    overflow_amount = sum(Decimal(str(row.get("amount", 0) or 0)) for row in overflow_rows)
+    preserved_rows.append({"name": "Additional Vendors", "amount": _to_number(overflow_amount)})
+    return preserved_rows
 
 
 def _build_subcontractor_values(records: list[Record]) -> list[dict[str, Any]]:
