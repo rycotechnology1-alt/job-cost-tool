@@ -1,3 +1,11 @@
+### [2026-03-31] Parser now preserves distinct `29 .999` labor subphase identity
+- **What changed:** Phase-header parsing now retains dotted subphase codes such as `29 .999` instead of collapsing them to bare `29`, and phase mapping now explicitly distinguishes `29` (material Market Recovery) from `29 .999` (labor Non-Job Related Time).
+- **Why:** Records under `29 .999. Labor-Non-Job Related Time` were inheriting the wrong material fallback because the parser stripped the subphase before family routing ran.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk, though phase-code identity now matters more explicitly for dotted subphases and any future report variants should preserve that fidelity instead of assuming only a top-level numeric phase.
+- **Follow-up needed:** If more reports use meaningful dotted subphases, consider centralizing phase-code canonicalization so config, parsing, and normalization all share one helper instead of relying on matching string forms.
+
 ### [2026-03-31] Modified recap template now applies material-row styling consistently and uses a wider grand total range
 - **What changed:** Fixed the bundled modified recap template so material vendor rows `G34:H41` use the same styles as `G27:H33`, and widened exported grand total to `=SUM(F52:F62)`.
 - **Why:** The lower material rows still carried generic blank-cell styling from the underlying sheet, and the narrower grand total formula did not include the full user-editable summary area.

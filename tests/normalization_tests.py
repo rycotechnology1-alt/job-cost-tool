@@ -779,6 +779,69 @@ class NormalizationRuleTests(unittest.TestCase):
         self.assertEqual(validated_record.vendor_name_normalized, "Employee Expense")
 
 
+    def test_phase_29_subphase_remains_distinct_from_market_recovery_in_family_routing(self) -> None:
+        subphase_record = Record(
+            record_type=MATERIAL,
+            phase_code="29 .999",
+            raw_description="Paid sick time",
+            cost=100.0,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="J",
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            phase_name_raw="Labor-Non-Job Related Time",
+            source_page=1,
+            source_line_text="PR sample",
+        )
+        market_recovery_record = Record(
+            record_type=MATERIAL,
+            phase_code="29",
+            raw_description="MR252080 / Src JCCo: 1",
+            cost=-28950.0,
+            hours=0.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            phase_name_raw="Market Recovery",
+            source_page=1,
+            source_line_text="IC sample",
+        )
+
+        phase_cache = normalize_records.__globals__["_get_phase_mapping"]
+        phase_cache.cache_clear()
+        with patch(
+            "job_cost_tool.core.normalization.normalizer.ConfigLoader.get_phase_mapping",
+            return_value={"29": "MATERIAL", "29 .999": "LABOR"},
+        ), patch(
+            "job_cost_tool.core.normalization.normalizer.normalize_labor_record",
+            side_effect=lambda record: replace(record, warnings=record.warnings + ["labor path"]),
+        ), patch(
+            "job_cost_tool.core.normalization.normalizer.normalize_material_record",
+            side_effect=lambda record: replace(record, warnings=record.warnings + ["material path"]),
+        ):
+            normalized_records = normalize_records([subphase_record, market_recovery_record])
+        phase_cache.cache_clear()
+
+        self.assertEqual(normalized_records[0].phase_code, "29 .999")
+        self.assertEqual(normalized_records[0].record_type_normalized, LABOR)
+        self.assertIn("labor path", normalized_records[0].warnings)
+        self.assertEqual(normalized_records[1].phase_code, "29")
+        self.assertEqual(normalized_records[1].record_type_normalized, MATERIAL)
+        self.assertIn("material path", normalized_records[1].warnings)
+
+
     def test_phase_40_subcontracted_ap_normalizes_as_subcontractor(self) -> None:
         record = Record(
             record_type=SUBCONTRACTOR,

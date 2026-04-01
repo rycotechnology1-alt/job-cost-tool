@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from job_cost_tool.core.models.record import MATERIAL, SUBCONTRACTOR
+from job_cost_tool.core.models.record import LABOR, MATERIAL, SUBCONTRACTOR
 from job_cost_tool.core.parsing.report_parser import parse_report_pages
 
 
@@ -102,9 +102,10 @@ class ReportParserTests(unittest.TestCase):
         self.assertEqual(len(records), 2)
         self.assertEqual(records[0].phase_code, "20")
         self.assertEqual(records[0].phase_name_raw, "Labor-Electricians")
-        self.assertEqual(records[1].phase_code, "29")
+        self.assertEqual(records[1].phase_code, "29 .999")
         self.assertEqual(records[1].phase_name_raw, "Labor-Non-Job Related Time")
         self.assertEqual(records[1].transaction_type, "PR")
+        self.assertEqual(records[1].record_type, LABOR)
         self.assertEqual(
             records[1].raw_description,
             "103/J 1.00 / 1716 / Dorsey , Michael A5 Regular Earnings",

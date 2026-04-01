@@ -10,7 +10,7 @@ from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, SUBCONTRACTOR
 
 _PHASE_HEADER_RE = re.compile(
-    r"^(?P<phase_code>\d{1,3})(?:\s*\.\s*\d{1,3}\s*\.)?(?:\s*\.\s*){0,2}\s+(?P<phase_name>[A-Za-z].+?)\s*$"
+    r"^(?P<main_phase>\d{1,3})(?:\s*\.\s*(?P<subphase>\d{1,3}))?(?:\s*\.\s*){1,2}(?P<phase_name>[A-Za-z].+?)\s*$"
 )
 _TRANSACTION_START_RE = re.compile(r"^(?P<marker>[A-Z]{2})\s+\d{2}/\d{2}/\d{2}\b")
 _PAGE_FOOTER_RE = re.compile(r"\bPage\s+\d+\s+\d{2}/\d{2}/\d{2}\b", re.IGNORECASE)
@@ -128,7 +128,12 @@ def extract_phase_header(line: str) -> Optional[tuple[str, str]]:
     match = _PHASE_HEADER_RE.match(normalized_line)
     if not match:
         return None
-    return match.group("phase_code"), match.group("phase_name").strip()
+
+    phase_code = match.group("main_phase")
+    subphase = match.group("subphase")
+    if subphase:
+        phase_code = f"{phase_code} .{subphase}"
+    return phase_code, match.group("phase_name").strip()
 
 
 def is_phase_header(line: str) -> bool:
