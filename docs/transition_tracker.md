@@ -1,3 +1,43 @@
+### [2026-03-31] Modified recap template now applies material-row styling consistently and uses a wider grand total range
+- **What changed:** Fixed the bundled modified recap template so material vendor rows `G34:H41` use the same styles as `G27:H33`, and widened exported grand total to `=SUM(F52:F62)`.
+- **Why:** The lower material rows still carried generic blank-cell styling from the underlying sheet, and the narrower grand total formula did not include the full user-editable summary area.
+- **Area:** Core engine / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk, though the polished material-row formatting currently lives in the bundled template asset rather than richer template metadata.
+- **Follow-up needed:** If recap template variants grow later, consider validating key section style continuity and summary-formula expectations as part of template compatibility checks.
+
+### [2026-03-31] Export writer now avoids non-anchor merged cells in the modified recap template
+- **What changed:** Fixed the summary-area rewrite so it no longer writes into non-anchor cells inside the template's merged footer range, and added an export regression that writes through the real bundled modified recap template asset.
+- **Why:** The modified recap template introduced merged ranges that the synthetic export test workbook did not model, and the summary writer was trying to clear `E65:H65` even though `A65:H65` is a single merged cell.
+- **Area:** Core engine / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk, though export tests now rely more intentionally on the bundled template asset to catch workbook-structure mistakes that pure synthetic sheets can miss.
+- **Follow-up needed:** If more template variants are supported later, add a reusable check that export write targets never point to non-anchor merged cells for a given template/map pair.
+
+### [2026-03-31] Recap export now aligns to the modified workbook layout standard
+- **What changed:** Updated the default recap template asset, recap template maps, and export workbook writer so exports now follow the modified workbook structure: right-side header values in column H, materials moved beside equipment with expanded vendor capacity, subcontractors shifted to the left block, permits/police sections moved down, and the summary/tax formulas now match the revised layout.
+- **Why:** The modified workbook represented the intended recap format, and export needed to treat that layout as the new standard rather than continuing to normalize output into the older structure.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that older external recap templates with the previous layout will no longer match the updated template-map assumptions as cleanly, though the bundled default profile template and export logic now agree on one explicit workbook standard.
+- **Follow-up needed:** If multiple recap template variants need to coexist later, promote more of the summary/header/tax layout behavior into richer template metadata instead of relying on a single modified-layout writer path.
+
+### [2026-03-31] Recap export summary area now uses a cleaner total-and-tax layout
+- **What changed:** Rewrote the exported recap summary block to remove redundant material/subcontractor subtotal and markup echoes, moved the tax amount into the left-side summary totals column, and simplified grand total to a contiguous `=SUM(F55:F64)` formula.
+- **Why:** The old summary area duplicated values already shown elsewhere on the sheet and forced the grand total to pull from scattered references instead of one clean totals column.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk of diverging from older template expectations, though the export writer now normalizes the summary area into a more reliable workbook structure on every export.
+- **Follow-up needed:** If recap templates become more customizable later, promote the summary/totals layout from code into richer template-map metadata instead of relying on the current fixed summary cell arrangement.
+
+### [2026-03-31] Export now writes a template-driven sales-tax block
+- **What changed:** Added a small sales-tax area to recap export using config-driven workbook cell positions, with a user-editable tax-rate cell and a formula cell that calculates tax from the material total.
+- **Why:** Users need a native workbook-side way to enter sales tax after export without pushing tax concepts into parsing, normalization, or validation.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk of relying on the current recap-template cell layout for styling and placement, though the placement is now surfaced in the recap template map rather than being hidden in ad hoc workbook edits.
+- **Follow-up needed:** If recap templates become more editable later, move the sales-tax labels/styles fully into configurable template metadata instead of inferring nearby styling from the current workbook layout.
+
 ### [2026-03-31] Export now suppresses low-value subcontractor descriptions
 - **What changed:** Subcontractor recap export rows still preserve subcontractor name and amount, but the description column is now intentionally written blank instead of echoing raw source description text.
 - **Why:** The current subcontractor raw description adds noise rather than useful signal in the recap workbook, and this is better handled as an export-layer presentation choice than as a parsing or normalization change.

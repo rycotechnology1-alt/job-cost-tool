@@ -450,6 +450,8 @@ class ConfigLoader:
                 "police_detail_section",
             ):
                 self._validate_key_type(file_path, loaded_config, key, dict, "object")
+            if "sales_tax_area" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "sales_tax_area", dict, "object")
         elif config_name in {
             "target_labor_classifications",
             "target_equipment_classifications",

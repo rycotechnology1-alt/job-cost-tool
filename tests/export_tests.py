@@ -21,9 +21,9 @@ TEST_TEMPLATE_MAP = {
         "project": {"cell": "B6"},
         "description": {"cell": "B7"},
         "prepared_by": {"cell": "B8"},
-        "job_number": {"cell": "G6"},
-        "date": {"cell": "G7"},
-        "report_or_co_number": {"cell": "G8"},
+        "job_number": {"cell": "H6"},
+        "date": {"cell": "H7"},
+        "report_or_co_number": {"cell": "H8"},
     },
     "labor_rows": {
         "103 Journeyman": {
@@ -48,24 +48,31 @@ TEST_TEMPLATE_MAP = {
         "Utility Van": {"hours_qty": "B33", "rate": "D33"},
     },
     "materials_section": {
-        "start_row": 46,
-        "end_row": 52,
-        "columns": {"name": "A", "amount": "B"},
+        "start_row": 27,
+        "end_row": 41,
+        "columns": {"name": "G", "amount": "H"},
     },
     "subcontractors_section": {
         "start_row": 46,
         "end_row": 50,
-        "columns": {"name": "E", "description": "F", "amount": "G"},
+        "columns": {"name": "A", "amount": "C"},
     },
     "permits_fees_section": {
-        "start_row": 57,
-        "end_row": 58,
+        "start_row": 55,
+        "end_row": 56,
         "columns": {"description": "A", "amount": "C"},
     },
     "police_detail_section": {
-        "start_row": 63,
-        "end_row": 64,
+        "start_row": 61,
+        "end_row": 62,
         "columns": {"description": "A", "amount": "C"},
+    },
+    "sales_tax_area": {
+        "rate_label_cell": "G60",
+        "rate_input_cell": "H60",
+        "amount_label_cell": "G61",
+        "amount_formula_cell": "H61",
+        "material_total_cell": "H54",
     },
 }
 
@@ -220,7 +227,7 @@ class ExportWorkflowTests(unittest.TestCase):
 
         worksheet = load_workbook(self.output_path)["Recap"]
         self.assertEqual(worksheet["B6"].value, "Sample Project")
-        self.assertEqual(worksheet["G6"].value, "JOB-100")
+        self.assertEqual(worksheet["H6"].value, "JOB-100")
         self.assertEqual(worksheet["A14"].value, "103 Journeyman")
         self.assertEqual(worksheet["B14"].value, 8)
         self.assertEqual(worksheet["E14"].value, 199.5)
@@ -229,9 +236,9 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["A32"].value, "Pick-up Truck")
         self.assertEqual(worksheet["B32"].value, 2)
         self.assertEqual(worksheet["D32"].value, 88)
-        self.assertEqual(worksheet["A46"].value, "Vendor A")
-        self.assertEqual(worksheet["B46"].value, 100)
-        self.assertEqual(worksheet["B53"].value, "=SUM(B46:B52)")
+        self.assertEqual(worksheet["G27"].value, "Vendor A")
+        self.assertEqual(worksheet["H27"].value, 100)
+        self.assertEqual(worksheet["H42"].value, "=SUM(H27:H41)")
 
     def test_export_uses_slot_rows_after_profile_label_rename(self) -> None:
         renamed_labor_slot_config = {
@@ -333,6 +340,79 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["B32"].value, 2)
         self.assertEqual(worksheet["D32"].value, 99)
 
+    def test_export_rewrites_summary_area_and_sales_tax_formulas(self) -> None:
+        records = [
+            self._material_record(vendor="Vendor A", cost=100),
+            self._subcontractor_record(vendor="CJ Shaughnessy Crane", description="Raw subcontractor source text", cost=6000),
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["E50"].value, "SUMMARY & MARKUP")
+        self.assertEqual(worksheet["E51"].value, "Category")
+        self.assertEqual(worksheet["F51"].value, "Amount")
+        self.assertEqual(worksheet["G51"].value, "Control")
+        self.assertEqual(worksheet["H51"].value, "Value")
+        self.assertEqual(worksheet["E52"].value, "Labor Total")
+        self.assertEqual(worksheet["F52"].value, "=H23")
+        self.assertEqual(worksheet["E53"].value, "Equipment Total")
+        self.assertEqual(worksheet["F53"].value, "=E42")
+        self.assertEqual(worksheet["E54"].value, "Material Total")
+        self.assertEqual(worksheet["F54"].value, "=H54")
+        self.assertEqual(worksheet["E55"].value, "Sales Tax")
+        self.assertEqual(worksheet["F55"].value, "=H61")
+        self.assertEqual(worksheet["E56"].value, "Subcontractor Total")
+        self.assertEqual(worksheet["F56"].value, "=H58")
+        self.assertEqual(worksheet["E57"].value, "Permits & Fees Total")
+        self.assertEqual(worksheet["F57"].value, "=C57")
+        self.assertEqual(worksheet["E58"].value, "Police Detail Total")
+        self.assertEqual(worksheet["F58"].value, "=C63")
+        self.assertEqual(worksheet["E63"].value, "Grand Total")
+        self.assertEqual(worksheet["F63"].value, "=SUM(F52:F62)")
+        self.assertEqual(worksheet["G52"].value, "Material Markup %")
+        self.assertEqual(worksheet["H52"].value, 0)
+        self.assertEqual(worksheet["G53"].value, "Material Markup")
+        self.assertEqual(worksheet["H53"].value, "=H42*H52")
+        self.assertEqual(worksheet["G54"].value, "Material Total")
+        self.assertEqual(worksheet["H54"].value, "=H42+H53")
+        self.assertEqual(worksheet["G56"].value, "Subcontractor Markup %")
+        self.assertEqual(worksheet["H56"].value, 0)
+        self.assertEqual(worksheet["G57"].value, "Subcontractor Markup")
+        self.assertEqual(worksheet["H57"].value, "=C51*H56")
+        self.assertEqual(worksheet["G58"].value, "Subcontractor Total")
+        self.assertEqual(worksheet["H58"].value, "=C51+H57")
+        self.assertEqual(worksheet["G60"].value, "Tax Rate")
+        self.assertEqual(worksheet["H60"].value, 0)
+        self.assertEqual(worksheet["H60"].number_format, "0.00%")
+        self.assertEqual(worksheet["G61"].value, "Tax Amount")
+        self.assertEqual(worksheet["H61"].value, "=H54*H60")
+        self.assertIsNone(worksheet["G63"].value)
+        self.assertIsNone(worksheet["H65"].value)
+
+    def test_export_succeeds_with_actual_modified_default_template(self) -> None:
+        actual_template = Path("job_cost_tool/profiles/default/recap_template.xlsx")
+        records = [
+            self._material_record(vendor=f"Vendor {index}", cost=10 + index)
+            for index in range(10)
+        ] + [
+            self._subcontractor_record(vendor="CJ Shaughnessy Crane", description="Raw subcontractor source text", cost=6000),
+        ]
+
+        export_records_to_recap(records, str(actual_template), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["H6"].value, "JOB-100")
+        self.assertEqual(worksheet["G27"].value, "Vendor 0")
+        self.assertEqual(worksheet["H27"].value, 10)
+        self.assertEqual(worksheet["G34"].value, "Vendor 7")
+        self.assertEqual(worksheet["H34"].value, 17)
+        self.assertEqual(worksheet["G27"].style_id, worksheet["G34"].style_id)
+        self.assertEqual(worksheet["H27"].style_id, worksheet["H34"].style_id)
+        self.assertEqual(worksheet["A46"].value, "CJ Shaughnessy Crane")
+        self.assertEqual(worksheet["C46"].value, 6000)
+        self.assertEqual(worksheet["F63"].value, "=SUM(F52:F62)")
+
     def test_export_leaves_subcontractor_description_cells_blank(self) -> None:
         records = [
             self._subcontractor_record(vendor="CJ Shaughnessy Crane", description="Raw subcontractor source text", cost=6000)
@@ -341,41 +421,33 @@ class ExportWorkflowTests(unittest.TestCase):
         export_records_to_recap(records, str(self.template_path), str(self.output_path))
 
         worksheet = load_workbook(self.output_path)["Recap"]
-        self.assertEqual(worksheet["E46"].value, "CJ Shaughnessy Crane")
-        self.assertIsNone(worksheet["F46"].value)
-        self.assertEqual(worksheet["G46"].value, 6000)
+        self.assertEqual(worksheet["A46"].value, "CJ Shaughnessy Crane")
+        self.assertIsNone(worksheet["B46"].value)
+        self.assertEqual(worksheet["C46"].value, 6000)
 
     def test_export_collapses_material_vendor_overflow_into_additional_vendors(self) -> None:
         records = [
             self._material_record(vendor=f"Vendor {index}", cost=10 + index)
-            for index in range(8)
+            for index in range(16)
         ]
 
         export_records_to_recap(records, str(self.template_path), str(self.output_path))
 
         worksheet = load_workbook(self.output_path)["Recap"]
-        self.assertEqual(worksheet["A46"].value, "Vendor 0")
-        self.assertEqual(worksheet["B46"].value, 10)
-        self.assertEqual(worksheet["A47"].value, "Vendor 1")
-        self.assertEqual(worksheet["B47"].value, 11)
-        self.assertEqual(worksheet["A48"].value, "Vendor 2")
-        self.assertEqual(worksheet["B48"].value, 12)
-        self.assertEqual(worksheet["A49"].value, "Vendor 3")
-        self.assertEqual(worksheet["B49"].value, 13)
-        self.assertEqual(worksheet["A50"].value, "Vendor 4")
-        self.assertEqual(worksheet["B50"].value, 14)
-        self.assertEqual(worksheet["A51"].value, "Vendor 5")
-        self.assertEqual(worksheet["B51"].value, 15)
-        self.assertEqual(worksheet["A52"].value, "Additional Vendors")
-        self.assertEqual(worksheet["B52"].value, 33)
-        self.assertEqual(worksheet["B53"].value, "=SUM(B46:B52)")
+        self.assertEqual(worksheet["G27"].value, "Vendor 0")
+        self.assertEqual(worksheet["H27"].value, 10)
+        self.assertEqual(worksheet["G40"].value, "Vendor 13")
+        self.assertEqual(worksheet["H40"].value, 23)
+        self.assertEqual(worksheet["G41"].value, "Additional Vendors")
+        self.assertEqual(worksheet["H41"].value, 49)
+        self.assertEqual(worksheet["H42"].value, "=SUM(H27:H41)")
 
     def test_material_overflow_uses_current_template_capacity(self) -> None:
         smaller_template_map = {
             **TEST_TEMPLATE_MAP,
             "materials_section": {
                 **TEST_TEMPLATE_MAP["materials_section"],
-                "end_row": 48,
+                "end_row": 29,
             },
         }
         records = [
@@ -404,7 +476,7 @@ class ExportWorkflowTests(unittest.TestCase):
             **TEST_TEMPLATE_MAP,
             "materials_section": {
                 **TEST_TEMPLATE_MAP["materials_section"],
-                "end_row": 48,
+                "end_row": 29,
             },
         }
         records = [
@@ -510,11 +582,11 @@ class ExportWorkflowTests(unittest.TestCase):
         export_records_to_recap(second_records, str(self.template_path), str(self.output_path))
 
         worksheet = load_workbook(self.output_path)["Recap"]
-        self.assertEqual(worksheet["A46"].value, "Vendor C")
-        self.assertEqual(worksheet["B46"].value, 300)
-        self.assertIsNone(worksheet["A47"].value)
-        self.assertIsNone(worksheet["B47"].value)
-        self.assertEqual(worksheet["B53"].value, "=SUM(B46:B52)")
+        self.assertEqual(worksheet["G27"].value, "Vendor C")
+        self.assertEqual(worksheet["H27"].value, 300)
+        self.assertIsNone(worksheet["G28"].value)
+        self.assertIsNone(worksheet["H28"].value)
+        self.assertEqual(worksheet["H42"].value, "=SUM(H27:H41)")
 
     def test_omitted_record_does_not_block_or_export(self) -> None:
         records = [
@@ -529,8 +601,8 @@ class ExportWorkflowTests(unittest.TestCase):
 
         worksheet = load_workbook(self.output_path)["Recap"]
         self.assertIsNone(worksheet["B14"].value)
-        self.assertEqual(worksheet["A46"].value, "Vendor A")
-        self.assertEqual(worksheet["B46"].value, 100)
+        self.assertEqual(worksheet["G27"].value, "Vendor A")
+        self.assertEqual(worksheet["H27"].value, 100)
 
     def _cleanup_temp_dir(self) -> None:
         shutil.rmtree(self.temp_path, ignore_errors=True)
@@ -540,15 +612,45 @@ class ExportWorkflowTests(unittest.TestCase):
         worksheet = workbook.active
         worksheet.title = "Recap"
 
-        for cell in ["B6", "B7", "B8", "G6", "G7", "G8", "B14", "C14", "D14", "E14", "F14", "G14", "B22", "C22", "D22", "E22", "F22", "G22", "B32", "D32", "B33", "D33", "A46", "B46", "A47", "B47", "A48", "B48", "A49", "B49", "A50", "B50", "A51", "B51", "A52", "B52", "E46", "F46", "G46", "E47", "F47", "G47", "E48", "F48", "G48", "E49", "F49", "G49", "E50", "F50", "G50", "A57", "C57", "A58", "C58", "A63", "C63", "A64", "C64"]:
-            worksheet[cell] = None
+        for cell, value in {
+            "A6": "Project",
+            "A7": "Description",
+            "A8": "Prepared By",
+            "G6": "Job Number",
+            "G7": "Date",
+            "G8": "Report / CO #",
+            "A25": "EQUIPMENT",
+            "A26": "Category",
+            "B26": "Hours / Qty",
+            "C26": "Unit",
+            "D26": "Rate",
+            "E26": "Total",
+            "G25": "MATERIALS",
+            "G26": "Vendor",
+            "H26": "Amount",
+            "A42": "Equipment Total",
+            "E42": "=SUM(E27:E41)",
+            "G42": "Material Subtotal",
+            "H42": "=SUM(H27:H41)",
+            "A44": "SUBCONTRACTORS",
+            "A45": "Subcontractor Name",
+            "C45": "Amount",
+            "A51": "Subcontractor Subtotal",
+            "C51": "=SUM(C46:C50)",
+            "A53": "PERMITS & FEES",
+            "A54": "Description",
+            "C54": "Amount",
+            "A57": "Permits & Fees Total",
+            "C57": "=SUM(C55:C56)",
+            "A59": "POLICE DETAIL",
+            "A60": "Description",
+            "C60": "Amount",
+            "A63": "Police Detail Total",
+            "C63": "=SUM(C61:C62)",
+            "H23": "=SUM(H12:H22)",
+        }.items():
+            worksheet[cell] = value
 
-        worksheet["H23"] = "=SUM(H12:H22)"
-        worksheet["E42"] = "=SUM(E27:E41)"
-        worksheet["B53"] = "=SUM(B46:B52)"
-        worksheet["G51"] = "=SUM(G46:G50)"
-        worksheet["C59"] = "=SUM(C57:C58)"
-        worksheet["C65"] = "=SUM(C63:C64)"
         workbook.save(path)
 
     def _labor_record(

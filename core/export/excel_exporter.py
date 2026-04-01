@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import copy
 from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile
@@ -69,6 +70,19 @@ def export_to_excel(template_path: str, output_path: str, recap_payload: dict[st
         recap_payload.get("police_detail", []),
         mapping["police_detail_section"],
         "police detail",
+    )
+    _write_sales_tax_area(
+        worksheet,
+        mapping.get("sales_tax_area", {}),
+        mapping.get("materials_section", {}),
+    )
+    _write_summary_totals_area(
+        worksheet,
+        mapping.get("sales_tax_area", {}),
+        mapping.get("materials_section", {}),
+        mapping.get("subcontractors_section", {}),
+        mapping.get("permits_fees_section", {}),
+        mapping.get("police_detail_section", {}),
     )
 
     try:
@@ -348,6 +362,157 @@ def _write_list_section(
         for field_name, column_letter in columns.items():
             value = row_values.get(field_name)
             worksheet[f"{column_letter}{row_number}"].value = None if value in {None, ""} else value
+
+
+def _write_sales_tax_area(
+    worksheet: Worksheet,
+    sales_tax_mapping: dict[str, Any],
+    materials_section_mapping: dict[str, Any],
+) -> None:
+    """Write the sales-tax controls for the recap summary block."""
+    cells = _resolve_sales_tax_cells(sales_tax_mapping, materials_section_mapping)
+
+    section_label_cell = cells.get("section_label_cell", "")
+    if section_label_cell:
+        worksheet[section_label_cell].value = "Sales Tax"
+    worksheet[cells["rate_label_cell"]].value = "Tax Rate"
+    worksheet[cells["rate_input_cell"]].value = 0
+    worksheet[cells["amount_label_cell"]].value = "Tax Amount"
+    worksheet[cells["amount_formula_cell"]].value = (
+        f'={cells["material_total_cell"]}*{cells["rate_input_cell"]}'
+    )
+    worksheet[cells["rate_input_cell"]].number_format = "0.00%"
+
+
+def _write_summary_totals_area(
+    worksheet: Worksheet,
+    sales_tax_mapping: dict[str, Any],
+    materials_section_mapping: dict[str, Any],
+    subcontractors_section_mapping: dict[str, Any],
+    permits_section_mapping: dict[str, Any],
+    police_section_mapping: dict[str, Any],
+) -> None:
+    """Rewrite the recap summary area to match the current modified workbook layout."""
+    sales_tax_cells = _resolve_sales_tax_cells(sales_tax_mapping, materials_section_mapping)
+    material_subtotal_cell = _get_section_total_cell(materials_section_mapping, default_column="H", default_end_row=41)
+    subcontractor_subtotal_cell = _get_section_total_cell(
+        subcontractors_section_mapping,
+        default_column="C",
+        default_end_row=50,
+    )
+    permits_total_cell = _get_section_total_cell(permits_section_mapping, default_column="C", default_end_row=56)
+    police_total_cell = _get_section_total_cell(police_section_mapping, default_column="C", default_end_row=62)
+
+    summary_values = {
+        "E50": "SUMMARY & MARKUP",
+        "F50": None,
+        "G50": None,
+        "H50": None,
+        "E51": "Category",
+        "F51": "Amount",
+        "G51": "Control",
+        "H51": "Value",
+        "E52": "Labor Total",
+        "F52": "=H23",
+        "G52": "Material Markup %",
+        "H52": 0,
+        "E53": "Equipment Total",
+        "F53": "=E42",
+        "G53": "Material Markup",
+        "H53": f'={material_subtotal_cell}*H52',
+        "E54": "Material Total",
+        "F54": f'={sales_tax_cells["material_total_cell"]}',
+        "G54": "Material Total",
+        "H54": f'={material_subtotal_cell}+H53',
+        "E55": "Sales Tax",
+        "F55": f'={sales_tax_cells["amount_formula_cell"]}',
+        "G55": None,
+        "H55": None,
+        "E56": "Subcontractor Total",
+        "F56": "=H58",
+        "G56": "Subcontractor Markup %",
+        "H56": 0,
+        "E57": "Permits & Fees Total",
+        "F57": f'={permits_total_cell}',
+        "G57": "Subcontractor Markup",
+        "H57": f'={subcontractor_subtotal_cell}*H56',
+        "E58": "Police Detail Total",
+        "F58": f'={police_total_cell}',
+        "G58": "Subcontractor Total",
+        "H58": f'={subcontractor_subtotal_cell}+H57',
+        "E59": None,
+        "F59": None,
+        "G59": None,
+        "H59": None,
+        "E60": None,
+        "F60": None,
+        "E61": None,
+        "F61": None,
+        "E62": None,
+        "F62": None,
+        "G62": None,
+        "H62": None,
+        "E63": "Grand Total",
+        "F63": "=SUM(F52:F62)",
+        "G63": None,
+        "H63": None,
+        "E64": None,
+        "F64": None,
+        "G64": None,
+        "H64": None,
+    }
+
+    for cell_ref, value in summary_values.items():
+        worksheet[cell_ref].value = value
+
+
+def _get_section_total_cell(
+    section_mapping: dict[str, Any],
+    *,
+    default_column: str,
+    default_end_row: int,
+) -> str:
+    """Return the subtotal/total cell directly beneath a configured list section."""
+    columns = section_mapping.get("columns", {}) if isinstance(section_mapping, dict) else {}
+    amount_column = str(columns.get("amount") or default_column).strip().upper() or default_column
+    try:
+        end_row = int(section_mapping.get("end_row", default_end_row)) if isinstance(section_mapping, dict) else default_end_row
+    except (TypeError, ValueError):
+        end_row = default_end_row
+    return f"{amount_column}{end_row + 1}"
+
+
+def _resolve_sales_tax_cells(
+    sales_tax_mapping: dict[str, Any],
+    materials_section_mapping: dict[str, Any],
+) -> dict[str, str]:
+    """Resolve the configured sales-tax block cells with sensible defaults."""
+    default_material_total_cell = _get_section_total_cell(
+        materials_section_mapping,
+        default_column="H",
+        default_end_row=41,
+    )
+
+    def _cell(mapping_key: str, fallback: str) -> str:
+        value = str(sales_tax_mapping.get(mapping_key, fallback) or fallback).strip().upper()
+        return value or fallback
+
+    section_label_value = str(sales_tax_mapping.get("section_label_cell") or "").strip().upper()
+    return {
+        "section_label_cell": section_label_value,
+        "rate_label_cell": _cell("rate_label_cell", "G60"),
+        "rate_input_cell": _cell("rate_input_cell", "H60"),
+        "amount_label_cell": _cell("amount_label_cell", "G61"),
+        "amount_formula_cell": _cell("amount_formula_cell", "H61"),
+        "material_total_cell": _cell("material_total_cell", default_material_total_cell),
+    }
+
+
+def _copy_cell_style(worksheet: Worksheet, source_cell_ref: str, target_cell_ref: str) -> None:
+    """Copy the visual cell style from one template cell to another."""
+    source_cell = worksheet[str(source_cell_ref)]
+    target_cell = worksheet[str(target_cell_ref)]
+    target_cell._style = copy(source_cell._style)
 
 
 def _get_section_bounds(section_name: str, section_mapping: dict[str, Any]) -> tuple[int, int, dict[str, str]]:

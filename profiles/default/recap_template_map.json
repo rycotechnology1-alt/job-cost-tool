@@ -12,13 +12,13 @@
       "cell": "B8"
     },
     "job_number": {
-      "cell": "G6"
+      "cell": "H6"
     },
     "date": {
-      "cell": "G7"
+      "cell": "H7"
     },
     "report_or_co_number": {
-      "cell": "G8"
+      "cell": "H8"
     }
   },
   "labor_rows": {
@@ -174,33 +174,32 @@
     }
   },
   "materials_section": {
-    "start_row": 46,
-    "end_row": 52,
+    "start_row": 27,
+    "end_row": 41,
     "columns": {
-      "name": "A",
-      "amount": "B"
+      "name": "G",
+      "amount": "H"
     }
   },
   "subcontractors_section": {
     "start_row": 46,
     "end_row": 50,
     "columns": {
-      "name": "E",
-      "description": "F",
-      "amount": "G"
+      "name": "A",
+      "amount": "C"
     }
   },
   "permits_fees_section": {
-    "start_row": 57,
-    "end_row": 58,
+    "start_row": 55,
+    "end_row": 56,
     "columns": {
       "description": "A",
       "amount": "C"
     }
   },
   "police_detail_section": {
-    "start_row": 63,
-    "end_row": 64,
+    "start_row": 61,
+    "end_row": 62,
     "columns": {
       "description": "A",
       "amount": "C"
@@ -208,8 +207,15 @@
   },
   "protected_cells": {
     "markup_controls": [
-      "H55",
-      "H59"
+      "H52",
+      "H56"
     ]
+  },
+  "sales_tax_area": {
+    "rate_label_cell": "G60",
+    "rate_input_cell": "H60",
+    "amount_label_cell": "G61",
+    "amount_formula_cell": "H61",
+    "material_total_cell": "H54"
   }
 }
