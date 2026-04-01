@@ -1,0 +1,7 @@
+{
+  "default_omit_rules": [
+    {
+      "phase_code": "29 .999"
+    }
+  ]
+}

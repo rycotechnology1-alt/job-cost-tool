@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 
 from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots, normalize_slot_config
 from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
+from job_cost_tool.core.review_defaults import normalize_review_rules_config
 from job_cost_tool.core.config.path_utils import get_legacy_config_root
 from job_cost_tool.core.config.profile_manager import ProfileManager
 
@@ -33,6 +34,9 @@ class ConfigLoader:
         "target_labor_classifications": "target_labor_classifications.json",
         "target_equipment_classifications": "target_equipment_classifications.json",
         "rates": "rates.json",
+    }
+    _optional_files: ClassVar[dict[str, str]] = {
+        "review_rules": "review_rules.json",
     }
     _required_top_level_keys: ClassVar[dict[str, tuple[str, ...]]] = {
         "input_model": ("report_type", "section_headers"),
@@ -132,6 +136,10 @@ class ConfigLoader:
         """Return the configured rates bundle for the active profile."""
         return self._load_config("rates")
 
+    def get_review_rules(self) -> JsonDict:
+        """Return profile-driven review workflow rules such as default omission."""
+        return self._load_optional_config("review_rules")
+
     def get_active_profile_name(self) -> str:
         """Return the active profile name currently in use."""
         profile_dir = self._config_dir
@@ -215,12 +223,48 @@ class ConfigLoader:
         return normalized_config
 
 
+    def _load_optional_config(self, config_name: str) -> JsonDict:
+        """Load an optional config file or return its normalized default shape."""
+        if config_name not in self._optional_files:
+            raise KeyError(f"Unsupported optional config name '{config_name}'")
+
+        if config_name in self._cache:
+            return self._cache[config_name]
+
+        file_name = self._optional_files[config_name]
+        file_path = self._config_dir / file_name
+        if not file_path.is_file():
+            normalized_default = self._normalize_loaded_config(config_name, {})
+            self._cache[config_name] = normalized_default
+            return normalized_default
+
+        try:
+            with file_path.open("r", encoding="utf-8-sig") as config_file:
+                loaded_config = json.load(config_file)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Config file '{file_path}' contains invalid JSON: {exc.msg}"
+            ) from exc
+
+        if not isinstance(loaded_config, dict):
+            raise ValueError(
+                f"Config file '{file_path}' must contain a JSON object at the top level"
+            )
+
+        self._validate_top_level_structure(config_name, file_path, loaded_config)
+        normalized_config = self._normalize_loaded_config(config_name, loaded_config)
+        self._cache[config_name] = normalized_config
+        return normalized_config
+
+
     def _normalize_loaded_config(self, config_name: str, loaded_config: JsonDict) -> JsonDict:
         """Normalize compatible config formats into the app's current in-memory shape."""
         if config_name == "labor_mapping":
             return self._normalize_labor_mapping_config(loaded_config)
         if config_name == "equipment_mapping":
             return self._normalize_equipment_mapping_config(loaded_config)
+        if config_name == "review_rules":
+            return normalize_review_rules_config(loaded_config)
         if config_name == "target_labor_classifications":
             capacity, template_labels = self._get_slot_context("labor_rows")
             return normalize_slot_config(
@@ -433,6 +477,9 @@ class ConfigLoader:
                 self._validate_key_type(file_path, loaded_config, "saved_mappings", list, "array")
             if "keyword_mappings" in loaded_config:
                 self._validate_key_type(file_path, loaded_config, "keyword_mappings", dict, "object")
+        elif config_name == "review_rules":
+            if "default_omit_rules" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "default_omit_rules", list, "array")
         elif config_name == "input_model":
             self._validate_key_type(file_path, loaded_config, "report_type", str, "string")
             self._validate_key_type(file_path, loaded_config, "section_headers", dict, "object")

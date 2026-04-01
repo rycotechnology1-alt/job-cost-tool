@@ -1,3 +1,11 @@
+### [2026-04-01] Review workflow now supports profile-driven default omission rules
+- **What changed:** Added an optional profile-side `review_rules.json` config with `default_omit_rules`, and review load now applies matching rules by setting the existing `is_omitted` flag before validation/export readiness is computed.
+- **Why:** Some records such as non-job-related time should still survive parsing/normalization for user control, but they need a reusable profile-driven way to start omitted by default without hiding them or hard-coding export exclusions.
+- **Area:** Core engine / Application services / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that overly broad future rules could hide records from export readiness unexpectedly, though the MVP matcher is intentionally narrow and the records remain visible and manually reversible in review.
+- **Follow-up needed:** Add a lightweight settings/admin editor for review rules later if users need to manage default omit policies without editing profile JSON by hand.
+
 ### [2026-03-31] Parser now preserves distinct `29 .999` labor subphase identity
 - **What changed:** Phase-header parsing now retains dotted subphase codes such as `29 .999` instead of collapsing them to bare `29`, and phase mapping now explicitly distinguishes `29` (material Market Recovery) from `29 .999` (labor Non-Job Related Time).
 - **Why:** Records under `29 .999. Labor-Non-Job Related Time` were inheriting the wrong material fallback because the parser stripped the subphase before family routing ran.

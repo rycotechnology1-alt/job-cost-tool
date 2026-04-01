@@ -28,7 +28,7 @@ from job_cost_tool.app.viewmodels.settings_view_model import (
     persist_observed_labor_raw_values,
 )
 from job_cost_tool.core.config import ConfigLoader, ProfileManager
-from job_cost_tool.core.models.record import LABOR, Record
+from job_cost_tool.core.models.record import LABOR, MATERIAL, Record
 
 
 TEST_ROOT = Path("job_cost_tool/tests/_profile_tmp")
@@ -107,7 +107,25 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(loader.get_target_labor_classifications()["classifications"], ["103 Journeyman"])
         self.assertEqual(loader.get_labor_slots()["slots"][0]["slot_id"], "labor_1")
         self.assertEqual(loader.get_rates(), {"labor_rates": {}, "equipment_rates": {}})
+        self.assertEqual(loader.get_review_rules(), {"default_omit_rules": []})
         self.assertEqual(loader.get_template_path(), (TEST_ROOT / "profiles" / "default" / "recap_template.xlsx").resolve())
+
+    def test_config_loader_normalizes_default_omit_rules_by_phase_code(self) -> None:
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "review_rules.json",
+            {
+                "default_omit_rules": [
+                    {"phase_code": " 29   .999 "},
+                    {"phase_code": "29 .999"},
+                    {"phase_code": ""},
+                    {},
+                ]
+            },
+        )
+
+        loader = ConfigLoader(config_dir=(TEST_ROOT / "profiles" / "default"))
+
+        self.assertEqual(loader.get_review_rules(), {"default_omit_rules": [{"phase_code": "29 .999"}]})
 
     def test_profile_manager_can_duplicate_and_switch_profile(self) -> None:
         manager = self._build_manager()
@@ -863,6 +881,139 @@ class ProfileConfigTests(unittest.TestCase):
                 {"raw_description": "FREIGHTLINER BUCKET/MH", "raw_pattern": "FREIGHTLINER BUCKET/MH", "target_category": ""},
             ],
         )
+
+    def test_review_view_model_applies_default_omit_rules_without_dropping_records(self) -> None:
+        manager = self._build_manager()
+        loader_class = ConfigLoader
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "review_rules.json",
+            {"default_omit_rules": [{"phase_code": "29 .999"}]},
+        )
+
+        matching_record = Record(
+            record_type=LABOR,
+            phase_code="29 .999",
+            raw_description="Non-job-related labor line",
+            cost=973.98,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="J",
+            labor_class_normalized="J",
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            phase_name_raw="Labor-Non-Job Related Time",
+            source_page=1,
+            source_line_text="PR 03/12/26 103/J 1.00 / 1716 / Dorsey , Michael A5 Regular Earnings 8.00 ST 973.98",
+            record_type_normalized=LABOR,
+            recap_labor_slot_id=None,
+            recap_labor_classification=None,
+        )
+        non_matching_record = Record(
+            record_type=MATERIAL,
+            phase_code="29",
+            raw_description="Market recovery line",
+            cost=-28950.0,
+            hours=None,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name="Market Recovery",
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            phase_name_raw="Market Recovery",
+            source_page=1,
+            source_line_text="IC 12/22/25 MR252080 / Src JCCo: 1 0.00 -28,950.00",
+            record_type_normalized=MATERIAL,
+            vendor_name_normalized="Market Recovery",
+        )
+
+        with patch("job_cost_tool.app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.ConfigLoader",
+            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
+        ), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.parse_pdf",
+            return_value=[matching_record, non_matching_record],
+        ), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.normalize_records",
+            return_value=[matching_record, non_matching_record],
+        ):
+            view_model = ReviewViewModel()
+            view_model.load_pdf("sample.pdf")
+
+        self.assertEqual(len(view_model.records), 2)
+        self.assertTrue(view_model.records[0].is_omitted)
+        self.assertEqual(view_model.records[0].phase_code, "29 .999")
+        self.assertEqual(view_model.records[0].phase_name_raw, "Labor-Non-Job Related Time")
+        self.assertEqual(view_model.records[0].record_type, LABOR)
+        self.assertEqual(view_model.records[0].record_type_normalized, LABOR)
+        self.assertFalse(view_model.records[1].is_omitted)
+        self.assertEqual(view_model.records[1].phase_code, "29")
+        self.assertEqual(view_model.records[1].record_type_normalized, MATERIAL)
+        self.assertEqual(view_model.blocking_issues, [])
+        self.assertTrue(view_model.can_export)
+
+    def test_review_view_model_allows_manual_unomit_override_for_default_omitted_record(self) -> None:
+        manager = self._build_manager()
+        loader_class = ConfigLoader
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "review_rules.json",
+            {"default_omit_rules": [{"phase_code": "29 .999"}]},
+        )
+
+        record = Record(
+            record_type=LABOR,
+            phase_code="29 .999",
+            raw_description="Non-job-related labor line",
+            cost=973.98,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="J",
+            labor_class_normalized="J",
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            phase_name_raw="Labor-Non-Job Related Time",
+            source_page=1,
+            source_line_text="PR 03/12/26 103/J 1.00 / 1716 / Dorsey , Michael A5 Regular Earnings 8.00 ST 973.98",
+            record_type_normalized=LABOR,
+            recap_labor_slot_id=None,
+            recap_labor_classification=None,
+        )
+
+        with patch("job_cost_tool.app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.ConfigLoader",
+            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
+        ), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.parse_pdf",
+            return_value=[record],
+        ), patch(
+            "job_cost_tool.app.viewmodels.review_view_model.normalize_records",
+            return_value=[record],
+        ):
+            view_model = ReviewViewModel()
+            view_model.load_pdf("sample.pdf")
+
+        self.assertTrue(view_model.records[0].is_omitted)
+        self.assertTrue(view_model.can_export)
+
+        view_model.apply_updates_to_selected_record({"is_omitted": False})
+
+        self.assertFalse(view_model.records[0].is_omitted)
+        self.assertIn(
+            "Record on page 1 (phase 29 .999, labor): Recap labor classification is missing.",
+            view_model.blocking_issues,
+        )
+        self.assertFalse(view_model.can_export)
 
     def test_review_view_model_surfaces_missing_labor_hour_type_as_blocking_issue(self) -> None:
         record = Record(

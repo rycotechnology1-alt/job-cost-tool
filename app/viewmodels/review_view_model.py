@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal
 from job_cost_tool.core.config import ConfigLoader, ProfileManager
 from job_cost_tool.core.models.record import Record
 from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
+from job_cost_tool.core.review_defaults import apply_default_omit_rules
 from job_cost_tool.services.normalization_service import normalize_records
 from job_cost_tool.services.parsing_service import parse_pdf
 from job_cost_tool.services.validation_service import validate_records
@@ -158,6 +159,8 @@ class ReviewViewModel(QObject):
         try:
             parsed_records = parse_pdf(file_path)
             normalized_records = normalize_records(parsed_records)
+            review_rules = ConfigLoader().get_review_rules().get("default_omit_rules", [])
+            normalized_records = apply_default_omit_rules(normalized_records, review_rules)
         except Exception as exc:
             self.is_processing = False
             self._review_records = []
