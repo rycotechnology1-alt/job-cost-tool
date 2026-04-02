@@ -66,7 +66,7 @@ class RecordTable(QTableWidget):
                     record.phase_code or "",
                     record.record_type_normalized or record.record_type,
                     record.raw_description,
-                    record.recap_labor_classification or record.labor_class_normalized or "",
+                    record.effective_labor_classification() or "",
                     record.equipment_category or "",
                     record.vendor_name_normalized or record.vendor_name or "",
                     f"{record.confidence:.1f}",

@@ -6,6 +6,7 @@ from .record import (
     MATERIAL,
     OTHER,
     PERMIT,
+    POLICE_DETAIL,
     SUBCONTRACTOR,
     Record,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "MATERIAL",
     "OTHER",
     "PERMIT",
+    "POLICE_DETAIL",
     "SUBCONTRACTOR",
     "Record",
 ]

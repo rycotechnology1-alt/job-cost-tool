@@ -1,3 +1,35 @@
+### [2026-04-02] PR lines under strong non-payroll phase context now stop carrying false ambiguity blockers
+- **What changed:** PR tokenization now falls back to configured phase/header family for non-labor, non-equipment sections such as `Other Job Cost` instead of downgrading those lines back to `other` and leaving an ambiguity warning behind.
+- **Why:** Valid report-body PR reimbursement lines under phase `50 . . Other Job Cost` were already inheriting material family at the outer pipeline level, but the inner PR tokenizer still emitted `family is ambiguous`, which validation treated as an export blocker even after users corrected vendor identity.
+- **Area:** Core engine / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that unusual PR lines under strong non-payroll phase context now rely more intentionally on section-family fallback, though that is more consistent with the raw-line-preservation policy than forcing manual omission.
+- **Follow-up needed:** If more non-payroll PR variants surface, keep tightening structured field extraction separately without removing this family-fallback safety net.
+
+### [2026-04-02] Phase `50 .2` now routes to police-detail export with vendor-preferred labels
+- **What changed:** Added explicit phase-map support for `50 .2` as a `police_detail` family, allowed that family through parser/normalization family-label handling, and updated police-detail recap payload building to prefer parsed vendor/display names over raw description when available.
+- **Why:** `50 .2 . Police Details` AP lines were inheriting broad phase-50 material behavior and, once exported, would have repeated the same raw-description label issue recently fixed for permits.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that future police-detail rows will aggregate by vendor label instead of raw description when a vendor exists, though that better matches recap intent and preserves raw traceability on the record itself.
+- **Follow-up needed:** If more `50`-series subphases appear, keep adding them explicitly through phase config and tests rather than broadening the phase-50 material fallback.
+
+### [2026-04-02] Permit export rows now prefer parsed vendor/display name over raw description
+- **What changed:** Permit/fees recap payload building now uses the parsed vendor/display name for permit row labels when available, with raw description kept only as the fallback label when no vendor name was parsed.
+- **Why:** After phase `50 .1` started routing correctly as permit instead of material, permit export still echoed full raw description text even though the AP parsing path had already extracted a cleaner vendor/display name.
+- **Area:** Core engine / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that some permit rows will now aggregate by vendor label instead of raw description when a vendor exists, though that better matches the intended recap display and still preserves raw traceability on the record itself.
+- **Follow-up needed:** If future permit workflows need separate vendor and detail columns, extend the permit export shape intentionally rather than overloading the single description cell.
+
+### [2026-04-02] Phase `50 .1` now routes to permit-family recap export instead of materials
+- **What changed:** Added explicit phase-map support for `50 .1` as a permit/fees family and taught the parser/normalization family-label helpers to recognize `permit`, so `Permits & Fees` AP records now keep their own non-material type and flow into the recap permits section.
+- **Why:** Phase `50 .1 . Permits & Fees` records were inheriting the broad phase-50 material fallback, which made valid permit/fee AP lines show up as material and export into the wrong recap block.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that future `50`-series subphases need their own explicit config entries rather than inheriting the parent phase family, though that is safer than collapsing meaningful subphases back into broad material behavior.
+- **Follow-up needed:** If additional fee/police subphases are confirmed in real reports, add them through phase config and tests rather than introducing export-only exceptions.
+
 ### [2026-04-01] Review workflow now supports profile-driven default omission rules
 - **What changed:** Added an optional profile-side `review_rules.json` config with `default_omit_rules`, and review load now applies matching rules by setting the existing `is_omitted` flag before validation/export readiness is computed.
 - **Why:** Some records such as non-job-related time should still survive parsing/normalization for user control, but they need a reusable profile-driven way to start omitted by default without hiding them or hard-coding export exclusions.
@@ -384,6 +416,22 @@ Record important decisions briefly. Add newest items at the top.
 - **Portability impact:** Increased
 - **Risks introduced:** Low risk that the shared catalog can drift from company practice if not maintained, though the UI still preserves saved or observed codes as safe fallbacks.
 - **Follow-up needed:** If phase reference data eventually needs admin editing, add a dedicated shared catalog editor rather than pushing company-wide phase lists into profile bundles.
+
+### [2026-04-02] Labor normalization now falls back to raw description when class parsing misses
+- **What changed:** Labor normalization now uses the parsed `raw_description` as a fallback labor mapping source when a record is already recognized as labor but no structured `labor_class_raw` was extracted, so review/mapping can still proceed without changing the record family.
+- **Why:** Rare PR labor variants such as phase-21 multi-trade lines were preserving hours and cost correctly but left labor mapping blank because labor-class parsing only covered the more common prefixed class shapes.
+- **Area:** Core engine / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that unusual labor lines now map by a longer raw fallback key, though the original parse warning remains and the behavior is still raw-first and user-reviewable.
+- **Follow-up needed:** If more payroll variants surface later, consider expanding structured labor-class extraction patterns without removing the raw-description fallback path.
+
+### [2026-04-02] Review display now separates fallback labor mapping source from effective recap class
+- **What changed:** Added an explicit effective labor-class display contract so fallback raw labor mapping sources no longer show up as the record's displayed labor class once a mapped recap labor classification exists, and the detail panel now surfaces recap labor class separately from raw/normalized trace fields.
+- **Why:** The raw-description fallback made rare labor rows mappable, but review presentation was still treating that fallback source as if it were the resolved labor classification.
+- **Area:** Core engine / Desktop UI / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that unmapped fallback labor rows now show a blank effective labor class until a recap class is chosen, though the raw source remains visible for traceability and mapping.
+- **Follow-up needed:** If other review fields develop similar raw-vs-effective ambiguity, consider adding explicit effective-display helpers instead of letting widgets infer from raw trace fields.
 
 ## Template
 ### [YYYY-MM-DD] Change title

@@ -9,6 +9,7 @@ EQUIPMENT = "equipment"
 MATERIAL = "material"
 SUBCONTRACTOR = "subcontractor"
 PERMIT = "permit"
+POLICE_DETAIL = "police_detail"
 OTHER = "other"
 
 
@@ -83,3 +84,17 @@ class Record:
     def has_blocking_warning(self) -> bool:
         """Return True when any warning is explicitly marked as blocking."""
         return any(warning.startswith("BLOCKING:") for warning in self.warnings)
+
+    def uses_fallback_labor_mapping_source(self) -> bool:
+        """Return True when labor_class_raw is only the raw-description fallback source."""
+        raw_labor_class = str(self.labor_class_raw or "").strip()
+        raw_description = str(self.raw_description or "").strip()
+        return bool(raw_labor_class and raw_description and raw_labor_class == raw_description)
+
+    def effective_labor_classification(self) -> Optional[str]:
+        """Return the effective labor classification for review/export display."""
+        if self.recap_labor_classification:
+            return self.recap_labor_classification
+        if self.uses_fallback_labor_mapping_source():
+            return None
+        return self.labor_class_normalized

@@ -73,6 +73,7 @@ class RecordDetailPanel(QWidget):
             ("employee_name", "Employee Name"),
             ("vendor_id_raw", "Vendor ID"),
             ("vendor_name", "Vendor Name"),
+            ("recap_labor_classification", "Recap Labor Class"),
             ("labor_class_raw", "Labor Class Raw"),
             ("labor_class_normalized", "Labor Class Normalized"),
             ("equipment_description", "Equipment Description"),
@@ -155,8 +156,11 @@ class RecordDetailPanel(QWidget):
             "employee_name": _to_text(record.employee_name),
             "vendor_id_raw": _to_text(record.vendor_id_raw),
             "vendor_name": _to_text(record.vendor_name),
+            "recap_labor_classification": _to_text(record.recap_labor_classification),
             "labor_class_raw": _to_text(record.labor_class_raw),
-            "labor_class_normalized": _to_text(record.labor_class_normalized),
+            "labor_class_normalized": _to_text(
+                None if record.uses_fallback_labor_mapping_source() else record.labor_class_normalized
+            ),
             "equipment_description": _to_text(record.equipment_description),
             "hours": _to_text(record.hours),
             "hour_type": _to_text(record.hour_type),

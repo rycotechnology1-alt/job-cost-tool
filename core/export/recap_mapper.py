@@ -9,10 +9,9 @@ from typing import Any, Optional
 
 from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PERMIT, SUBCONTRACTOR, Record
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PERMIT, POLICE_DETAIL, SUBCONTRACTOR, Record
 from job_cost_tool.core.phase_codes import canonicalize_phase_code
 
-POLICE_DETAIL = "police_detail"
 _ALLOWED_HOUR_TYPES = {"ST", "OT", "DT"}
 _SUPPORTED_FAMILIES = {LABOR, EQUIPMENT, MATERIAL, SUBCONTRACTOR, PERMIT, POLICE_DETAIL}
 
@@ -365,14 +364,22 @@ def _build_subcontractor_values(records: list[Record]) -> list[dict[str, Any]]:
 
 
 def _build_permit_values(records: list[Record]) -> list[dict[str, Any]]:
-    """Group permit and fee records into recap rows."""
+    """Group permit and fee records into recap rows.
+
+    Permit rows should prefer a parsed vendor/display name when one exists.
+    Raw description remains the conservative fallback for traceability when a
+    permit-style record does not carry a usable vendor name.
+    """
     grouped_values: OrderedDict[str, Decimal] = OrderedDict()
 
     for record in records:
         if _infer_list_section(record) != "permits_fees":
             continue
 
-        description = (record.raw_description or "").strip()
+        description = (
+            (record.vendor_name_normalized or record.vendor_name or "").strip()
+            or (record.raw_description or "").strip()
+        )
         grouped_values.setdefault(description, Decimal("0"))
         grouped_values[description] += Decimal(str(record.cost))
 
@@ -383,14 +390,22 @@ def _build_permit_values(records: list[Record]) -> list[dict[str, Any]]:
 
 
 def _build_police_values(records: list[Record]) -> list[dict[str, Any]]:
-    """Group police-detail records into recap rows."""
+    """Group police-detail records into recap rows.
+
+    Police-detail rows should prefer a parsed vendor/display name when one
+    exists. Raw description remains the conservative fallback when vendor data
+    is unavailable.
+    """
     grouped_values: OrderedDict[str, Decimal] = OrderedDict()
 
     for record in records:
         if _infer_list_section(record) != POLICE_DETAIL:
             continue
 
-        description = (record.raw_description or "").strip()
+        description = (
+            (record.vendor_name_normalized or record.vendor_name or "").strip()
+            or (record.raw_description or "").strip()
+        )
         grouped_values.setdefault(description, Decimal("0"))
         grouped_values[description] += Decimal(str(record.cost))
 

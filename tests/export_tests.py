@@ -10,7 +10,7 @@ from unittest.mock import patch
 from openpyxl import Workbook, load_workbook
 
 import job_cost_tool.core.export.recap_mapper as recap_mapper
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, SUBCONTRACTOR, Record
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, PERMIT, POLICE_DETAIL, SUBCONTRACTOR, Record
 from job_cost_tool.services.export_service import export_records_to_recap
 from job_cost_tool.services.validation_service import validate_records
 
@@ -425,6 +425,74 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertIsNone(worksheet["B46"].value)
         self.assertEqual(worksheet["C46"].value, 6000)
 
+    def test_export_routes_phase_50_point_1_permit_records_to_permits_fees_section(self) -> None:
+        records = [
+            self._permit_record(
+                phase_code="50 .1",
+                description="408 Bank of America BOA 3-2-26 / TR# 8 / 0 / APCo: 2 BOA 1446 3-2-26",
+                cost=1293.39,
+                vendor_name="Bank of America BOA",
+            )
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["A55"].value, "Bank of America BOA")
+        self.assertEqual(worksheet["C55"].value, 1293.39)
+        self.assertIsNone(worksheet["G27"].value)
+        self.assertIsNone(worksheet["H27"].value)
+
+    def test_export_uses_raw_description_for_permit_rows_only_when_vendor_is_missing(self) -> None:
+        records = [
+            self._permit_record(
+                phase_code="50 .1",
+                description="City Permit 12345",
+                cost=250.0,
+                vendor_name=None,
+            )
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["A55"].value, "City Permit 12345")
+        self.assertEqual(worksheet["C55"].value, 250)
+
+    def test_export_routes_phase_50_point_2_police_records_to_police_detail_section(self) -> None:
+        records = [
+            self._police_detail_record(
+                phase_code="50 .2",
+                description="22714 Project Flagging LLC 63164 / TR# 163 / 0 / APCo: 1 Flagging - 220108",
+                cost=922.50,
+                vendor_name="Project Flagging LLC",
+            )
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["A61"].value, "Project Flagging LLC")
+        self.assertEqual(worksheet["C61"].value, 922.5)
+        self.assertIsNone(worksheet["G27"].value)
+        self.assertIsNone(worksheet["H27"].value)
+
+    def test_export_uses_raw_description_for_police_rows_only_when_vendor_is_missing(self) -> None:
+        records = [
+            self._police_detail_record(
+                phase_code="50 .2",
+                description="Police Detail Ticket 7788",
+                cost=175.0,
+                vendor_name=None,
+            )
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["A61"].value, "Police Detail Ticket 7788")
+        self.assertEqual(worksheet["C61"].value, 175)
+
     def test_export_collapses_material_vendor_overflow_into_additional_vendors(self) -> None:
         records = [
             self._material_record(vendor=f"Vendor {index}", cost=10 + index)
@@ -763,6 +831,55 @@ class ExportWorkflowTests(unittest.TestCase):
             vendor_name_normalized=vendor,
         )
 
+    def _permit_record(self, phase_code: str, description: str, cost: float, vendor_name: str | None = "Bank of America") -> Record:
+        return Record(
+            record_type=PERMIT,
+            phase_code=phase_code,
+            raw_description=description,
+            cost=cost,
+            hours=0.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=vendor_name,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="Permit source",
+            record_type_normalized=PERMIT,
+            recap_labor_classification=None,
+            vendor_name_normalized=vendor_name,
+        )
+
+    def _police_detail_record(self, phase_code: str, description: str, cost: float, vendor_name: str | None = "Project Flagging LLC") -> Record:
+        return Record(
+            record_type=POLICE_DETAIL,
+            phase_code=phase_code,
+            raw_description=description,
+            cost=cost,
+            hours=0.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=vendor_name,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="Police detail source",
+            record_type_normalized=POLICE_DETAIL,
+            recap_labor_classification=None,
+            vendor_name_normalized=vendor_name,
+        )
 
 if __name__ == "__main__":
     unittest.main()

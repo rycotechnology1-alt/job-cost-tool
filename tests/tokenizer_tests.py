@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PERMIT, POLICE_DETAIL
 from job_cost_tool.core.parsing.tokenizer import tokenize_detail_line, tokenize_pr_line
 
 
@@ -82,6 +82,42 @@ class TokenizerTests(unittest.TestCase):
         self.assertIsNone(result["equipment_description"])
         self.assertEqual(result["line_family"], LABOR)
 
+    def test_labor_line_without_structured_class_still_keeps_raw_description_for_fallback_mapping(self) -> None:
+        line = "PR 03/02/26 1.00 / 186 / Culhane , John P5 Regular Earnings 8.00 ST 701.66"
+
+        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase_context", return_value=LABOR):
+            result = tokenize_detail_line(line, transaction_type=None, phase_code="21", phase_name_raw="Labor-Multi-Trade")
+
+        self.assertEqual(result["transaction_type"], "PR")
+        self.assertEqual(result["line_family"], LABOR)
+        self.assertEqual(result["raw_description"], "1.00 / 186 / Culhane , John P5 Regular Earnings")
+        self.assertEqual(result["employee_id"], "186")
+        self.assertEqual(result["employee_name"], "Culhane , John P")
+        self.assertIsNone(result["labor_class_raw"])
+        self.assertEqual(result["hours"], 8.0)
+        self.assertEqual(result["hour_type"], "ST")
+        self.assertEqual(result["cost"], 701.66)
+        self.assertIn(
+            "PR labor detail line was recognized but labor class was not parsed cleanly.",
+            result["warnings"],
+        )
+
+    def test_pr_line_under_material_phase_falls_back_to_phase_family_without_ambiguity(self) -> None:
+        line = "PR 03/07/26 1.00 / 557 / Summiel , Devin A18 P/Diem Reimb 0.00 ST 200.00"
+
+        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase_context", return_value=MATERIAL):
+            result = tokenize_detail_line(line, transaction_type=None, phase_code="50", phase_name_raw="Other Job Cost")
+
+        self.assertEqual(result["transaction_type"], "PR")
+        self.assertEqual(result["line_family"], MATERIAL)
+        self.assertEqual(result["raw_description"], "1.00 / 557 / Summiel , Devin A18 P/Diem Reimb")
+        self.assertEqual(result["employee_id"], "557")
+        self.assertEqual(result["employee_name"], "Summiel , Devin A18 P/Diem Reimb")
+        self.assertEqual(result["hours"], 0.0)
+        self.assertEqual(result["hour_type"], "ST")
+        self.assertEqual(result["cost"], 200.0)
+        self.assertNotIn("PR detail line family is ambiguous and should be reviewed.", result["warnings"])
+
     def test_ambiguous_non_equipment_tail_does_not_get_equipment_fallback(self) -> None:
         line = "103/F 1.00 / 205 / Unclear Detail Tail"
 
@@ -121,6 +157,34 @@ class TokenizerTests(unittest.TestCase):
         self.assertEqual(result["hours"], 0.0)
         self.assertEqual(result["cost"], -525.0)
         self.assertNotIn("Detail line appears to contain amount tokens but they were not parsed cleanly.", result["warnings"])
+
+    def test_ap_line_under_permits_phase_keeps_vendor_fields_and_permit_family(self) -> None:
+        line = "AP 03/02/26 408 Bank of America BOA 3-2-26 / TR# 8 / 0 / APCo: 2 BOA 1446 3-2-26 0.00 1,293.39"
+
+        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase_context", return_value=PERMIT):
+            result = tokenize_detail_line(line, transaction_type=None, phase_code="50 .1", phase_name_raw="Permits & Fees")
+
+        self.assertEqual(result["transaction_type"], "AP")
+        self.assertEqual(result["line_family"], PERMIT)
+        self.assertEqual(result["vendor_id_raw"], "408")
+        self.assertEqual(result["vendor_name"], "Bank of America BOA")
+        self.assertEqual(result["raw_description"], "408 Bank of America BOA 3-2-26 / TR# 8 / 0 / APCo: 2 BOA 1446 3-2-26")
+        self.assertEqual(result["hours"], 0.0)
+        self.assertEqual(result["cost"], 1293.39)
+
+    def test_ap_line_under_police_detail_phase_keeps_vendor_fields_and_police_family(self) -> None:
+        line = "AP 03/02/26 22714 Project Flagging LLC 63164 / TR# 163 / 0 / APCo: 1 Flagging - 220108 0.00 922.50"
+
+        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase_context", return_value=POLICE_DETAIL):
+            result = tokenize_detail_line(line, transaction_type=None, phase_code="50 .2", phase_name_raw="Police Details")
+
+        self.assertEqual(result["transaction_type"], "AP")
+        self.assertEqual(result["line_family"], POLICE_DETAIL)
+        self.assertEqual(result["vendor_id_raw"], "22714")
+        self.assertEqual(result["vendor_name"], "Project Flagging LLC")
+        self.assertEqual(result["raw_description"], "22714 Project Flagging LLC 63164 / TR# 163 / 0 / APCo: 1 Flagging - 220108")
+        self.assertEqual(result["hours"], 0.0)
+        self.assertEqual(result["cost"], 922.5)
 
     def test_generic_jc_line_uses_phase_family_and_signed_numeric_columns(self) -> None:
         line = "JC 01/07/26 Jay Dondero to 810500 warranty -4.00 -658.45"

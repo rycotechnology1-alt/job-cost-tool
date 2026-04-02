@@ -39,8 +39,13 @@ def normalize_labor_record(record: Record) -> Record:
     labor_mapping = _get_labor_mapping()
     target_classifications = _get_target_labor_classifications()
 
-    labor_raw_key = _derive_labor_raw_key(record)
-    labor_class_normalized = _canonicalize_raw_labor_class(record.labor_class_raw)
+    labor_class_raw_value, used_raw_description_fallback = _resolve_labor_class_source(record)
+    labor_raw_key = _derive_labor_raw_key(
+        record,
+        labor_class_raw_value,
+        allow_union_prefix=not used_raw_description_fallback,
+    )
+    labor_class_normalized = _canonicalize_raw_labor_class(labor_class_raw_value)
     raw_target_label, raw_mapping_state = _map_raw_key_to_target_classification(
         labor_raw_key=labor_raw_key,
         labor_mapping=labor_mapping,
@@ -55,7 +60,7 @@ def normalize_labor_record(record: Record) -> Record:
         if slot_id is None:
             raw_mapping_state = "inactive"
 
-    if record.labor_class_raw is None or not str(record.labor_class_raw).strip():
+    if labor_class_raw_value is None or not str(labor_class_raw_value).strip():
         warnings.append("Labor record is missing a raw labor class for recap mapping.")
     elif raw_mapping_state == "missing" and labor_raw_key:
         warnings.append(
@@ -73,6 +78,7 @@ def normalize_labor_record(record: Record) -> Record:
     return replace(
         record,
         record_type_normalized=LABOR,
+        labor_class_raw=labor_class_raw_value,
         labor_class_normalized=labor_class_normalized,
         recap_labor_slot_id=slot_id,
         recap_labor_classification=recap_labor_classification,
@@ -81,17 +87,39 @@ def normalize_labor_record(record: Record) -> Record:
     )
 
 
-def _derive_labor_raw_key(record: Record) -> Optional[str]:
+def _derive_labor_raw_key(
+    record: Record,
+    labor_class_raw_value: Optional[str],
+    *,
+    allow_union_prefix: bool = True,
+) -> Optional[str]:
     """Build the exact labor raw key used for direct raw-mapping lookups."""
-    raw_labor_class = str(record.labor_class_raw or "").strip()
+    raw_labor_class = str(labor_class_raw_value or "").strip()
     if not raw_labor_class:
         return None
 
     canonical_labor_class = _canonicalize_token(raw_labor_class)
     union_code = str(record.union_code or "").strip()
-    if union_code:
+    if allow_union_prefix and union_code:
         return f"{_canonicalize_token(union_code)}/{canonical_labor_class}"
     return canonical_labor_class or None
+
+
+
+def _resolve_labor_class_source(record: Record) -> tuple[Optional[str], bool]:
+    """Return the best available raw labor mapping source for a labor record."""
+    parsed_labor_class = str(record.labor_class_raw or "").strip()
+    if parsed_labor_class:
+        return parsed_labor_class, False
+
+    has_meaningful_labor_detail = bool(
+        str(record.employee_id or "").strip() or str(record.employee_name or "").strip()
+    )
+    fallback_raw_description = str(record.raw_description or "").strip()
+    if has_meaningful_labor_detail and fallback_raw_description:
+        return fallback_raw_description, True
+
+    return None, False
 
 
 

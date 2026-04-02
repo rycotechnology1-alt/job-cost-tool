@@ -6,11 +6,12 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, SUBCONTRACTOR, Record
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, PERMIT, POLICE_DETAIL, SUBCONTRACTOR, Record
 from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
 from job_cost_tool.core.normalization.equipment_normalizer import normalize_equipment_record
 from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
 from job_cost_tool.core.normalization.normalizer import normalize_records
+from job_cost_tool.core.parsing.tokenizer import tokenize_detail_line
 from job_cost_tool.services.validation_service import validate_records
 
 
@@ -295,6 +296,168 @@ class NormalizationRuleTests(unittest.TestCase):
 
         self.assertIsNone(normalized_record.recap_labor_classification)
         self.assertTrue(any("not active" in warning.casefold() for warning in normalized_record.warnings))
+
+    def test_missing_parsed_labor_class_falls_back_to_raw_description_for_mapping(self) -> None:
+        record = Record(
+            record_type=LABOR,
+            phase_code="21",
+            raw_description="1.00 / 186 / Culhane , John P5 Regular Earnings",
+            cost=701.66,
+            hours=8.0,
+            hour_type="ST",
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.6,
+            warnings=["PR labor detail line was recognized but labor class was not parsed cleanly."],
+            employee_id="186",
+            employee_name="Culhane , John",
+            phase_name_raw="Labor-Multi-Trade",
+            source_page=4,
+            source_line_text="PR 03/02/26 1.00 / 186 / Culhane , John P5 Regular Earnings 8.00 ST 701.66",
+        )
+
+        fallback_raw_key = "1.00 / 186 / CULHANE , JOHN P5 REGULAR EARNINGS"
+        with patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            return_value={
+                "raw_mappings": {fallback_raw_key: "21 Labor Fallback"},
+            },
+        ), patch(
+            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            return_value={
+                "classifications": ["21 Labor Fallback"],
+                "slots": [{"slot_id": "labor_1", "label": "21 Labor Fallback", "active": True}],
+            },
+        ):
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+            normalized_record = normalize_labor_record(record)
+            normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
+            normalize_labor_record.__globals__["_get_target_labor_classifications"].cache_clear()
+            normalize_labor_record.__globals__["_get_active_labor_slot_lookup"].cache_clear()
+
+        self.assertEqual(normalized_record.record_type_normalized, LABOR)
+        self.assertEqual(normalized_record.hours, 8.0)
+        self.assertEqual(normalized_record.hour_type, "ST")
+        self.assertEqual(normalized_record.cost, 701.66)
+        self.assertEqual(normalized_record.labor_class_raw, "1.00 / 186 / Culhane , John P5 Regular Earnings")
+        self.assertEqual(normalized_record.labor_class_normalized, fallback_raw_key)
+        self.assertEqual(normalized_record.recap_labor_classification, "21 Labor Fallback")
+        self.assertEqual(normalized_record.recap_labor_slot_id, "labor_1")
+        self.assertIn(
+            "PR labor detail line was recognized but labor class was not parsed cleanly.",
+            normalized_record.warnings,
+        )
+        self.assertFalse(any("missing a raw labor class" in warning.casefold() for warning in normalized_record.warnings))
+
+    def test_phase_50_point_1_normalizes_to_permit_instead_of_material(self) -> None:
+        record = Record(
+            record_type=PERMIT,
+            phase_code="50 .1",
+            raw_description="408 Bank of America BOA 3-2-26 / TR# 8 / 0 / APCo: 2 BOA 1446 3-2-26",
+            cost=1293.39,
+            hours=0.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name="Bank of America",
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            phase_name_raw="Permits & Fees",
+            vendor_id_raw="408",
+            source_page=1,
+            source_line_text="AP 03/02/26 408 Bank of America BOA 3-2-26 / TR# 8 / 0 / APCo: 2 BOA 1446 3-2-26 0.00 1,293.39",
+        )
+
+        normalized_records = normalize_records([record])
+        self.assertEqual(len(normalized_records), 1)
+        normalized_record = normalized_records[0]
+
+        self.assertEqual(normalized_record.record_type, PERMIT)
+        self.assertEqual(normalized_record.record_type_normalized, PERMIT)
+        self.assertEqual(normalized_record.phase_code, "50 .1")
+        self.assertEqual(normalized_record.phase_name_raw, "Permits & Fees")
+        self.assertEqual(normalized_record.vendor_name, "Bank of America")
+        self.assertEqual(normalized_record.cost, 1293.39)
+
+    def test_phase_50_point_2_normalizes_to_police_detail_instead_of_material(self) -> None:
+        record = Record(
+            record_type=POLICE_DETAIL,
+            phase_code="50 .2",
+            raw_description="22714 Project Flagging LLC 63164 / TR# 163 / 0 / APCo: 1 Flagging - 220108",
+            cost=922.5,
+            hours=0.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name="Project Flagging LLC",
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            phase_name_raw="Police Details",
+            vendor_id_raw="22714",
+            source_page=1,
+            source_line_text="AP 03/02/26 22714 Project Flagging LLC 63164 / TR# 163 / 0 / APCo: 1 Flagging - 220108 0.00 922.50",
+        )
+
+        normalized_records = normalize_records([record])
+        self.assertEqual(len(normalized_records), 1)
+        normalized_record = normalized_records[0]
+
+        self.assertEqual(normalized_record.record_type, POLICE_DETAIL)
+        self.assertEqual(normalized_record.record_type_normalized, POLICE_DETAIL)
+        self.assertEqual(normalized_record.phase_code, "50 .2")
+        self.assertEqual(normalized_record.phase_name_raw, "Police Details")
+        self.assertEqual(normalized_record.vendor_name, "Project Flagging LLC")
+        self.assertEqual(normalized_record.cost, 922.5)
+
+    def test_phase_50_other_job_cost_pr_line_can_validate_after_vendor_correction(self) -> None:
+        line = "PR 03/07/26 1.00 / 557 / Summiel , Devin A18 P/Diem Reimb 0.00 ST 200.00"
+
+        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase_context", return_value=MATERIAL):
+            tokenized = tokenize_detail_line(line, transaction_type=None, phase_code="50", phase_name_raw="Other Job Cost")
+
+        record = Record(
+            record_type=tokenized["line_family"],
+            phase_code="50",
+            raw_description=tokenized["raw_description"],
+            cost=tokenized["cost"],
+            hours=tokenized["hours"],
+            hour_type=tokenized["hour_type"],
+            union_code=tokenized["union_code"],
+            labor_class_raw=tokenized["labor_class_raw"],
+            labor_class_normalized=None,
+            vendor_name=tokenized["vendor_name"],
+            equipment_description=tokenized["equipment_description"],
+            equipment_category=None,
+            confidence=0.6,
+            warnings=tokenized["warnings"],
+            phase_name_raw="Other Job Cost",
+            employee_id=tokenized["employee_id"],
+            employee_name=tokenized["employee_name"],
+            vendor_id_raw=tokenized["vendor_id_raw"],
+            source_page=1,
+            source_line_text=line,
+        )
+
+        normalized_record = normalize_records([record])[0]
+        corrected_record = replace(normalized_record, vendor_name_normalized="P/Diam")
+        validated_records, blocking_issues = validate_records([corrected_record])
+
+        self.assertEqual(normalized_record.record_type_normalized, MATERIAL)
+        self.assertEqual(validated_records[0].record_type_normalized, MATERIAL)
+        self.assertEqual(blocking_issues, [])
+        self.assertFalse(any("ambiguous" in warning.casefold() for warning in validated_records[0].warnings))
 
     def test_missing_labor_class_raw_still_warns_appropriately(self) -> None:
         record = Record(
