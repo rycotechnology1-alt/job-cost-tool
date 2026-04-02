@@ -343,6 +343,20 @@ Use this section for features or decisions that should not be overbuilt in the d
 # 6) Architecture decisions
 Record important decisions briefly. Add newest items at the top.
 
+### [2026-04-01] Default omission stays a review-state policy driven by canonical phase codes
+- **Decision:** Default omit rules are stored in profile config, matched through one shared phase-code canonicalization helper, and applied only when building the review dataset by setting the existing `is_omitted` flag.
+- **Reason:** This keeps records preserved and manually reversible, avoids hard-coded billing policy in parser/normalizer/export logic, and gives settings/UI a clean config-backed surface.
+- **Impact on desktop MVP:** Users can manage default-omitted phases in Settings without editing JSON by hand, while reprocess still rebuilds from parser + normalization + profile defaults.
+- **Impact on future web product:** Improves reuse by centralizing phase-code identity and keeping omission policy in profile/workflow config rather than in desktop widgets.
+- **Follow-up:** If users need broader phase pick-lists later, add an optional profile phase catalog instead of making ad hoc spreadsheets a runtime dependency.
+
+### [2026-04-01] Company-wide phase reference data lives outside profile-specific omit policy
+- **Decision:** Shared phase codes and names are loaded from one app-wide phase catalog, while `review_rules.json` remains profile-scoped behavior that stores canonical phase-code rules only.
+- **Reason:** Phase identity is reference data for the whole company, but omission defaults are profile-level workflow policy; keeping them separate avoids mixing company-wide lookup data into per-profile config or relying on currently observed PDFs.
+- **Impact on desktop MVP:** Users can edit omitted-by-default phases from a complete named pick-list before any report is loaded, while profiles still control which phases start omitted.
+- **Impact on future web product:** Improves reuse by cleanly separating shared reference data from profile behavior, which maps better to future admin/config services.
+- **Follow-up:** If users need to maintain the company-wide phase list in-app later, add a small shared catalog admin path rather than duplicating the list into each profile.
+
 ## Template
 ### [YYYY-MM-DD] Decision title
 - **Decision:**  
@@ -354,7 +368,22 @@ Record important decisions briefly. Add newest items at the top.
 ---
 
 # 7) Recent meaningful changes
-This section should only include meaningful product/architecture changes, not every edit.
+
+### [2026-04-01] Default-omit settings now use shared phase-code canonicalization
+- **What changed:** Added a shared `phase_codes` helper used by parser header extraction, phase-mapping config loading, normalization fallback, review default-omit matching, and the new lightweight Settings tab for editing `review_rules.json` default omit phase rules.
+- **Why:** Dotted phase variants such as `29 .999.` and `13 .25 .` need one canonical representation so profile-driven omission stays reliable and users can manage omitted-by-default phases without hard-coded policy logic.
+- **Area:** Core engine / Application services / Desktop UI / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that some phase choices in Settings may still need manual entry if they are not present in the current profile config or observed review dataset, though the editor now supports that safely through canonicalized phase codes.
+- **Follow-up needed:** Consider an optional profile-backed phase catalog later if users need a fuller preloaded phase pick-list than observed/configured phases provide today.
+
+### [2026-04-01] Default-omit settings now source phases from a shared master catalog
+- **What changed:** Added a shared `phase_catalog.json` reference config and updated the Default Omit settings editor to source canonical phase codes and names from that catalog before merging saved rules or observed report phases.
+- **Why:** Phase codes and names are company-wide reference data, while default omission remains profile-specific policy, so the settings pick-list needed to stop depending on per-profile phase mappings or currently loaded PDFs.
+- **Area:** Core engine / Application services / Desktop UI / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that the shared catalog can drift from company practice if not maintained, though the UI still preserves saved or observed codes as safe fallbacks.
+- **Follow-up needed:** If phase reference data eventually needs admin editing, add a dedicated shared catalog editor rather than pushing company-wide phase lists into profile bundles.
 
 ## Template
 ### [YYYY-MM-DD] Change title

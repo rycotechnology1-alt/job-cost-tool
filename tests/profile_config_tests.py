@@ -87,6 +87,16 @@ class ProfileConfigTests(unittest.TestCase):
         )
         (TEST_ROOT / "profiles" / "default" / "recap_template.xlsx").write_bytes(b"template")
         self._write_json(self.settings_path, {"active_profile": "default"})
+        self._write_json(
+            TEST_ROOT / "legacy_config" / "phase_catalog.json",
+            {
+                "phases": [
+                    {"phase_code": "29 .   .", "phase_name": "Market Recovery"},
+                    {"phase_code": "29 .999.", "phase_name": "Labor-Non-Job Related Time"},
+                    {"phase_code": "50 .15 .", "phase_name": "Utility Service Connections"},
+                ]
+            },
+        )
 
     def tearDown(self) -> None:
         shutil.rmtree(TEST_ROOT, ignore_errors=True)
@@ -102,12 +112,25 @@ class ProfileConfigTests(unittest.TestCase):
 
     def test_config_loader_reads_active_profile_bundle(self) -> None:
         manager = self._build_manager()
-        loader = ConfigLoader(config_dir=manager.get_active_profile_dir())
+        loader = ConfigLoader(
+            config_dir=manager.get_active_profile_dir(),
+            legacy_config_dir=TEST_ROOT / "legacy_config",
+        )
 
         self.assertEqual(loader.get_target_labor_classifications()["classifications"], ["103 Journeyman"])
         self.assertEqual(loader.get_labor_slots()["slots"][0]["slot_id"], "labor_1")
         self.assertEqual(loader.get_rates(), {"labor_rates": {}, "equipment_rates": {}})
         self.assertEqual(loader.get_review_rules(), {"default_omit_rules": []})
+        self.assertEqual(
+            loader.get_phase_catalog(),
+            {
+                "phases": [
+                    {"phase_code": "29", "phase_name": "Market Recovery"},
+                    {"phase_code": "29 .999", "phase_name": "Labor-Non-Job Related Time"},
+                    {"phase_code": "50 .15", "phase_name": "Utility Service Connections"},
+                ]
+            },
+        )
         self.assertEqual(loader.get_template_path(), (TEST_ROOT / "profiles" / "default" / "recap_template.xlsx").resolve())
 
     def test_config_loader_normalizes_default_omit_rules_by_phase_code(self) -> None:
@@ -115,7 +138,7 @@ class ProfileConfigTests(unittest.TestCase):
             TEST_ROOT / "profiles" / "default" / "review_rules.json",
             {
                 "default_omit_rules": [
-                    {"phase_code": " 29   .999 "},
+                    {"phase_code": " 29 .999. "},
                     {"phase_code": "29 .999"},
                     {"phase_code": ""},
                     {},
@@ -123,9 +146,58 @@ class ProfileConfigTests(unittest.TestCase):
             },
         )
 
-        loader = ConfigLoader(config_dir=(TEST_ROOT / "profiles" / "default"))
+        loader = ConfigLoader(
+            config_dir=(TEST_ROOT / "profiles" / "default"),
+            legacy_config_dir=TEST_ROOT / "legacy_config",
+        )
 
         self.assertEqual(loader.get_review_rules(), {"default_omit_rules": [{"phase_code": "29 .999"}]})
+
+    def test_config_loader_canonicalizes_phase_mapping_keys(self) -> None:
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "phase_mapping.json",
+            {"29 .   .": "MATERIAL", "29 .999.": "LABOR", "13 .25 .": "MATERIAL"},
+        )
+
+        loader = ConfigLoader(
+            config_dir=(TEST_ROOT / "profiles" / "default"),
+            legacy_config_dir=TEST_ROOT / "legacy_config",
+        )
+
+        self.assertEqual(
+            loader.get_phase_mapping(),
+            {"29": "MATERIAL", "29 .999": "LABOR", "13 .25": "MATERIAL"},
+        )
+
+    def test_config_loader_canonicalizes_shared_phase_catalog_rows(self) -> None:
+        self._write_json(
+            TEST_ROOT / "legacy_config" / "phase_catalog.json",
+            {
+                "phases": [
+                    {"phase_code": "13 .25 .", "phase_name": "Material-Transfer"},
+                    {"phase_code": "13 .5  .", "phase_name": "Freight In"},
+                    {"phase_code": "29 .   .", "phase_name": "Market Recovery"},
+                    {"phase_code": "29 .999.", "phase_name": "Labor-Non-Job Related Time"},
+                ]
+            },
+        )
+
+        loader = ConfigLoader(
+            config_dir=(TEST_ROOT / "profiles" / "default"),
+            legacy_config_dir=TEST_ROOT / "legacy_config",
+        )
+
+        self.assertEqual(
+            loader.get_phase_catalog(),
+            {
+                "phases": [
+                    {"phase_code": "13 .25", "phase_name": "Material-Transfer"},
+                    {"phase_code": "13 .5", "phase_name": "Freight In"},
+                    {"phase_code": "29", "phase_name": "Market Recovery"},
+                    {"phase_code": "29 .999", "phase_name": "Labor-Non-Job Related Time"},
+                ]
+            },
+        )
 
     def test_profile_manager_can_duplicate_and_switch_profile(self) -> None:
         manager = self._build_manager()
@@ -212,6 +284,85 @@ class ProfileConfigTests(unittest.TestCase):
             self.assertFalse(view_model.is_active_profile_editable)
             self.assertTrue(view_model.is_default_profile_locked)
 
+    def test_settings_view_model_saves_default_omit_rules_with_canonical_phase_codes(self) -> None:
+        manager = self._build_manager()
+        manager.duplicate_profile(
+            source_profile_name="default",
+            new_profile_name="editable_profile",
+            display_name="Editable Profile",
+            description="Editable clone",
+        )
+        manager.set_active_profile("editable_profile")
+
+        self._write_json(
+            TEST_ROOT / "legacy_config" / "phase_catalog.json",
+            {
+                "phases": [
+                    {"phase_code": "13 .25 .", "phase_name": "Material-Transfer"},
+                    {"phase_code": "29 .   .", "phase_name": "Market Recovery"},
+                    {"phase_code": "29 .999.", "phase_name": "Labor-Non-Job Related Time"},
+                    {"phase_code": "50 .15 .", "phase_name": "Utility Service Connections"},
+                ]
+            },
+        )
+
+        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager), patch(
+            "job_cost_tool.core.config.config_loader.get_legacy_config_root",
+            return_value=TEST_ROOT / "legacy_config",
+        ):
+            view_model = SettingsViewModel()
+            message = view_model.save_default_omit_rules(
+                [
+                    {"phase_code": " 29 .999. "},
+                    {"phase_code": "13 .25 ."},
+                ]
+            )
+            option_rows = view_model.available_default_omit_phase_options
+            saved_rows = view_model.default_omit_rule_rows
+
+        loader = ConfigLoader(
+            config_dir=(TEST_ROOT / "profiles" / "editable_profile"),
+            legacy_config_dir=TEST_ROOT / "legacy_config",
+        )
+
+        self.assertEqual(
+            message,
+            "Default omit rules saved. Reprocess the current PDF to apply them to loaded records.",
+        )
+        self.assertEqual(
+            loader.get_review_rules(),
+            {"default_omit_rules": [{"phase_code": "29 .999"}, {"phase_code": "13 .25"}]},
+        )
+        self.assertEqual(
+            saved_rows,
+            [
+                {"phase_code": "29 .999", "phase_name": "Labor-Non-Job Related Time"},
+                {"phase_code": "13 .25", "phase_name": "Material-Transfer"},
+            ],
+        )
+        self.assertIn({"phase_code": "13 .25", "phase_name": "Material-Transfer"}, option_rows)
+        self.assertIn({"phase_code": "29", "phase_name": "Market Recovery"}, option_rows)
+        self.assertIn({"phase_code": "29 .999", "phase_name": "Labor-Non-Job Related Time"}, option_rows)
+        self.assertIn({"phase_code": "50 .15", "phase_name": "Utility Service Connections"}, option_rows)
+
+    def test_settings_view_model_uses_shared_phase_catalog_without_loaded_pdf(self) -> None:
+        manager = self._build_manager()
+        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager), patch(
+            "job_cost_tool.core.config.config_loader.get_legacy_config_root",
+            return_value=TEST_ROOT / "legacy_config",
+        ):
+            view_model = SettingsViewModel()
+
+        self.assertIn(
+            {"phase_code": "29", "phase_name": "Market Recovery"},
+            view_model.available_default_omit_phase_options,
+        )
+        self.assertIn(
+            {"phase_code": "29 .999", "phase_name": "Labor-Non-Job Related Time"},
+            view_model.available_default_omit_phase_options,
+        )
+        self.assertEqual(view_model.default_omit_rule_rows, [])
+
     def test_default_profile_cannot_be_deleted_even_when_unlocked(self) -> None:
         manager = self._build_manager()
         manager.set_default_profile_unlocked(True)
@@ -231,7 +382,10 @@ class ProfileConfigTests(unittest.TestCase):
             },
         )
 
-        loader = ConfigLoader(config_dir=(TEST_ROOT / "profiles" / "default"))
+        loader = ConfigLoader(
+            config_dir=(TEST_ROOT / "profiles" / "default"),
+            legacy_config_dir=TEST_ROOT / "legacy_config",
+        )
         labor_mapping = loader.get_labor_mapping()
 
         self.assertEqual(labor_mapping["raw_mappings"], {"103/F": "103 Journeyman"})
@@ -255,7 +409,10 @@ class ProfileConfigTests(unittest.TestCase):
             },
         )
 
-        loader = ConfigLoader(config_dir=(TEST_ROOT / "profiles" / "default"))
+        loader = ConfigLoader(
+            config_dir=(TEST_ROOT / "profiles" / "default"),
+            legacy_config_dir=TEST_ROOT / "legacy_config",
+        )
         equipment_mapping = loader.get_equipment_mapping()
 
         self.assertEqual(equipment_mapping["raw_mappings"], {"FORD F600 BUCKET/MAT HANDLER": "Pick-up Truck"})
@@ -290,7 +447,10 @@ class ProfileConfigTests(unittest.TestCase):
             },
         )
 
-        loader = ConfigLoader(config_dir=(TEST_ROOT / "profiles" / "default"))
+        loader = ConfigLoader(
+            config_dir=(TEST_ROOT / "profiles" / "default"),
+            legacy_config_dir=TEST_ROOT / "legacy_config",
+        )
         slots = loader.get_labor_slots()
 
         self.assertEqual(slots["capacity"], 2)
@@ -523,7 +683,10 @@ class ProfileConfigTests(unittest.TestCase):
             },
         )
 
-        loader = ConfigLoader(config_dir=(TEST_ROOT / "profiles" / "default"))
+        loader = ConfigLoader(
+            config_dir=(TEST_ROOT / "profiles" / "default"),
+            legacy_config_dir=TEST_ROOT / "legacy_config",
+        )
         equipment_mapping = loader.get_equipment_mapping()
 
         self.assertEqual(equipment_mapping["raw_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
@@ -887,7 +1050,7 @@ class ProfileConfigTests(unittest.TestCase):
         loader_class = ConfigLoader
         self._write_json(
             TEST_ROOT / "profiles" / "default" / "review_rules.json",
-            {"default_omit_rules": [{"phase_code": "29 .999"}]},
+            {"default_omit_rules": [{"phase_code": "29 .999."}]},
         )
 
         matching_record = Record(
@@ -964,7 +1127,7 @@ class ProfileConfigTests(unittest.TestCase):
         loader_class = ConfigLoader
         self._write_json(
             TEST_ROOT / "profiles" / "default" / "review_rules.json",
-            {"default_omit_rules": [{"phase_code": "29 .999"}]},
+            {"default_omit_rules": [{"phase_code": "29 .999."}]},
         )
 
         record = Record(
@@ -1215,6 +1378,7 @@ class ProfileConfigTests(unittest.TestCase):
         )
 
     def _write_json(self, path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 

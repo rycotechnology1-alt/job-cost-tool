@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal
 from job_cost_tool.core.config import ConfigLoader, ProfileManager
 from job_cost_tool.core.models.record import Record
 from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
+from job_cost_tool.core.phase_codes import canonicalize_phase_code
 from job_cost_tool.core.review_defaults import apply_default_omit_rules
 from job_cost_tool.services.normalization_service import normalize_records
 from job_cost_tool.services.parsing_service import parse_pdf
@@ -147,6 +148,26 @@ class ReviewViewModel(QObject):
             seen.add(normalized)
             observed_values.append(mapping_key)
         return observed_values
+
+    @property
+    def observed_phase_options(self) -> list[dict[str, str]]:
+        """Return canonicalized observed phase codes and their first-seen names."""
+        observed_rows: list[dict[str, str]] = []
+        index_by_key: dict[str, int] = {}
+        for record in self._review_records:
+            phase_code = canonicalize_phase_code(record.phase_code)
+            if not phase_code:
+                continue
+            phase_name = " ".join(str(record.phase_name_raw or "").strip().split())
+            normalized_key = phase_code.casefold()
+            if normalized_key in index_by_key:
+                existing_row = observed_rows[index_by_key[normalized_key]]
+                if not existing_row["phase_name"] and phase_name:
+                    existing_row["phase_name"] = phase_name
+                continue
+            index_by_key[normalized_key] = len(observed_rows)
+            observed_rows.append({"phase_code": phase_code, "phase_name": phase_name})
+        return observed_rows
 
     def load_pdf(self, file_path: str) -> None:
         """Run the parse-normalize-validate pipeline for a selected PDF."""

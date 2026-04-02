@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.models.record import MATERIAL, Record
+from job_cost_tool.core.phase_codes import canonicalize_phase_code
 
 _EMPLOYEE_EXPENSE_VENDOR = "Employee Expense"
 _REIMBURSEMENT_PATTERN = re.compile(r"\bjob\s+reimb(?:urse(?:ment)?)?\b", re.IGNORECASE)
@@ -53,7 +54,7 @@ def normalize_material_record(record: Record) -> Record:
 
 def _is_employee_reimbursement(record: Record) -> bool:
     """Return True for narrow phase-50 employee reimbursement lines."""
-    if record.phase_code != "50":
+    if canonicalize_phase_code(record.phase_code) != "50":
         return False
     searchable_text = " ".join(
         part for part in (record.raw_description, record.source_line_text) if part

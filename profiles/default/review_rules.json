@@ -2,6 +2,33 @@
   "default_omit_rules": [
     {
       "phase_code": "29 .999"
+    },
+    {
+      "phase_code": "25"
+    },
+    {
+      "phase_code": "29"
+    },
+    {
+      "phase_code": "30"
+    },
+    {
+      "phase_code": "50 .3"
+    },
+    {
+      "phase_code": "50 .5"
+    },
+    {
+      "phase_code": "51"
+    },
+    {
+      "phase_code": "51 .1"
+    },
+    {
+      "phase_code": "59"
+    },
+    {
+      "phase_code": "99"
     }
   ]
 }

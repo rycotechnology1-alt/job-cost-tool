@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, Signal
 from job_cost_tool.core.config import ConfigLoader, ProfileManager
 from job_cost_tool.core.config.classification_slots import build_slot_config_from_rows
 from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
+from job_cost_tool.core.phase_codes import canonicalize_phase_code, phase_code_sort_key
 
 
 
@@ -34,6 +35,9 @@ class SettingsViewModel(QObject):
         self._equipment_classifications: list[str] = []
         self._labor_rate_rows: list[dict[str, str]] = []
         self._equipment_rate_rows: list[dict[str, str]] = []
+        self._default_omit_rule_rows: list[dict[str, str]] = []
+        self._available_default_omit_phase_options: list[dict[str, str]] = []
+        self._observed_phase_options: list[dict[str, str]] = []
         self._observed_labor_raw_values: list[str] = []
         self._observed_equipment_raw_values: list[str] = []
         self.reload()
@@ -114,6 +118,16 @@ class SettingsViewModel(QObject):
         """Return editable equipment rate rows for the active profile."""
         return [dict(row) for row in self._equipment_rate_rows]
 
+    @property
+    def default_omit_rule_rows(self) -> list[dict[str, str]]:
+        """Return editable default-omit phase rules for the active profile."""
+        return [dict(row) for row in self._default_omit_rule_rows]
+
+    @property
+    def available_default_omit_phase_options(self) -> list[dict[str, str]]:
+        """Return known phase-code options for the default-omit editor."""
+        return [dict(row) for row in self._available_default_omit_phase_options]
+
     def reload(self) -> None:
         """Reload profile discovery and active profile config data."""
         self._profiles = self._profile_manager.list_profiles()
@@ -171,6 +185,15 @@ class SettingsViewModel(QObject):
         self.reload()
         return "Default profile has been locked."
 
+    def set_observed_phase_options(self, values: list[dict[str, str]]) -> None:
+        """Update temporary observed phase options used by the default-omit editor."""
+        observed_values = _normalize_phase_option_rows(values)
+        if observed_values == self._observed_phase_options:
+            return
+        self._observed_phase_options = observed_values
+        self._reload_active_profile_config_data()
+        self.state_changed.emit()
+
     def set_observed_labor_raw_values(self, values: list[str]) -> None:
         """Update temporary observed labor raw values used as mapping candidates."""
         observed_values = _dedupe_casefold_preserving_order(values)
@@ -188,6 +211,32 @@ class SettingsViewModel(QObject):
         self._observed_equipment_raw_values = observed_values
         self._reload_active_profile_config_data()
         self.state_changed.emit()
+
+    def save_default_omit_rules(self, rows: list[dict[str, str]]) -> str:
+        """Validate and persist default-omit phase rules for the active profile."""
+        self._ensure_active_profile_is_editable()
+        profile_dir = self._active_profile_dir()
+        loader = ConfigLoader(config_dir=profile_dir)
+        existing_config = loader.get_review_rules()
+
+        saved_rules: list[dict[str, str]] = []
+        seen_phase_codes: set[str] = set()
+        for row in rows:
+            phase_code = canonicalize_phase_code(row.get("phase_code"))
+            if not phase_code:
+                continue
+            normalized_phase_code = phase_code.casefold()
+            if normalized_phase_code in seen_phase_codes:
+                raise ValueError(f"Duplicate default omit phase code '{phase_code}' is not allowed.")
+            seen_phase_codes.add(normalized_phase_code)
+            saved_rules.append({"phase_code": phase_code})
+
+        new_config = dict(existing_config)
+        new_config["default_omit_rules"] = saved_rules
+        _write_json_file(profile_dir / "review_rules.json", new_config)
+        clear_profile_dependent_caches()
+        self.reload()
+        return "Default omit rules saved. Reprocess the current PDF to apply them to loaded records."
 
     def save_labor_mappings(self, rows: list[dict[str, str]]) -> str:
         """Validate and persist labor mapping rows for the active profile."""
@@ -454,6 +503,9 @@ class SettingsViewModel(QObject):
         loader = ConfigLoader(config_dir=profile_dir)
         labor_mapping = loader.get_labor_mapping()
         equipment_mapping = loader.get_equipment_mapping()
+        phase_mapping = loader.get_phase_mapping()
+        phase_catalog = loader.get_phase_catalog()
+        review_rules = loader.get_review_rules()
         rates = loader.get_rates()
 
         labor_slots_config = loader.get_labor_slots()
@@ -478,6 +530,15 @@ class SettingsViewModel(QObject):
         self._equipment_mapping_rows = _build_equipment_mapping_rows(
             equipment_mapping,
             observed_raw_descriptions=self._observed_equipment_raw_values,
+        )
+        self._available_default_omit_phase_options = _build_default_omit_phase_options(
+            catalog_phase_rows=phase_catalog.get("phases", []),
+            saved_rule_rows=review_rules.get("default_omit_rules", []),
+            observed_phase_options=self._observed_phase_options,
+        )
+        self._default_omit_rule_rows = _build_default_omit_rule_rows(
+            review_rules,
+            phase_options=self._available_default_omit_phase_options,
         )
         self._labor_rate_rows = _build_labor_rate_rows(rates, self._labor_classifications)
         self._equipment_rate_rows = _build_equipment_rate_rows(rates, self._equipment_classifications)
@@ -930,6 +991,78 @@ def _build_equipment_rate_rows(rates: dict[str, Any], categories: list[str]) -> 
             rate = raw_entry
         rows.append({"category": category, "rate": _stringify_rate(rate)})
     return rows
+
+
+def _build_default_omit_phase_options(
+    *,
+    catalog_phase_rows: list[dict[str, Any]],
+    saved_rule_rows: list[dict[str, Any]],
+    observed_phase_options: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    """Build deterministic default-omit phase choices from the shared catalog and safe fallback sources."""
+    phase_rows: list[dict[str, str]] = list(catalog_phase_rows or [])
+    phase_rows.extend(observed_phase_options or [])
+    phase_rows.extend(
+        {
+            "phase_code": str(row.get("phase_code", "")).strip(),
+            "phase_name": "",
+        }
+        for row in saved_rule_rows
+        if isinstance(row, dict)
+    )
+    return sorted(_normalize_phase_option_rows(phase_rows), key=lambda row: phase_code_sort_key(row["phase_code"]))
+
+
+def _build_default_omit_rule_rows(
+    review_rules: dict[str, Any],
+    *,
+    phase_options: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Build admin-facing default-omit rule rows with resolved phase names."""
+    rows: list[dict[str, str]] = []
+    phase_name_lookup = {
+        str(row.get("phase_code", "")).strip().casefold(): str(row.get("phase_name", "")).strip()
+        for row in phase_options
+        if str(row.get("phase_code", "")).strip()
+    }
+
+    for rule in review_rules.get("default_omit_rules", []):
+        if not isinstance(rule, dict):
+            continue
+        phase_code = canonicalize_phase_code(rule.get("phase_code"))
+        if not phase_code:
+            continue
+        rows.append(
+            {
+                "phase_code": phase_code,
+                "phase_name": phase_name_lookup.get(phase_code.casefold(), ""),
+            }
+        )
+    return rows
+
+
+def _normalize_phase_option_rows(values: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Canonicalize and dedupe phase options while preserving first-seen order."""
+    normalized_rows: list[dict[str, str]] = []
+    index_by_key: dict[str, int] = {}
+
+    for row in values:
+        if not isinstance(row, dict):
+            continue
+        phase_code = canonicalize_phase_code(row.get("phase_code"))
+        if not phase_code:
+            continue
+        phase_name = " ".join(str(row.get("phase_name", "")).strip().split())
+        normalized_key = phase_code.casefold()
+        if normalized_key in index_by_key:
+            existing_row = normalized_rows[index_by_key[normalized_key]]
+            if not existing_row["phase_name"] and phase_name:
+                existing_row["phase_name"] = phase_name
+            continue
+        index_by_key[normalized_key] = len(normalized_rows)
+        normalized_rows.append({"phase_code": phase_code, "phase_name": phase_name})
+
+    return normalized_rows
 
 
 def _dedupe_casefold_preserving_order(values: list[str]) -> list[str]:

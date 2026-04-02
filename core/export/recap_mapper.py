@@ -10,6 +10,7 @@ from typing import Any, Optional
 from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots
 from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PERMIT, SUBCONTRACTOR, Record
+from job_cost_tool.core.phase_codes import canonicalize_phase_code
 
 POLICE_DETAIL = "police_detail"
 _ALLOWED_HOUR_TYPES = {"ST", "OT", "DT"}
@@ -430,7 +431,10 @@ def _resolve_equipment_slot_id(record: Record) -> Optional[str]:
 def _infer_list_section(record: Record) -> Optional[str]:
     """Infer the recap list section for non-fixed-row export content."""
     family = _normalized_family(record)
-    if family == MATERIAL or (family not in {LABOR, EQUIPMENT, SUBCONTRACTOR, PERMIT, POLICE_DETAIL} and record.phase_code == "50"):
+    if family == MATERIAL or (
+        family not in {LABOR, EQUIPMENT, SUBCONTRACTOR, PERMIT, POLICE_DETAIL}
+        and canonicalize_phase_code(record.phase_code) == "50"
+    ):
         return "materials"
     if family == SUBCONTRACTOR:
         return "subcontractors"

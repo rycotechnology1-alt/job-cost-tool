@@ -44,16 +44,21 @@ class SettingsDialog(QDialog):
         self._delete_button = QPushButton("Delete Profile")
         self._toggle_default_lock_button = QPushButton()
 
+        self._default_omit_rules_table = QTableWidget(0, 2)
         self._labor_mapping_table = QTableWidget(0, 3)
         self._equipment_mapping_table = QTableWidget(0, 2)
         self._labor_classifications_table = QTableWidget(0, 3)
         self._equipment_classifications_table = QTableWidget(0, 3)
         self._labor_rates_table = QTableWidget(0, 4)
         self._equipment_rates_table = QTableWidget(0, 2)
+        self._default_omit_rules_status_label = QLabel()
         self._labor_mapping_status_label = QLabel()
         self._equipment_mapping_status_label = QLabel()
         self._classification_status_label = QLabel()
         self._rates_status_label = QLabel()
+        self._default_omit_rules_add_button = QPushButton("Add")
+        self._default_omit_rules_remove_button = QPushButton("Remove")
+        self._default_omit_rules_save_button = QPushButton("Save")
         self._labor_mapping_add_button = QPushButton("Add")
         self._labor_mapping_remove_button = QPushButton("Remove")
         self._labor_mapping_save_button = QPushButton("Save")
@@ -82,6 +87,7 @@ class SettingsDialog(QDialog):
 
         tabs = QTabWidget()
         tabs.addTab(self._build_profiles_tab(), "Profiles")
+        tabs.addTab(self._build_default_omit_tab(), "Default Omit")
         tabs.addTab(self._build_labor_mapping_tab(), "Labor Mapping")
         tabs.addTab(self._build_equipment_mapping_tab(), "Equipment Mapping")
         tabs.addTab(self._build_classifications_tab(), "Classifications")
@@ -134,6 +140,36 @@ class SettingsDialog(QDialog):
         layout.addWidget(summary_group)
         layout.addWidget(profiles_group, stretch=1)
         layout.addLayout(actions_layout)
+        return tab
+
+    def _build_default_omit_tab(self) -> QWidget:
+        """Build the default-omit phase editor tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        self._default_omit_rules_table.setHorizontalHeaderLabels(["Phase Code", "Phase Name"])
+        self._configure_table(self._default_omit_rules_table)
+        self._default_omit_rules_table.setColumnWidth(0, 180)
+        self._default_omit_rules_table.horizontalHeader().setStretchLastSection(True)
+
+        self._default_omit_rules_status_label.setWordWrap(True)
+        self._default_omit_rules_add_button.clicked.connect(self._add_default_omit_rule_row)
+        self._default_omit_rules_remove_button.clicked.connect(
+            lambda: self._remove_selected_rows(self._default_omit_rules_table)
+        )
+        self._default_omit_rules_save_button.clicked.connect(self._save_default_omit_rules)
+
+        actions = QHBoxLayout()
+        actions.addWidget(self._default_omit_rules_add_button)
+        actions.addWidget(self._default_omit_rules_remove_button)
+        actions.addStretch(1)
+        actions.addWidget(self._default_omit_rules_save_button)
+
+        layout.addWidget(self._default_omit_rules_status_label)
+        layout.addWidget(self._default_omit_rules_table, stretch=1)
+        layout.addLayout(actions)
         return tab
 
     def _build_labor_mapping_tab(self) -> QWidget:
@@ -328,10 +364,15 @@ class SettingsDialog(QDialog):
         """Update temporary observed equipment descriptions used by the mapping editor."""
         self._view_model.set_observed_equipment_raw_values(values)
 
+    def set_observed_phase_options(self, values: list[dict[str, str]]) -> None:
+        """Update temporary observed phase options used by the default-omit editor."""
+        self._view_model.set_observed_phase_options(values)
+
     def _refresh_ui(self) -> None:
         """Refresh summary, available profiles, and editor tabs from the view-model."""
         self._refresh_profile_summary()
         self._refresh_profiles_table()
+        self._refresh_default_omit_rules_table()
         self._refresh_labor_mapping_table()
         self._refresh_equipment_mapping_table()
         self._refresh_classifications_tables()
@@ -373,6 +414,35 @@ class SettingsDialog(QDialog):
             self._profiles_table.selectRow(selected_row)
         elif profiles:
             self._profiles_table.selectRow(0)
+
+    def _refresh_default_omit_rules_table(self) -> None:
+        """Refresh the default-omit phase rule editor table."""
+        rows = self._view_model.default_omit_rule_rows
+        phase_options = self._view_model.available_default_omit_phase_options
+        phase_name_lookup = {
+            str(row.get("phase_code", "")).strip().casefold(): str(row.get("phase_name", "")).strip()
+            for row in phase_options
+            if str(row.get("phase_code", "")).strip()
+        }
+
+        self._clear_table_widgets(self._default_omit_rules_table)
+        self._default_omit_rules_table.clearContents()
+        self._default_omit_rules_table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            phase_code = str(row.get("phase_code", "")).strip()
+            self._set_phase_code_combo_cell(
+                self._default_omit_rules_table,
+                row_index,
+                0,
+                phase_options,
+                phase_code,
+            )
+            self._set_read_only_item(
+                self._default_omit_rules_table,
+                row_index,
+                1,
+                phase_name_lookup.get(phase_code.casefold(), str(row.get("phase_name", "")).strip()),
+            )
 
     def _refresh_labor_mapping_table(self) -> None:
         """Refresh the labor mapping editor table."""
@@ -601,6 +671,21 @@ class SettingsDialog(QDialog):
             success_title="Equipment Mappings Saved",
         )
 
+    def _save_default_omit_rules(self) -> None:
+        """Validate and persist default-omit phase rules."""
+        rows = []
+        for row_index in range(self._default_omit_rules_table.rowCount()):
+            phase_code = self._combo_text(self._default_omit_rules_table, row_index, 0)
+            if not phase_code:
+                continue
+            rows.append({"phase_code": phase_code})
+
+        self._run_save_action(
+            self._view_model.save_default_omit_rules,
+            rows,
+            success_title="Default Omit Rules Saved",
+        )
+
     def _save_classifications(self) -> None:
         """Validate and persist fixed slot edits."""
         labor_slots = self._collect_slot_rows(self._labor_classifications_table)
@@ -676,6 +761,19 @@ class SettingsDialog(QDialog):
         profile_name = first_item.data(Qt.ItemDataRole.UserRole)
         return str(profile_name) if profile_name else None
 
+    def _add_default_omit_rule_row(self) -> None:
+        """Append a new editable default-omit phase row."""
+        row_index = self._default_omit_rules_table.rowCount()
+        self._default_omit_rules_table.insertRow(row_index)
+        self._set_phase_code_combo_cell(
+            self._default_omit_rules_table,
+            row_index,
+            0,
+            self._view_model.available_default_omit_phase_options,
+            "",
+        )
+        self._set_read_only_item(self._default_omit_rules_table, row_index, 1, "")
+
     def _add_labor_mapping_row(self) -> None:
         """Append a new editable labor mapping row."""
         row_index = self._labor_mapping_table.rowCount()
@@ -739,6 +837,15 @@ class SettingsDialog(QDialog):
     def _update_editor_states(self) -> None:
         """Apply default-profile read-only state across all editable admin tabs."""
         self._update_mapping_editor_state(
+            table=self._default_omit_rules_table,
+            status_label=self._default_omit_rules_status_label,
+            add_button=self._default_omit_rules_add_button,
+            remove_button=self._default_omit_rules_remove_button,
+            save_button=self._default_omit_rules_save_button,
+            editable_columns=set(),
+            active_message="Choose phase codes that should start omitted by default for this profile.",
+        )
+        self._update_mapping_editor_state(
             table=self._labor_mapping_table,
             status_label=self._labor_mapping_status_label,
             add_button=self._labor_mapping_add_button,
@@ -766,11 +873,12 @@ class SettingsDialog(QDialog):
         remove_button: QPushButton,
         save_button: QPushButton,
         editable_columns: set[int],
+        active_message: str = "Edit mappings for the active profile.",
     ) -> None:
         """Apply read-only state for a mapping editor table."""
         is_read_only = not self._view_model.is_active_profile_editable
         status_label.setText(
-            self._view_model.read_only_message if is_read_only else "Edit mappings for the active profile."
+            self._view_model.read_only_message if is_read_only else active_message
         )
         add_button.setEnabled(not is_read_only)
         remove_button.setEnabled(not is_read_only)
@@ -906,6 +1014,50 @@ class SettingsDialog(QDialog):
                 }
             )
         return rows
+
+    def _set_phase_code_combo_cell(
+        self,
+        table: QTableWidget,
+        row_index: int,
+        column_index: int,
+        options: list[dict[str, str]],
+        current_text: str,
+    ) -> None:
+        """Set an editable phase-code combo cell and keep the name column in sync."""
+        self._dispose_cell_widget(table, row_index, column_index)
+        combo_box = QComboBox()
+        combo_box.setEditable(True)
+        combo_box.addItem("")
+        option_codes = [str(option.get("phase_code", "")).strip() for option in options if str(option.get("phase_code", "")).strip()]
+        combo_box.addItems(option_codes)
+        if current_text and current_text not in option_codes:
+            combo_box.addItem(current_text)
+        combo_box.setCurrentText(current_text)
+        combo_box.currentTextChanged.connect(lambda _text, combo=combo_box: self._sync_default_omit_phase_name_for_combo(combo))
+        table.setCellWidget(row_index, column_index, combo_box)
+
+    def _sync_default_omit_phase_name_for_combo(self, combo_box: QComboBox) -> None:
+        """Update the phase-name cell next to an editable default-omit phase combo."""
+        row_index = -1
+        for candidate_row in range(self._default_omit_rules_table.rowCount()):
+            if self._default_omit_rules_table.cellWidget(candidate_row, 0) is combo_box:
+                row_index = candidate_row
+                break
+        if row_index < 0:
+            return
+
+        phase_code = combo_box.currentText().strip()
+        phase_name_lookup = {
+            str(row.get("phase_code", "")).strip().casefold(): str(row.get("phase_name", "")).strip()
+            for row in self._view_model.available_default_omit_phase_options
+            if str(row.get("phase_code", "")).strip()
+        }
+        self._set_read_only_item(
+            self._default_omit_rules_table,
+            row_index,
+            1,
+            phase_name_lookup.get(phase_code.casefold(), ""),
+        )
 
     def _set_combo_cell(
         self,

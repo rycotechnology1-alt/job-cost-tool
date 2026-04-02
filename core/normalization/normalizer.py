@@ -1,4 +1,4 @@
-﻿"""Orchestration layer for config-driven record normalization."""
+"""Orchestration layer for config-driven record normalization."""
 
 from __future__ import annotations
 
@@ -11,13 +11,18 @@ from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, 
 from job_cost_tool.core.normalization.equipment_normalizer import normalize_equipment_record
 from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
 from job_cost_tool.core.normalization.material_normalizer import normalize_material_record
+from job_cost_tool.core.phase_codes import canonicalize_phase_code
 
 
 @lru_cache(maxsize=1)
 def _get_phase_mapping() -> dict[str, str]:
     """Return the configured phase-to-record-family mapping."""
     phase_mapping = ConfigLoader().get_phase_mapping()
-    return {str(key): str(value) for key, value in phase_mapping.items()}
+    return {
+        canonical_phase_code: str(value)
+        for key, value in phase_mapping.items()
+        if (canonical_phase_code := canonicalize_phase_code(key))
+    }
 
 
 def normalize_records(records: List[Record]) -> List[Record]:
@@ -53,8 +58,9 @@ def _normalize_record(record: Record) -> Record:
 def _determine_normalized_family(record: Record) -> str:
     """Determine the business family to use during normalization."""
     phase_mapping = _get_phase_mapping()
-    if record.phase_code is not None:
-        mapped_family = _normalize_family_label(phase_mapping.get(record.phase_code))
+    canonical_phase_code = canonicalize_phase_code(record.phase_code)
+    if canonical_phase_code:
+        mapped_family = _normalize_family_label(phase_mapping.get(canonical_phase_code))
         if mapped_family is not None:
             return mapped_family
     return record.record_type or OTHER

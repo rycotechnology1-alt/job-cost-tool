@@ -6,13 +6,9 @@ from dataclasses import replace
 from typing import Any
 
 from job_cost_tool.core.models.record import Record
+from job_cost_tool.core.phase_codes import canonicalize_phase_code
 
 JsonDict = dict[str, Any]
-
-
-def canonicalize_phase_code(value: object) -> str:
-    """Return a conservative normalized phase-code string for rule matching."""
-    return " ".join(str(value or "").strip().split())
 
 
 def normalize_review_rules_config(loaded_config: JsonDict) -> JsonDict:

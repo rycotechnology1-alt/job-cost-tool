@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 
 from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots, normalize_slot_config
 from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
+from job_cost_tool.core.phase_codes import canonicalize_phase_code
 from job_cost_tool.core.review_defaults import normalize_review_rules_config
 from job_cost_tool.core.config.path_utils import get_legacy_config_root
 from job_cost_tool.core.config.profile_manager import ProfileManager
@@ -38,6 +39,9 @@ class ConfigLoader:
     _optional_files: ClassVar[dict[str, str]] = {
         "review_rules": "review_rules.json",
     }
+    _shared_optional_files: ClassVar[dict[str, str]] = {
+        "phase_catalog": "phase_catalog.json",
+    }
     _required_top_level_keys: ClassVar[dict[str, tuple[str, ...]]] = {
         "input_model": ("report_type", "section_headers"),
         "recap_template_map": (
@@ -53,13 +57,18 @@ class ConfigLoader:
     }
     _shared_cache: ClassVar[dict[Path, dict[str, JsonDict]]] = {}
 
-    def __init__(self, config_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        config_dir: Path | None = None,
+        *,
+        legacy_config_dir: Path | None = None,
+    ) -> None:
         """Initialize the loader using an explicit config dir or the active profile."""
         if config_dir is not None:
             self._config_dir = config_dir.resolve()
         else:
             self._config_dir = ProfileManager().get_active_profile_dir()
-        self._legacy_config_dir = get_legacy_config_root().resolve()
+        self._legacy_config_dir = (legacy_config_dir or get_legacy_config_root()).resolve()
         self._cache = self._shared_cache.setdefault(self._config_dir, {})
 
     def load_all_configs(self) -> None:
@@ -139,6 +148,10 @@ class ConfigLoader:
     def get_review_rules(self) -> JsonDict:
         """Return profile-driven review workflow rules such as default omission."""
         return self._load_optional_config("review_rules")
+
+    def get_phase_catalog(self) -> JsonDict:
+        """Return the shared company-wide phase catalog."""
+        return self._load_shared_optional_config("phase_catalog")
 
     def get_active_profile_name(self) -> str:
         """Return the active profile name currently in use."""
@@ -256,6 +269,40 @@ class ConfigLoader:
         self._cache[config_name] = normalized_config
         return normalized_config
 
+    def _load_shared_optional_config(self, config_name: str) -> JsonDict:
+        """Load an optional shared config from the company-wide config directory."""
+        if config_name not in self._shared_optional_files:
+            raise KeyError(f"Unsupported shared optional config name '{config_name}'")
+
+        cache_key = f"shared::{config_name}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        file_name = self._shared_optional_files[config_name]
+        file_path = self._legacy_config_dir / file_name
+        if not file_path.is_file():
+            normalized_default = self._normalize_loaded_config(config_name, {})
+            self._cache[cache_key] = normalized_default
+            return normalized_default
+
+        try:
+            with file_path.open("r", encoding="utf-8-sig") as config_file:
+                loaded_config = json.load(config_file)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Config file '{file_path}' contains invalid JSON: {exc.msg}"
+            ) from exc
+
+        if not isinstance(loaded_config, dict):
+            raise ValueError(
+                f"Config file '{file_path}' must contain a JSON object at the top level"
+            )
+
+        self._validate_top_level_structure(config_name, file_path, loaded_config)
+        normalized_config = self._normalize_loaded_config(config_name, loaded_config)
+        self._cache[cache_key] = normalized_config
+        return normalized_config
+
 
     def _normalize_loaded_config(self, config_name: str, loaded_config: JsonDict) -> JsonDict:
         """Normalize compatible config formats into the app's current in-memory shape."""
@@ -263,6 +310,10 @@ class ConfigLoader:
             return self._normalize_labor_mapping_config(loaded_config)
         if config_name == "equipment_mapping":
             return self._normalize_equipment_mapping_config(loaded_config)
+        if config_name == "phase_mapping":
+            return self._normalize_phase_mapping_config(loaded_config)
+        if config_name == "phase_catalog":
+            return self._normalize_phase_catalog_config(loaded_config)
         if config_name == "review_rules":
             return normalize_review_rules_config(loaded_config)
         if config_name == "target_labor_classifications":
@@ -282,6 +333,43 @@ class ConfigLoader:
                 template_labels=template_labels,
             )
         return loaded_config
+
+    def _normalize_phase_mapping_config(self, loaded_config: JsonDict) -> JsonDict:
+        """Normalize phase-mapping keys to one shared phase-code representation."""
+        normalized_config: JsonDict = {}
+        for phase_code, family in loaded_config.items():
+            canonical_phase_code = canonicalize_phase_code(phase_code)
+            family_text = str(family).strip()
+            if canonical_phase_code and family_text:
+                normalized_config[canonical_phase_code] = family_text
+        return normalized_config
+
+    def _normalize_phase_catalog_config(self, loaded_config: JsonDict) -> JsonDict:
+        """Normalize shared phase-catalog rows to canonical phase codes."""
+        normalized_rows: list[JsonDict] = []
+        seen_phase_codes: set[str] = set()
+
+        raw_rows = loaded_config.get("phases", [])
+        if isinstance(raw_rows, list):
+            for row in raw_rows:
+                if not isinstance(row, dict):
+                    continue
+                phase_code = canonicalize_phase_code(row.get("phase_code"))
+                if not phase_code:
+                    continue
+                phase_name = " ".join(str(row.get("phase_name", "")).strip().split())
+                normalized_key = phase_code.casefold()
+                if normalized_key in seen_phase_codes:
+                    continue
+                seen_phase_codes.add(normalized_key)
+                normalized_rows.append(
+                    {
+                        "phase_code": phase_code,
+                        "phase_name": phase_name,
+                    }
+                )
+
+        return {"phases": normalized_rows}
 
     def _normalize_labor_mapping_config(self, loaded_config: JsonDict) -> JsonDict:
         """Normalize raw-first labor mapping config while tolerating legacy fields."""
@@ -480,6 +568,9 @@ class ConfigLoader:
         elif config_name == "review_rules":
             if "default_omit_rules" in loaded_config:
                 self._validate_key_type(file_path, loaded_config, "default_omit_rules", list, "array")
+        elif config_name == "phase_catalog":
+            if "phases" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "phases", list, "array")
         elif config_name == "input_model":
             self._validate_key_type(file_path, loaded_config, "report_type", str, "string")
             self._validate_key_type(file_path, loaded_config, "section_headers", dict, "object")

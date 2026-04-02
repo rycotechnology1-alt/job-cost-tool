@@ -8,9 +8,10 @@ from typing import Any, Optional
 
 from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, SUBCONTRACTOR
+from job_cost_tool.core.phase_codes import canonicalize_phase_code
 
 _PHASE_HEADER_RE = re.compile(
-    r"^(?P<main_phase>\d{1,3})(?:\s*\.\s*(?P<subphase>\d{1,3}))?(?:\s*\.\s*){1,2}(?P<phase_name>[A-Za-z].+?)\s*$"
+    r"^(?P<phase_code>\d{1,3}(?:\s*\.\s*(?:\d{1,3}\s*)?)+)(?P<phase_name>[A-Za-z].+?)\s*$"
 )
 _TRANSACTION_START_RE = re.compile(r"^(?P<marker>[A-Z]{2})\s+\d{2}/\d{2}/\d{2}\b")
 _PAGE_FOOTER_RE = re.compile(r"\bPage\s+\d+\s+\d{2}/\d{2}/\d{2}\b", re.IGNORECASE)
@@ -46,9 +47,10 @@ def _get_phase_mapping() -> dict[str, str]:
 
     normalized_phase_mapping: dict[str, str] = {}
     for phase_code, family in raw_phase_mapping.items():
+        canonical_phase_code = canonicalize_phase_code(phase_code)
         canonical_family = _normalize_family_label(str(family))
-        if canonical_family is not None:
-            normalized_phase_mapping[str(phase_code)] = canonical_family
+        if canonical_phase_code and canonical_family is not None:
+            normalized_phase_mapping[canonical_phase_code] = canonical_family
     return normalized_phase_mapping
 
 
@@ -129,10 +131,9 @@ def extract_phase_header(line: str) -> Optional[tuple[str, str]]:
     if not match:
         return None
 
-    phase_code = match.group("main_phase")
-    subphase = match.group("subphase")
-    if subphase:
-        phase_code = f"{phase_code} .{subphase}"
+    phase_code = canonicalize_phase_code(match.group("phase_code"))
+    if not phase_code:
+        return None
     return phase_code, match.group("phase_name").strip()
 
 
@@ -178,8 +179,9 @@ def infer_record_type_from_phase_context(
     phase_name: Optional[str],
 ) -> str:
     """Infer a raw family using phase-code mapping first, then phase-name hints."""
-    if phase_code is not None:
-        mapped_family = _get_phase_mapping().get(str(phase_code))
+    canonical_phase_code = canonicalize_phase_code(phase_code)
+    if canonical_phase_code:
+        mapped_family = _get_phase_mapping().get(canonical_phase_code)
         if mapped_family is not None:
             return mapped_family
     return infer_record_type_from_phase(phase_name)

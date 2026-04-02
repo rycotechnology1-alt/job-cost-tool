@@ -1,0 +1,28 @@
+{
+  "phases": [
+    {"phase_code": "10", "phase_name": "Material-Specified Buys"},
+    {"phase_code": "11", "phase_name": "Material-Electrical"},
+    {"phase_code": "12", "phase_name": "Material-Civil"},
+    {"phase_code": "13 .25", "phase_name": "Material-Transfer"},
+    {"phase_code": "13 .5", "phase_name": "Freight In"},
+    {"phase_code": "20", "phase_name": "Labor-Electricians"},
+    {"phase_code": "21", "phase_name": "Labor-Multi-Trade"},
+    {"phase_code": "25", "phase_name": "Labor-Project Mgmt"},
+    {"phase_code": "29", "phase_name": "Market Recovery"},
+    {"phase_code": "29 .999", "phase_name": "Labor-Non-Job Related Time"},
+    {"phase_code": "30", "phase_name": "Equipment Cost-General"},
+    {"phase_code": "31", "phase_name": "Internal Equip. Charges"},
+    {"phase_code": "32", "phase_name": "Outside Equp. Rental"},
+    {"phase_code": "40", "phase_name": "Subcontracted"},
+    {"phase_code": "50", "phase_name": "Other Job Cost"},
+    {"phase_code": "50 .1", "phase_name": "Permits & Fees"},
+    {"phase_code": "50 .15", "phase_name": "Utility Service Connections"},
+    {"phase_code": "50 .2", "phase_name": "Police Details"},
+    {"phase_code": "50 .3", "phase_name": "General Conditions"},
+    {"phase_code": "50 .5", "phase_name": "Legal"},
+    {"phase_code": "51", "phase_name": "Bond Cost"},
+    {"phase_code": "51 .1", "phase_name": "Other Insurances"},
+    {"phase_code": "59", "phase_name": "Cost Contingency"},
+    {"phase_code": "99", "phase_name": "SAGE-Balance Forward"}
+  ]
+}

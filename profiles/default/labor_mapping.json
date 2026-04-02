@@ -7,84 +7,55 @@
     "APP"
   ],
   "raw_mappings": {
-    "104/1 APP": "104 Apprentice",
-    "104/7 APP": "104 Apprentice",
-    "223/JM GG": "104 Lead Lineman",
-    "42/DG": "104 Groundsman",
-    "42/LL": "104 Lead Lineman",
-    "500/LBR-EQU": "104 Groundsman",
-    "500/LBR-MT": "104 Groundsman",
-    "600/STORM B": "104 Equipment Operator",
-    "600/STORM DGM": "104 Groundsman",
-    "7/J": "104 Journeyman LM",
+    "500/LBR-EQUJG": "104 Equipment Operator",
+    "103/10J APP": "103 Apprentice",
     "103/1A APP": "103 Apprentice",
     "103/2B APP": "103 Apprentice",
+    "103/3C APP": "103 Apprentice",
+    "103/4D APP": "103 Apprentice",
+    "103/5E APP": "103 Apprentice",
+    "103/6F APP": "103 Apprentice",
+    "103/7G APP": "103 Apprentice",
     "103/8H APP": "103 Apprentice",
     "103/9I APP": "103 Apprentice",
+    "7/2 APP": "103 Apprentice",
     "103/F": "103 Foreman",
+    "96/F": "103 Foreman",
     "103/GF": "103 General FM",
     "103/J": "103 Journeyman",
+    "96/J": "103 Journeyman",
+    "104/1 APP": "104 Apprentice",
     "104/2 APP": "104 Apprentice",
     "104/5 APP": "104 Apprentice",
+    "104/7 APP": "104 Apprentice",
     "104/EO A": "104 Equipment Operator",
     "104/EO B": "104 Equipment Operator",
+    "600/STORM B": "104 Equipment Operator",
     "104/FM": "104 Foreman",
     "42/F": "104 Foreman",
     "104/GF": "104 General FM",
     "104/DGM": "104 Groundsman",
     "104/GM": "104 Groundsman",
+    "42/DG": "104 Groundsman",
+    "500/LABORER-SK": "104 Groundsman",
+    "500/LBR-EQU": "104 Groundsman",
+    "500/LBR-MT": "104 Groundsman",
+    "600/STORM DGM": "104 Groundsman",
     "104/LM": "104 Journeyman LM",
-    "104/HL": "104 Lead Lineman"
+    "7/J": "104 Journeyman LM",
+    "104/HL": "104 Lead Lineman",
+    "223/JM GG": "104 Lead Lineman",
+    "42/LL": "104 Lead Lineman"
   },
   "saved_mappings": [
     {
-      "raw_value": "104/1 APP",
-      "target_classification": "104 Apprentice",
-      "notes": ""
-    },
-    {
-      "raw_value": "104/7 APP",
-      "target_classification": "104 Apprentice",
-      "notes": ""
-    },
-    {
-      "raw_value": "223/JM GG",
-      "target_classification": "104 Lead Lineman",
-      "notes": ""
-    },
-    {
-      "raw_value": "42/DG",
-      "target_classification": "104 Groundsman",
-      "notes": ""
-    },
-    {
-      "raw_value": "42/LL",
-      "target_classification": "104 Lead Lineman",
-      "notes": ""
-    },
-    {
-      "raw_value": "500/LBR-EQU",
-      "target_classification": "104 Groundsman",
-      "notes": ""
-    },
-    {
-      "raw_value": "500/LBR-MT",
-      "target_classification": "104 Groundsman",
-      "notes": ""
-    },
-    {
-      "raw_value": "600/STORM B",
+      "raw_value": "500/LBR-EQUJG",
       "target_classification": "104 Equipment Operator",
       "notes": ""
     },
     {
-      "raw_value": "600/STORM DGM",
-      "target_classification": "104 Groundsman",
-      "notes": ""
-    },
-    {
-      "raw_value": "7/J",
-      "target_classification": "104 Journeyman LM",
+      "raw_value": "103/10J APP",
+      "target_classification": "103 Apprentice",
       "notes": ""
     },
     {
@@ -94,6 +65,31 @@
     },
     {
       "raw_value": "103/2B APP",
+      "target_classification": "103 Apprentice",
+      "notes": ""
+    },
+    {
+      "raw_value": "103/3C APP",
+      "target_classification": "103 Apprentice",
+      "notes": ""
+    },
+    {
+      "raw_value": "103/4D APP",
+      "target_classification": "103 Apprentice",
+      "notes": ""
+    },
+    {
+      "raw_value": "103/5E APP",
+      "target_classification": "103 Apprentice",
+      "notes": ""
+    },
+    {
+      "raw_value": "103/6F APP",
+      "target_classification": "103 Apprentice",
+      "notes": ""
+    },
+    {
+      "raw_value": "103/7G APP",
       "target_classification": "103 Apprentice",
       "notes": ""
     },
@@ -108,7 +104,17 @@
       "notes": ""
     },
     {
+      "raw_value": "7/2 APP",
+      "target_classification": "103 Apprentice",
+      "notes": ""
+    },
+    {
       "raw_value": "103/F",
+      "target_classification": "103 Foreman",
+      "notes": ""
+    },
+    {
+      "raw_value": "96/F",
       "target_classification": "103 Foreman",
       "notes": ""
     },
@@ -123,6 +129,16 @@
       "notes": ""
     },
     {
+      "raw_value": "96/J",
+      "target_classification": "103 Journeyman",
+      "notes": ""
+    },
+    {
+      "raw_value": "104/1 APP",
+      "target_classification": "104 Apprentice",
+      "notes": ""
+    },
+    {
       "raw_value": "104/2 APP",
       "target_classification": "104 Apprentice",
       "notes": ""
@@ -133,12 +149,22 @@
       "notes": ""
     },
     {
+      "raw_value": "104/7 APP",
+      "target_classification": "104 Apprentice",
+      "notes": ""
+    },
+    {
       "raw_value": "104/EO A",
       "target_classification": "104 Equipment Operator",
       "notes": ""
     },
     {
       "raw_value": "104/EO B",
+      "target_classification": "104 Equipment Operator",
+      "notes": ""
+    },
+    {
+      "raw_value": "600/STORM B",
       "target_classification": "104 Equipment Operator",
       "notes": ""
     },
@@ -168,12 +194,52 @@
       "notes": ""
     },
     {
+      "raw_value": "42/DG",
+      "target_classification": "104 Groundsman",
+      "notes": ""
+    },
+    {
+      "raw_value": "500/LABORER-SK",
+      "target_classification": "104 Groundsman",
+      "notes": ""
+    },
+    {
+      "raw_value": "500/LBR-EQU",
+      "target_classification": "104 Groundsman",
+      "notes": ""
+    },
+    {
+      "raw_value": "500/LBR-MT",
+      "target_classification": "104 Groundsman",
+      "notes": ""
+    },
+    {
+      "raw_value": "600/STORM DGM",
+      "target_classification": "104 Groundsman",
+      "notes": ""
+    },
+    {
       "raw_value": "104/LM",
       "target_classification": "104 Journeyman LM",
       "notes": ""
     },
     {
+      "raw_value": "7/J",
+      "target_classification": "104 Journeyman LM",
+      "notes": ""
+    },
+    {
       "raw_value": "104/HL",
+      "target_classification": "104 Lead Lineman",
+      "notes": ""
+    },
+    {
+      "raw_value": "223/JM GG",
+      "target_classification": "104 Lead Lineman",
+      "notes": ""
+    },
+    {
+      "raw_value": "42/LL",
       "target_classification": "104 Lead Lineman",
       "notes": ""
     }
