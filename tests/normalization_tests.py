@@ -11,6 +11,7 @@ from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
 from job_cost_tool.core.normalization.equipment_normalizer import normalize_equipment_record
 from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
 from job_cost_tool.core.normalization.normalizer import normalize_records
+from job_cost_tool.core.parsing.report_parser import parse_report_pages
 from job_cost_tool.core.parsing.tokenizer import tokenize_detail_line
 from job_cost_tool.services.validation_service import validate_records
 
@@ -457,6 +458,32 @@ class NormalizationRuleTests(unittest.TestCase):
         self.assertEqual(normalized_record.phase_name_raw, "Police Details")
         self.assertEqual(normalized_record.vendor_name, "Project Flagging LLC")
         self.assertEqual(normalized_record.cost, 922.5)
+
+    def test_phase_50_point_15_utility_service_connections_jc_line_normalizes_to_material_without_unresolved_family(self) -> None:
+        pages = [
+            {
+                "page_number": 1,
+                "text": "\n".join(
+                    [
+                        "50 .15 . Utility Service Connections",
+                        "JC 03/06/26 National Grid Refund 0.00 -2,904.00",
+                    ]
+                ),
+            }
+        ]
+
+        parsed_record = parse_report_pages(pages)[0]
+        normalized_record = normalize_records([parsed_record])[0]
+        _, blocking_issues = validate_records([normalized_record])
+
+        self.assertEqual(parsed_record.record_type, MATERIAL)
+        self.assertEqual(parsed_record.phase_code, "50 .15")
+        self.assertEqual(normalized_record.record_type_normalized, MATERIAL)
+        self.assertEqual(normalized_record.cost, -2904.0)
+        self.assertNotIn("Section type is not yet confidently classified.", normalized_record.warnings)
+        self.assertFalse(any("ambiguity" in issue.casefold() for issue in blocking_issues))
+        self.assertFalse(any("unresolved" in issue.casefold() for issue in blocking_issues))
+
 
     def test_phase_50_other_job_cost_pr_line_can_validate_after_vendor_correction(self) -> None:
         line = "PR 03/07/26 1.00 / 557 / Summiel , Devin A18 P/Diem Reimb 0.00 ST 200.00"

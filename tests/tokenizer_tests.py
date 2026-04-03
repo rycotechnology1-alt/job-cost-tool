@@ -186,6 +186,20 @@ class TokenizerTests(unittest.TestCase):
         self.assertEqual(result["hours"], 0.0)
         self.assertEqual(result["cost"], 922.5)
 
+    def test_generic_jc_line_under_utility_service_connections_phase_keeps_material_family(self) -> None:
+        line = "JC 03/06/26 National Grid Refund 0.00 -2,904.00"
+
+        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase_context", return_value=MATERIAL):
+            result = tokenize_detail_line(line, transaction_type=None, phase_code="50 .15", phase_name_raw="Utility Service Connections")
+
+        self.assertEqual(result["transaction_type"], "JC")
+        self.assertEqual(result["line_family"], MATERIAL)
+        self.assertEqual(result["raw_description"], "National Grid Refund")
+        self.assertEqual(result["hours"], 0.0)
+        self.assertEqual(result["cost"], -2904.0)
+        self.assertEqual(result["warnings"], [])
+
+
     def test_generic_jc_line_under_project_management_phase_keeps_project_management_family(self) -> None:
         line = "JC 03/05/26 Bugeted PM Allocation 0.00 20,000.00"
 

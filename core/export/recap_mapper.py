@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
+import os
+import sys
+from collections import Counter, OrderedDict
 from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Optional
@@ -24,6 +26,17 @@ from job_cost_tool.core.phase_codes import canonicalize_phase_code
 
 _ALLOWED_HOUR_TYPES = {"ST", "OT", "DT"}
 _SUPPORTED_FAMILIES = {LABOR, EQUIPMENT, MATERIAL, SUBCONTRACTOR, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT}
+
+
+def _export_debug_enabled() -> bool:
+    """Return True when export debug instrumentation is enabled."""
+    return str(os.getenv("JOB_COST_TOOL_EXPORT_DEBUG") or "").strip().casefold() not in {"", "0", "false", "no", "off"}
+
+
+def _debug_log(message: str) -> None:
+    """Emit guarded export debug logging."""
+    if _export_debug_enabled():
+        print(f"[export-debug][recap_mapper] {message}", file=sys.stderr, flush=True)
 
 
 @lru_cache(maxsize=1)
@@ -91,6 +104,18 @@ def build_recap_payload(records: list[Record]) -> dict[str, Any]:
         raise ValueError("There are no reviewed records available for export.")
 
     included_records = [record for record in records if not record.is_omitted]
+    family_counts = Counter(_normalized_family(record) or "<blank>" for record in included_records)
+    pm_rows = [
+        {
+            "phase": record.phase_code,
+            "family": _normalized_family(record),
+            "cost": record.cost,
+            "raw": record.raw_description,
+        }
+        for record in included_records
+        if _normalized_family(record) == PROJECT_MANAGEMENT
+    ]
+    _debug_log(f"module={__file__} included_count={len(included_records)} family_counts={dict(family_counts)} pm_rows={pm_rows}")
     _validate_records_for_export(included_records)
 
     labor_values = _build_labor_values(included_records)
@@ -100,6 +125,7 @@ def build_recap_payload(records: list[Record]) -> dict[str, Any]:
     permits_values = _build_permit_values(included_records)
     police_values = _build_police_values(included_records)
     project_management_total = _build_project_management_total(included_records)
+    _debug_log(f"project_management_total={project_management_total!r}")
 
     return {
         "header": _build_header_values(records),

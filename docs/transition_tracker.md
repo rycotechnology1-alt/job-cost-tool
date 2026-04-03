@@ -1,3 +1,11 @@
+### [2026-04-02] Phase 50 .15 now routes utility service connection refunds as material
+- **What changed:** Added explicit phase-map support for 50 .15 as MATERIAL, which lets generic JC lines under Utility Service Connections inherit a stable material family instead of surviving as unresolved other.
+- **Why:** Valid report-body JC lines like National Grid Refund 0.00 -2,904.00 had strong phase context but no configured family, so they stayed blocked by unresolved-family and ambiguity warnings even though signed numeric parsing already worked.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that 50 .15 records now surface the next real blocker, such as missing vendor identity, instead of being masked by a broader unresolved-family failure.
+- **Follow-up needed:** If utility service connection refunds need to export without manual vendor correction, add a separate vendor-identity decision intentionally rather than overloading this family-routing fix.
+
 ### [2026-04-02] Phase `25` now uses a first-class project-management family with summary export support
 - **What changed:** Added explicit phase-map support for `25 . . Labor-Project Mgmt` as a `project_management` family, allowed that family through parser/normalization/export validation, and wired recap export to place summed project-management cost into the summary block at `E59/F59`.
 - **Why:** Valid PM allocation `JC` lines were surviving as unresolved `other` records, which blocked export and gave users no meaningful correction path even though the phase context was strong and the recap only needed a summary total.

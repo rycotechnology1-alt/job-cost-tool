@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from copy import copy
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,18 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from job_cost_tool.core.config import ConfigLoader
 
+
+
+
+def _export_debug_enabled() -> bool:
+    """Return True when export debug instrumentation is enabled."""
+    return str(os.getenv("JOB_COST_TOOL_EXPORT_DEBUG") or "").strip().casefold() not in {"", "0", "false", "no", "off"}
+
+
+def _debug_log(message: str) -> None:
+    """Emit guarded export debug logging."""
+    if _export_debug_enabled():
+        print(f"[export-debug][excel_exporter] {message}", file=sys.stderr, flush=True)
 
 _SECTION_LABELS = {
     "materials": "Material",
@@ -86,6 +100,10 @@ def export_to_excel(template_path: str, output_path: str, recap_payload: dict[st
         mapping.get("police_detail_section", {}),
     )
 
+    _debug_log(
+        f"module={__file__} template={template} output={output} payload_pm_total={recap_payload.get('project_management_total')!r} pre_save_E59={worksheet['E59'].value!r} pre_save_F59={worksheet['F59'].value!r}"
+    )
+
     try:
         workbook.save(output)
     except PermissionError as exc:
@@ -100,6 +118,13 @@ def export_to_excel(template_path: str, output_path: str, recap_payload: dict[st
                 "The output file is currently open. Please close it and try again."
             ) from exc
         raise ValueError(f"Failed to save recap workbook '{output}': {exc}") from exc
+
+    if _export_debug_enabled():
+        reopened_workbook = load_workbook(output)
+        reopened_sheet = reopened_workbook[worksheet_name]
+        _debug_log(
+            f"post_save_output={output} post_save_E59={reopened_sheet['E59'].value!r} post_save_F59={reopened_sheet['F59'].value!r}"
+        )
 
 
 def _load_template_workbook(template: Path, worksheet_name: str) -> tuple[Any, Worksheet]:
@@ -466,6 +491,9 @@ def _write_summary_totals_area(
 
     for cell_ref, value in summary_values.items():
         worksheet[cell_ref].value = value
+
+    for cell_ref in ("F59", "F60", "F61", "F62"):
+        _copy_cell_style(worksheet, "F58", cell_ref)
 
 
 def _get_section_total_cell(

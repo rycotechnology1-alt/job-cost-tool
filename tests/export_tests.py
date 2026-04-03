@@ -506,6 +506,10 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["E59"].value, "Project Management")
         self.assertEqual(worksheet["F59"].value, 20000)
         self.assertEqual(worksheet["F63"].value, "=SUM(F52:F62)")
+        self.assertEqual(worksheet["F58"].style_id, worksheet["F59"].style_id)
+        self.assertEqual(worksheet["F58"].style_id, worksheet["F60"].style_id)
+        self.assertEqual(worksheet["F58"].style_id, worksheet["F61"].style_id)
+        self.assertEqual(worksheet["F58"].style_id, worksheet["F62"].style_id)
         self.assertIsNone(worksheet["G27"].value)
         self.assertIsNone(worksheet["A55"].value)
 
@@ -536,6 +540,10 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["E59"].value, "Project Management")
         self.assertEqual(worksheet["F59"].value, 20000)
         self.assertEqual(worksheet["F63"].value, "=SUM(F52:F62)")
+        self.assertEqual(worksheet["F58"].style_id, worksheet["F59"].style_id)
+        self.assertEqual(worksheet["F58"].style_id, worksheet["F60"].style_id)
+        self.assertEqual(worksheet["F58"].style_id, worksheet["F61"].style_id)
+        self.assertEqual(worksheet["F58"].style_id, worksheet["F62"].style_id)
 
 
     def test_export_collapses_material_vendor_overflow_into_additional_vendors(self) -> None:
