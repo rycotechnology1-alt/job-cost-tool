@@ -9,11 +9,21 @@ from typing import Any, Optional
 
 from job_cost_tool.core.config import ConfigLoader
 from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PERMIT, POLICE_DETAIL, SUBCONTRACTOR, Record
+from job_cost_tool.core.models.record import (
+    EQUIPMENT,
+    LABOR,
+    MATERIAL,
+    OTHER,
+    PERMIT,
+    POLICE_DETAIL,
+    PROJECT_MANAGEMENT,
+    SUBCONTRACTOR,
+    Record,
+)
 from job_cost_tool.core.phase_codes import canonicalize_phase_code
 
 _ALLOWED_HOUR_TYPES = {"ST", "OT", "DT"}
-_SUPPORTED_FAMILIES = {LABOR, EQUIPMENT, MATERIAL, SUBCONTRACTOR, PERMIT, POLICE_DETAIL}
+_SUPPORTED_FAMILIES = {LABOR, EQUIPMENT, MATERIAL, SUBCONTRACTOR, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT}
 
 
 @lru_cache(maxsize=1)
@@ -89,6 +99,7 @@ def build_recap_payload(records: list[Record]) -> dict[str, Any]:
     subcontractor_values = _build_subcontractor_values(included_records)
     permits_values = _build_permit_values(included_records)
     police_values = _build_police_values(included_records)
+    project_management_total = _build_project_management_total(included_records)
 
     return {
         "header": _build_header_values(records),
@@ -100,6 +111,7 @@ def build_recap_payload(records: list[Record]) -> dict[str, Any]:
         "subcontractors": subcontractor_values,
         "permits_fees": permits_values,
         "police_detail": police_values,
+        "project_management_total": project_management_total,
     }
 
 
@@ -171,6 +183,9 @@ def _validate_records_for_export(records: list[Record]) -> None:
                 raise ValueError(_record_error(record, "Police detail description is missing for export."))
             if record.cost is None:
                 raise ValueError(_record_error(record, "Police detail amount is missing for export."))
+        elif family == PROJECT_MANAGEMENT:
+            if record.cost is None:
+                raise ValueError(_record_error(record, "Project management amount is missing for export."))
 
 
 def _build_header_values(records: list[Record]) -> dict[str, Optional[str]]:
@@ -415,6 +430,24 @@ def _build_police_values(records: list[Record]) -> list[dict[str, Any]]:
     ]
 
 
+def _build_project_management_total(records: list[Record]) -> int | float | None:
+    """Return the total cost for project-management records."""
+    total = Decimal("0")
+    has_records = False
+
+    for record in records:
+        if _normalized_family(record) != PROJECT_MANAGEMENT:
+            continue
+        if record.cost is None:
+            continue
+        total += Decimal(str(record.cost))
+        has_records = True
+
+    if not has_records:
+        return None
+    return _to_number(total)
+
+
 def _resolve_labor_slot_id(record: Record) -> Optional[str]:
     """Resolve the active labor slot id for a record."""
     slot_id = str(record.recap_labor_slot_id or "").strip()
@@ -447,7 +480,7 @@ def _infer_list_section(record: Record) -> Optional[str]:
     """Infer the recap list section for non-fixed-row export content."""
     family = _normalized_family(record)
     if family == MATERIAL or (
-        family not in {LABOR, EQUIPMENT, SUBCONTRACTOR, PERMIT, POLICE_DETAIL}
+        family not in {LABOR, EQUIPMENT, SUBCONTRACTOR, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT}
         and canonicalize_phase_code(record.phase_code) == "50"
     ):
         return "materials"

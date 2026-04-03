@@ -78,6 +78,7 @@ def export_to_excel(template_path: str, output_path: str, recap_payload: dict[st
     )
     _write_summary_totals_area(
         worksheet,
+        recap_payload.get("project_management_total"),
         mapping.get("sales_tax_area", {}),
         mapping.get("materials_section", {}),
         mapping.get("subcontractors_section", {}),
@@ -386,6 +387,7 @@ def _write_sales_tax_area(
 
 def _write_summary_totals_area(
     worksheet: Worksheet,
+    project_management_total: Any,
     sales_tax_mapping: dict[str, Any],
     materials_section_mapping: dict[str, Any],
     subcontractors_section_mapping: dict[str, Any],
@@ -440,8 +442,8 @@ def _write_summary_totals_area(
         "F58": f'={police_total_cell}',
         "G58": "Subcontractor Total",
         "H58": f'={subcontractor_subtotal_cell}+H57',
-        "E59": None,
-        "F59": None,
+        "E59": "Project Management",
+        "F59": None if project_management_total in {None, ""} else project_management_total,
         "G59": None,
         "H59": None,
         "E60": None,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, Record
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PROJECT_MANAGEMENT, Record
 
 _BLOCKING_WARNING_PHRASES = (
     "ambiguous",
@@ -62,6 +62,9 @@ def get_record_blocking_issues(record: Record) -> List[str]:
     elif normalized_family == MATERIAL:
         if not (record.vendor_name_normalized or record.vendor_name):
             issues.append("Material/vendor identity is missing for recap preparation.")
+    elif normalized_family == PROJECT_MANAGEMENT:
+        if record.cost is None:
+            issues.append("Project management amount is missing for export.")
 
     return _dedupe_messages(issues)
 

@@ -5,7 +5,16 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PERMIT, POLICE_DETAIL, SUBCONTRACTOR
+from job_cost_tool.core.models.record import (
+    EQUIPMENT,
+    LABOR,
+    MATERIAL,
+    OTHER,
+    PERMIT,
+    POLICE_DETAIL,
+    PROJECT_MANAGEMENT,
+    SUBCONTRACTOR,
+)
 from job_cost_tool.core.parsing.line_classifier import infer_record_type_from_phase_context
 from job_cost_tool.core.parsing.types import TokenizationResult
 
@@ -124,7 +133,7 @@ def tokenize_pr_line(
         result["line_family"] = LABOR
     elif phase_family == EQUIPMENT:
         result["line_family"] = EQUIPMENT
-    elif phase_family in {MATERIAL, SUBCONTRACTOR, PERMIT, POLICE_DETAIL}:
+    elif phase_family in {MATERIAL, SUBCONTRACTOR, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT}:
         # Some valid report-body PR lines live under non-payroll sections such
         # as Other Job Cost. When detailed PR parsing is weak, inherit the
         # section/header family rather than downgrading the line back to an

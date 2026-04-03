@@ -1,3 +1,11 @@
+### [2026-04-02] Phase `25` now uses a first-class project-management family with summary export support
+- **What changed:** Added explicit phase-map support for `25 . . Labor-Project Mgmt` as a `project_management` family, allowed that family through parser/normalization/export validation, and wired recap export to place summed project-management cost into the summary block at `E59/F59`.
+- **Why:** Valid PM allocation `JC` lines were surviving as unresolved `other` records, which blocked export and gave users no meaningful correction path even though the phase context was strong and the recap only needed a summary total.
+- **Area:** Core engine / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that future non-list summary families may need their own explicit export totals instead of fitting into the current list-section model, though this is still cleaner than forcing PM allocations into labor or material buckets.
+- **Follow-up needed:** If more summary-only families appear, consider a config-driven summary-total mapping layer instead of adding each one directly in code.
+
 ### [2026-04-02] PR lines under strong non-payroll phase context now stop carrying false ambiguity blockers
 - **What changed:** PR tokenization now falls back to configured phase/header family for non-labor, non-equipment sections such as `Other Job Cost` instead of downgrading those lines back to `other` and leaving an ambiguity warning behind.
 - **Why:** Valid report-body PR reimbursement lines under phase `50 . . Other Job Cost` were already inheriting material family at the outer pipeline level, but the inner PR tokenizer still emitted `family is ambiguous`, which validation treated as an export blocker even after users corrected vendor identity.
@@ -388,6 +396,13 @@ Record important decisions briefly. Add newest items at the top.
 - **Impact on desktop MVP:** Users can edit omitted-by-default phases from a complete named pick-list before any report is loaded, while profiles still control which phases start omitted.
 - **Impact on future web product:** Improves reuse by cleanly separating shared reference data from profile behavior, which maps better to future admin/config services.
 - **Follow-up:** If users need to maintain the company-wide phase list in-app later, add a small shared catalog admin path rather than duplicating the list into each profile.
+
+### [2026-04-02] Project management is modeled as a first-class non-list recap family
+- **Decision:** Phase `25 . . Labor-Project Mgmt` is represented as a dedicated `project_management` family that validates/exports as a summary-only cost, rather than being forced into labor, material, or unresolved `other` behavior.
+- **Reason:** PM allocation lines carry real recap cost but do not fit the labor-class, vendor, or equipment-slot contracts used by other families; treating them as a real family keeps parsing/normalization honest and gives export a clean place to sum them.
+- **Impact on desktop MVP:** Users can review and export PM allocation records without omitting them, and recap workbooks now show Project Management totals directly in the summary area.
+- **Impact on future web product:** Improves reuse by extending the core family model and export payload contract instead of hiding PM behavior in desktop UI corrections or export-only exceptions.
+- **Follow-up:** If additional summary-only families are confirmed later, extract a small config-driven summary-total abstraction instead of proliferating hard-coded summary rows.
 
 ## Template
 ### [YYYY-MM-DD] Decision title

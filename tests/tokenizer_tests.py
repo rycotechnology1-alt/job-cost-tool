@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PERMIT, POLICE_DETAIL
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT
 from job_cost_tool.core.parsing.tokenizer import tokenize_detail_line, tokenize_pr_line
 
 
@@ -185,6 +185,20 @@ class TokenizerTests(unittest.TestCase):
         self.assertEqual(result["raw_description"], "22714 Project Flagging LLC 63164 / TR# 163 / 0 / APCo: 1 Flagging - 220108")
         self.assertEqual(result["hours"], 0.0)
         self.assertEqual(result["cost"], 922.5)
+
+    def test_generic_jc_line_under_project_management_phase_keeps_project_management_family(self) -> None:
+        line = "JC 03/05/26 Bugeted PM Allocation 0.00 20,000.00"
+
+        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase_context", return_value=PROJECT_MANAGEMENT):
+            result = tokenize_detail_line(line, transaction_type=None, phase_code="25", phase_name_raw="Labor-Project Mgmt")
+
+        self.assertEqual(result["transaction_type"], "JC")
+        self.assertEqual(result["line_family"], PROJECT_MANAGEMENT)
+        self.assertEqual(result["raw_description"], "Bugeted PM Allocation")
+        self.assertEqual(result["hours"], 0.0)
+        self.assertEqual(result["cost"], 20000.0)
+        self.assertEqual(result["warnings"], [])
+
 
     def test_generic_jc_line_uses_phase_family_and_signed_numeric_columns(self) -> None:
         line = "JC 01/07/26 Jay Dondero to 810500 warranty -4.00 -658.45"

@@ -6,7 +6,7 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, PERMIT, POLICE_DETAIL, SUBCONTRACTOR, Record
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT, SUBCONTRACTOR, Record
 from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
 from job_cost_tool.core.normalization.equipment_normalizer import normalize_equipment_record
 from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
@@ -354,6 +354,43 @@ class NormalizationRuleTests(unittest.TestCase):
             normalized_record.warnings,
         )
         self.assertFalse(any("missing a raw labor class" in warning.casefold() for warning in normalized_record.warnings))
+
+    def test_phase_25_project_management_normalizes_and_validates_without_unresolved_family(self) -> None:
+        record = Record(
+            record_type=PROJECT_MANAGEMENT,
+            phase_code="25",
+            raw_description="Bugeted PM Allocation",
+            cost=20000.0,
+            hours=0.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            phase_name_raw="Labor-Project Mgmt",
+            transaction_type="JC",
+            source_page=1,
+            source_line_text="JC 03/05/26 Bugeted PM Allocation 0.00 20,000.00",
+        )
+
+        normalized_record = normalize_records([record])[0]
+        validated_records, blocking_issues = validate_records([normalized_record])
+        validated_record = validated_records[0]
+
+        self.assertEqual(normalized_record.record_type, PROJECT_MANAGEMENT)
+        self.assertEqual(normalized_record.record_type_normalized, PROJECT_MANAGEMENT)
+        self.assertEqual(normalized_record.phase_code, "25")
+        self.assertEqual(normalized_record.phase_name_raw, "Labor-Project Mgmt")
+        self.assertEqual(normalized_record.cost, 20000.0)
+        self.assertEqual(blocking_issues, [])
+        self.assertFalse(any("Normalized record family is missing or unresolved." in issue for issue in blocking_issues))
+        self.assertFalse(any("unresolved parsing or normalization ambiguity" in issue.casefold() for issue in blocking_issues))
+        self.assertFalse(any("BLOCKING:" in warning for warning in validated_record.warnings))
+
 
     def test_phase_50_point_1_normalizes_to_permit_instead_of_material(self) -> None:
         record = Record(

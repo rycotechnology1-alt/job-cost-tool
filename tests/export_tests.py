@@ -10,7 +10,7 @@ from unittest.mock import patch
 from openpyxl import Workbook, load_workbook
 
 import job_cost_tool.core.export.recap_mapper as recap_mapper
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, PERMIT, POLICE_DETAIL, SUBCONTRACTOR, Record
+from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT, SUBCONTRACTOR, Record
 from job_cost_tool.services.export_service import export_records_to_recap
 from job_cost_tool.services.validation_service import validate_records
 
@@ -368,6 +368,8 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["F57"].value, "=C57")
         self.assertEqual(worksheet["E58"].value, "Police Detail Total")
         self.assertEqual(worksheet["F58"].value, "=C63")
+        self.assertEqual(worksheet["E59"].value, "Project Management")
+        self.assertIsNone(worksheet["F59"].value)
         self.assertEqual(worksheet["E63"].value, "Grand Total")
         self.assertEqual(worksheet["F63"].value, "=SUM(F52:F62)")
         self.assertEqual(worksheet["G52"].value, "Material Markup %")
@@ -492,6 +494,49 @@ class ExportWorkflowTests(unittest.TestCase):
         worksheet = load_workbook(self.output_path)["Recap"]
         self.assertEqual(worksheet["A61"].value, "Police Detail Ticket 7788")
         self.assertEqual(worksheet["C61"].value, 175)
+
+    def test_export_writes_project_management_total_into_summary(self) -> None:
+        records = [
+            self._project_management_record(cost=20000.0),
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["E59"].value, "Project Management")
+        self.assertEqual(worksheet["F59"].value, 20000)
+        self.assertEqual(worksheet["F63"].value, "=SUM(F52:F62)")
+        self.assertIsNone(worksheet["G27"].value)
+        self.assertIsNone(worksheet["A55"].value)
+
+    def test_export_sums_multiple_included_project_management_records_into_summary(self) -> None:
+        records = [
+            self._project_management_record(cost=20000.0),
+            self._project_management_record(cost=5000.25),
+            self._project_management_record(cost=750.75, is_omitted=True),
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["E59"].value, "Project Management")
+        self.assertEqual(worksheet["F59"].value, 25000.25)
+        self.assertEqual(worksheet["F63"].value, "=SUM(F52:F62)")
+
+    def test_export_writes_project_management_total_into_actual_modified_default_template(self) -> None:
+        actual_template = Path("job_cost_tool/profiles/default/recap_template.xlsx")
+        records = [
+            self._project_management_record(cost=20000.0),
+            self._material_record(vendor="Vendor A", cost=100),
+        ]
+
+        export_records_to_recap(records, str(actual_template), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["E59"].value, "Project Management")
+        self.assertEqual(worksheet["F59"].value, 20000)
+        self.assertEqual(worksheet["F63"].value, "=SUM(F52:F62)")
+
 
     def test_export_collapses_material_vendor_overflow_into_additional_vendors(self) -> None:
         records = [
@@ -804,6 +849,32 @@ class ExportWorkflowTests(unittest.TestCase):
             record_type_normalized=MATERIAL,
             recap_labor_classification=None,
             vendor_name_normalized=vendor,
+        )
+
+    def _project_management_record(self, cost: float, is_omitted: bool = False) -> Record:
+        return Record(
+            record_type=PROJECT_MANAGEMENT,
+            phase_code="25",
+            raw_description="Bugeted PM Allocation",
+            cost=cost,
+            hours=0.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="Project management source",
+            record_type_normalized=PROJECT_MANAGEMENT,
+            recap_labor_classification=None,
+            vendor_name_normalized=None,
+            is_omitted=is_omitted,
         )
 
     def _subcontractor_record(self, vendor: str, description: str, cost: float) -> Record:

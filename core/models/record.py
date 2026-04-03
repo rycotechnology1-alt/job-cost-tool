@@ -10,6 +10,7 @@ MATERIAL = "material"
 SUBCONTRACTOR = "subcontractor"
 PERMIT = "permit"
 POLICE_DETAIL = "police_detail"
+PROJECT_MANAGEMENT = "project_management"
 OTHER = "other"
 
 

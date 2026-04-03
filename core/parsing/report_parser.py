@@ -6,7 +6,15 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, SUBCONTRACTOR, Record
+from job_cost_tool.core.models.record import (
+    EQUIPMENT,
+    LABOR,
+    MATERIAL,
+    OTHER,
+    PROJECT_MANAGEMENT,
+    SUBCONTRACTOR,
+    Record,
+)
 from job_cost_tool.core.parsing.line_classifier import (
     extract_phase_header,
     infer_record_type_from_phase_context,
@@ -197,7 +205,7 @@ def _resolve_record_type(context_record_type: str, tokenized: TokenizationResult
         return context_record_type
 
     tokenized_family = tokenized["line_family"]
-    if tokenized_family in {LABOR, EQUIPMENT, MATERIAL, SUBCONTRACTOR}:
+    if tokenized_family in {LABOR, EQUIPMENT, MATERIAL, SUBCONTRACTOR, PROJECT_MANAGEMENT}:
         return tokenized_family
     return OTHER
 

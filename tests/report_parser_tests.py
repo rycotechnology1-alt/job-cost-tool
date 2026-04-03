@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from job_cost_tool.core.models.record import LABOR, MATERIAL, SUBCONTRACTOR
+from job_cost_tool.core.models.record import LABOR, MATERIAL, PROJECT_MANAGEMENT, SUBCONTRACTOR
 from job_cost_tool.core.parsing.report_parser import parse_report_pages
 
 
@@ -111,6 +111,32 @@ class ReportParserTests(unittest.TestCase):
             "103/J 1.00 / 1716 / Dorsey , Michael A5 Regular Earnings",
         )
 
+
+
+    def test_phase_25_project_management_jc_record_keeps_project_management_raw_type(self) -> None:
+        pages = [
+            {
+                "page_number": 1,
+                "text": "\n".join(
+                    [
+                        "25 . . Labor-Project Mgmt",
+                        "JC 03/05/26 Bugeted PM Allocation 0.00 20,000.00",
+                    ]
+                ),
+            }
+        ]
+
+        records = parse_report_pages(pages)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].phase_code, "25")
+        self.assertEqual(records[0].phase_name_raw, "Labor-Project Mgmt")
+        self.assertEqual(records[0].transaction_type, "JC")
+        self.assertEqual(records[0].record_type, PROJECT_MANAGEMENT)
+        self.assertEqual(records[0].raw_description, "Bugeted PM Allocation")
+        self.assertEqual(records[0].hours, 0.0)
+        self.assertEqual(records[0].cost, 20000.0)
+        self.assertNotIn("Section type is not yet confidently classified.", records[0].warnings)
 
 
     def test_phase_40_subcontracted_ap_record_keeps_subcontractor_raw_type(self) -> None:
