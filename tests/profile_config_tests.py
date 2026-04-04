@@ -13,7 +13,6 @@ from app.viewmodels.settings_view_model import (
     SettingsViewModel,
     _active_labels_from_slots,
     _build_equipment_mapping_rows,
-    _build_label_rename_map,
     _build_labor_mapping_rows,
     _build_slot_label_rename_map,
     _dedupe_casefold_preserving_order,
@@ -495,14 +494,26 @@ class ProfileConfigTests(unittest.TestCase):
                 valid_classifications=["Utility Van"],
             )
 
-    def test_classification_rename_map_updates_profile_references(self) -> None:
-        labor_rename_map = _build_label_rename_map(
-            ["Old Journeyman", "Foreman"],
-            ["New Journeyman", "Foreman"],
+    def test_slot_based_classification_rename_map_updates_profile_references(self) -> None:
+        labor_rename_map = _build_slot_label_rename_map(
+            previous_slots=[
+                {"slot_id": "labor_1", "label": "Old Journeyman", "active": True},
+                {"slot_id": "labor_2", "label": "Foreman", "active": True},
+            ],
+            updated_slots=[
+                {"slot_id": "labor_1", "label": "New Journeyman", "active": True},
+                {"slot_id": "labor_2", "label": "Foreman", "active": True},
+            ],
         )
-        equipment_rename_map = _build_label_rename_map(
-            ["Old Truck", "Van"],
-            ["New Truck", "Van"],
+        equipment_rename_map = _build_slot_label_rename_map(
+            previous_slots=[
+                {"slot_id": "equipment_1", "label": "Old Truck", "active": True},
+                {"slot_id": "equipment_2", "label": "Van", "active": True},
+            ],
+            updated_slots=[
+                {"slot_id": "equipment_1", "label": "New Truck", "active": True},
+                {"slot_id": "equipment_2", "label": "Van", "active": True},
+            ],
         )
 
         updated_labor_mapping = _rename_labor_mapping_config_targets(

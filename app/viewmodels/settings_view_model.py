@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -338,12 +337,6 @@ class SettingsViewModel(QObject):
         clear_profile_dependent_caches()
         self.reload()
         return "Equipment mappings saved successfully."
-
-    def save_classifications(self, labor_classifications: list[str], equipment_classifications: list[str]) -> str:
-        """Persist active classifications using the current fixed slot order."""
-        labor_slots = _merge_active_labels_into_slots(self._labor_slots, labor_classifications)
-        equipment_slots = _merge_active_labels_into_slots(self._equipment_slots, equipment_classifications)
-        return self.save_classification_slots(labor_slots, equipment_slots)
 
     def save_classification_slots(
         self,
@@ -1090,39 +1083,6 @@ def _merge_ordered_labels(primary: list[str], secondary: Any) -> list[str]:
             ordered_values.append(value)
             seen.add(value)
     return ordered_values
-
-
-def _validate_unique_labels(values: list[str], label_name: str) -> list[str]:
-    """Validate editable classification labels."""
-    cleaned_values: list[str] = []
-    seen: set[str] = set()
-    for raw_value in values:
-        value = str(raw_value).strip()
-        if not value:
-            raise ValueError(f"{label_name} values may not be empty.")
-        normalized = value.casefold()
-        if normalized in seen:
-            raise ValueError(f"Duplicate {label_name.casefold()} '{value}' is not allowed.")
-        seen.add(normalized)
-        cleaned_values.append(value)
-    return cleaned_values
-
-
-def _build_label_rename_map(previous_labels: list[str], updated_labels: list[str]) -> dict[str, str]:
-    """Build a best-effort rename map for in-place classification edits."""
-    rename_map: dict[str, str] = {}
-    matcher = SequenceMatcher(a=previous_labels, b=updated_labels, autojunk=False)
-    for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes():
-        if tag != "replace":
-            continue
-        old_segment = previous_labels[old_start:old_end]
-        new_segment = updated_labels[new_start:new_end]
-        if len(old_segment) != len(new_segment):
-            continue
-        for old_label, new_label in zip(old_segment, new_segment):
-            if old_label != new_label:
-                rename_map[old_label] = new_label
-    return rename_map
 
 
 def _validate_slot_rows(

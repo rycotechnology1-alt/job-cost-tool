@@ -424,6 +424,22 @@ Record important decisions briefly. Add newest items at the top.
 
 # 7) Recent meaningful changes
 
+### [2026-04-04] Pass 2 dropped the obsolete list-order classification rename helper
+- **What changed:** Removed the unused `_build_label_rename_map` helper and updated the remaining rename-coverage test to exercise the slot-id-based rename map that the settings workflow actually uses at runtime.
+- **Why:** Classification rename propagation is now intentionally anchored to stable slot identities, so the older list-order diff helper was preserving a superseded compatibility model rather than a real product path.
+- **Area:** Application services / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk; this narrows cleanup to a production-dead helper and keeps coverage on the authoritative slot-based rename contract.
+- **Follow-up needed:** Decide separately whether any other legacy config compatibility surfaces should be formally deprecated before removing their tests or loader support.
+
+### [2026-04-04] Pass 1 cleanup removed only high-confidence dead helpers and debug scaffolding
+- **What changed:** Removed a small set of definitely unused helpers from infrastructure/config/view-model/UI/model code, deleted two hard-coded PM export trace scripts under `debug/`, and dropped the unused `recent_output_path` setting key from app settings.
+- **Why:** This trims stale MVP hardening residue without changing parser, normalization, validation, export, or profile behavior, which makes future cleanup and agent work less noisy.
+- **Area:** Core engine / Application services / Desktop UI / Config
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk; one direct regression from the cleanup was caught and fixed during the verification pass, and the full automated suite remained green.
+- **Follow-up needed:** Keep later cleanup passes limited to separately reviewed medium-confidence compatibility paths instead of broadening this safe deletion pass.
+
 ### [2026-04-01] Default-omit settings now use shared phase-code canonicalization
 - **What changed:** Added a shared `phase_codes` helper used by parser header extraction, phase-mapping config loading, normalization fallback, review default-omit matching, and the new lightweight Settings tab for editing `review_rules.json` default omit phase rules.
 - **Why:** Dotted phase variants such as `29 .999.` and `13 .25 .` need one canonical representation so profile-driven omission stays reliable and users can manage omitted-by-default phases without hard-coded policy logic.

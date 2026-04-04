@@ -331,22 +331,6 @@ class SettingsDialog(QDialog):
         layout.addWidget(table)
         return group
 
-    def _build_editor_actions(self, add_handler, remove_handler, save_handler) -> QHBoxLayout:
-        """Build add/remove/save button row for a table editor."""
-        layout = QHBoxLayout()
-        add_button = QPushButton("Add")
-        remove_button = QPushButton("Remove")
-        add_button.clicked.connect(add_handler)
-        remove_button.clicked.connect(remove_handler)
-        layout.addWidget(add_button)
-        layout.addWidget(remove_button)
-        layout.addStretch(1)
-        if save_handler is not None:
-            save_button = QPushButton("Save")
-            save_button.clicked.connect(save_handler)
-            layout.addWidget(save_button)
-        return layout
-
     def _connect_signals(self) -> None:
         """Connect dialog and view-model signals."""
         self._view_model.state_changed.connect(self._refresh_ui)
@@ -789,12 +773,6 @@ class SettingsDialog(QDialog):
         self._equipment_mapping_table.insertRow(row_index)
         self._equipment_mapping_table.setItem(row_index, 0, QTableWidgetItem(""))
         self._set_combo_cell(self._equipment_mapping_table, row_index, 1, self._view_model.equipment_classifications, "")
-
-    def _add_simple_row(self, table: QTableWidget) -> None:
-        """Append a new editable single-column row."""
-        row_index = table.rowCount()
-        table.insertRow(row_index)
-        table.setItem(row_index, 0, QTableWidgetItem(""))
 
     def _remove_selected_rows(self, table: QTableWidget) -> None:
         """Remove the currently selected rows from a table."""

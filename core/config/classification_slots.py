@@ -47,22 +47,6 @@ def normalize_slot_config(
     }
 
 
-def build_slot_config(existing_slots: list[SlotDict], active_labels: list[str]) -> dict[str, Any]:
-    """Build a saved slot config from the existing slot identities and active labels."""
-    slots: list[SlotDict] = []
-    for index, existing_slot in enumerate(existing_slots):
-        label = active_labels[index] if index < len(active_labels) else ""
-        slot_id = str(existing_slot.get("slot_id") or f"slot_{index + 1}").strip() or f"slot_{index + 1}"
-        slots.append(
-            {
-                "slot_id": slot_id,
-                "label": label,
-                "active": bool(label),
-            }
-        )
-    return {"slots": slots}
-
-
 def build_slot_config_from_rows(slot_rows: list[SlotDict]) -> dict[str, Any]:
     """Build a saved slot config from explicit slot rows."""
     slots: list[SlotDict] = []
@@ -78,15 +62,6 @@ def build_slot_config_from_rows(slot_rows: list[SlotDict]) -> dict[str, Any]:
             }
         )
     return {"slots": slots}
-
-
-def get_active_slot_labels(slot_config: dict[str, Any]) -> list[str]:
-    """Return active slot labels from a normalized slot config."""
-    return [
-        str(slot.get("label", "")).strip()
-        for slot in slot_config.get("slots", [])
-        if isinstance(slot, dict) and slot.get("active") and str(slot.get("label", "")).strip()
-    ]
 
 
 def get_active_slots(slot_config: dict[str, Any], *, slot_prefix: str) -> list[SlotDict]:

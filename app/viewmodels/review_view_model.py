@@ -118,22 +118,6 @@ class ReviewViewModel(QObject):
         return observed_values
 
     @property
-    def observed_equipment_raw_values(self) -> list[str]:
-        """Return raw equipment descriptions from the current review dataset for traceability."""
-        observed_values: list[str] = []
-        seen: set[str] = set()
-        for record in self._review_records:
-            raw_value = str(record.equipment_description or "").strip()
-            if not raw_value:
-                continue
-            normalized = raw_value.casefold()
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            observed_values.append(raw_value)
-        return observed_values
-
-    @property
     def observed_equipment_mapping_keys(self) -> list[str]:
         """Return derived reusable equipment mapping keys from the current review dataset."""
         observed_values: list[str] = []

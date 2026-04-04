@@ -70,18 +70,6 @@ class Record:
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0.0 and 1.0")
 
-    def is_labor(self) -> bool:
-        """Return True when the record represents labor."""
-        return self.record_type == LABOR
-
-    def is_equipment(self) -> bool:
-        """Return True when the record represents equipment."""
-        return self.record_type == EQUIPMENT
-
-    def is_material(self) -> bool:
-        """Return True when the record represents material."""
-        return self.record_type == MATERIAL
-
     def has_blocking_warning(self) -> bool:
         """Return True when any warning is explicitly marked as blocking."""
         return any(warning.startswith("BLOCKING:") for warning in self.warnings)

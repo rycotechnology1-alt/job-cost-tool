@@ -7,7 +7,7 @@
     "APP"
   ],
   "raw_mappings": {
-    "1.00 / 186 / CULHANE , JOHN P5 REGULAR EARNINGS": "103 General FM",
+    "96/2 APP": "103 Apprentice",
     "103/10J APP": "103 Apprentice",
     "103/1A APP": "103 Apprentice",
     "103/2B APP": "103 Apprentice",
@@ -21,6 +21,7 @@
     "7/2 APP": "103 Apprentice",
     "103/F": "103 Foreman",
     "96/F": "103 Foreman",
+    "1.00 / 186 / CULHANE , JOHN P5 REGULAR EARNINGS": "103 General FM",
     "103/GF": "103 General FM",
     "103/J": "103 Journeyman",
     "96/J": "103 Journeyman",
@@ -50,8 +51,8 @@
   },
   "saved_mappings": [
     {
-      "raw_value": "1.00 / 186 / CULHANE , JOHN P5 REGULAR EARNINGS",
-      "target_classification": "103 General FM",
+      "raw_value": "96/2 APP",
+      "target_classification": "103 Apprentice",
       "notes": ""
     },
     {
@@ -117,6 +118,11 @@
     {
       "raw_value": "96/F",
       "target_classification": "103 Foreman",
+      "notes": ""
+    },
+    {
+      "raw_value": "1.00 / 186 / CULHANE , JOHN P5 REGULAR EARNINGS",
+      "target_classification": "103 General FM",
       "notes": ""
     },
     {
