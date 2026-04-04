@@ -515,8 +515,7 @@ def _infer_list_section(record: Record) -> Optional[str]:
     if family == POLICE_DETAIL:
         return POLICE_DETAIL
     if family == PERMIT:
-        description = (record.raw_description or "").casefold()
-        return POLICE_DETAIL if "police" in description else "permits_fees"
+        return "permits_fees"
     return None
 
 

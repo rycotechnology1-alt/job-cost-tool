@@ -424,6 +424,14 @@ Record important decisions briefly. Add newest items at the top.
 
 # 7) Recent meaningful changes
 
+### [2026-04-04] Export no longer reroutes permit-family records into police detail by description text
+- **What changed:** Removed the export-layer fallback that sent `permit` records to the police-detail section when their raw description contained the word `police`, and added a regression proving permit-family records now stay in the permits section regardless of description text.
+- **Why:** Permits and police detail are now distinct families with separate upstream routing, so description-based rerouting in export had become a stale workaround that conflicted with the intended product model.
+- **Area:** Core engine / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk; correctly routed police-detail records still export through their own family path, while misclassified permit records are no longer silently rewritten at the export layer.
+- **Follow-up needed:** If a real report still reaches export with a police-detail charge mislabeled as `permit`, fix that upstream in parsing/normalization/profile mapping rather than reintroducing text-based export rerouting.
+
 ### [2026-04-04] Pass 3 removed dead configured transaction-marker scaffolding
 - **What changed:** Removed the unused `_get_transaction_types` parser cache helper, stopped clearing that dead cache in settings, dropped the obsolete `transaction_types` key from the bundled `input_model.json` files, and added a parser regression proving generic `TX mm/dd/yy` record starts still emit records without a configured marker list.
 - **Why:** Transaction-boundary detection is already marker-agnostic at runtime, so the old helper and bundled config key were stale compatibility residue rather than active behavior.

@@ -461,6 +461,24 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["A55"].value, "City Permit 12345")
         self.assertEqual(worksheet["C55"].value, 250)
 
+    def test_export_does_not_reroute_permit_family_records_to_police_section_by_description(self) -> None:
+        records = [
+            self._permit_record(
+                phase_code="50 .1",
+                description="Police Permit Detail 7788",
+                cost=175.0,
+                vendor_name=None,
+            )
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["A55"].value, "Police Permit Detail 7788")
+        self.assertEqual(worksheet["C55"].value, 175)
+        self.assertIsNone(worksheet["A61"].value)
+        self.assertIsNone(worksheet["C61"].value)
+
     def test_export_routes_phase_50_point_2_police_records_to_police_detail_section(self) -> None:
         records = [
             self._police_detail_record(
