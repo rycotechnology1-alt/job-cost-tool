@@ -575,7 +575,6 @@ def clear_profile_dependent_caches() -> None:
 
     cache_functions = [
         line_classifier._get_input_model,
-        line_classifier._get_transaction_types,
         line_classifier._get_ignore_patterns,
         line_classifier._get_section_headers,
         labor_normalizer._get_labor_mapping,

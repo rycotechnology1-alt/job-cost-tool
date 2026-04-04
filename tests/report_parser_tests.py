@@ -48,6 +48,22 @@ class ReportParserTests(unittest.TestCase):
         self.assertEqual(records[0].raw_description, "104/EO B / 24 / Baez , Juan O 751/Kubota Tracked Skid Steer / 1")
         self.assertIn("No active phase context was identified for this line.", records[0].warnings)
 
+    def test_unknown_transaction_marker_still_emits_record(self) -> None:
+        pages = [
+            {
+                "page_number": 1,
+                "text": "XX 02/23/26 Unmodeled transaction marker 0.00 25.00",
+            }
+        ]
+
+        records = parse_report_pages(pages)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].transaction_type, "XX")
+        self.assertEqual(records[0].raw_description, "Unmodeled transaction marker")
+        self.assertEqual(records[0].cost, 25.0)
+        self.assertIn("No active phase context was identified for this line.", records[0].warnings)
+
 
     def test_consecutive_jc_lines_are_emitted_as_separate_records(self) -> None:
         pages = [

@@ -16,11 +16,6 @@
       "Subcontracted"
     ]
   },
-  "transaction_types": [
-    "PR",
-    "AP",
-    "JC"
-  ],
   "ignore_patterns": [
     "Totals:",
     "Grand Total",

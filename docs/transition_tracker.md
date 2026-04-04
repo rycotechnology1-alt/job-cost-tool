@@ -424,6 +424,14 @@ Record important decisions briefly. Add newest items at the top.
 
 # 7) Recent meaningful changes
 
+### [2026-04-04] Pass 3 removed dead configured transaction-marker scaffolding
+- **What changed:** Removed the unused `_get_transaction_types` parser cache helper, stopped clearing that dead cache in settings, dropped the obsolete `transaction_types` key from the bundled `input_model.json` files, and added a parser regression proving generic `TX mm/dd/yy` record starts still emit records without a configured marker list.
+- **Why:** Transaction-boundary detection is already marker-agnostic at runtime, so the old helper and bundled config key were stale compatibility residue rather than active behavior.
+- **Area:** Core engine / Application services / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk; loader tolerance for older configs remains intact, and the new regression keeps the intended marker-agnostic parser contract explicit.
+- **Follow-up needed:** Leave broader legacy config compatibility paths in place until their removal is backed by an explicit product decision rather than inferred from unused-looking fields.
+
 ### [2026-04-04] Pass 2 dropped the obsolete list-order classification rename helper
 - **What changed:** Removed the unused `_build_label_rename_map` helper and updated the remaining rename-coverage test to exercise the slot-id-based rename map that the settings workflow actually uses at runtime.
 - **Why:** Classification rename propagation is now intentionally anchored to stable slot identities, so the older list-order diff helper was preserving a superseded compatibility model rather than a real product path.

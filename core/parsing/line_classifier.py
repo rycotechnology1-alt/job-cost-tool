@@ -31,22 +31,6 @@ def _get_input_model() -> dict[str, Any]:
     """Return the cached input model configuration."""
     return ConfigLoader().get_input_model()
 
-
-@lru_cache(maxsize=1)
-def _get_transaction_types() -> tuple[str, ...]:
-    """Return configured transaction markers for compatibility/cache invalidation.
-
-    Record-boundary detection now accepts any transaction-like ``TX mm/dd/yy``
-    row, but settings/config flows still clear this cache when input-model data
-    changes. Keep the helper available so those cache invalidation paths do not
-    have to know the parser no longer depends on the configured marker list.
-    """
-    transaction_types = _get_input_model().get("transaction_types", [])
-    if not isinstance(transaction_types, list):
-        return tuple()
-    return tuple(str(item).upper() for item in transaction_types if str(item).strip())
-
-
 @lru_cache(maxsize=1)
 def _get_phase_mapping() -> dict[str, str]:
     """Return the cached phase-to-family mapping using canonical family labels."""
