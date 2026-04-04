@@ -424,6 +424,14 @@ Record important decisions briefly. Add newest items at the top.
 
 # 7) Recent meaningful changes
 
+### [2026-04-04] Legacy mapping-shape compatibility was removed in favor of raw-first configs only
+- **What changed:** Removed runtime/settings compatibility handling for equipment `keyword_mappings` and old labor mapping keys (`phase_defaults`, `aliases`, `class_mappings`, `apprentice_aliases`), updated shipped config JSON to modern raw-first shapes, and converted compatibility-only tests to raw-first coverage.
+- **Why:** Raw mappings and slot-based classification handling are now the authoritative model, so keeping old config-shape support in loader/settings/tests was extra baggage that no longer reflected intended product behavior.
+- **Area:** Core engine / Application services / Config / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk for current supported profiles because the bundled/default configs now use the modern shape; externally maintained legacy config files may need migration instead of relying on silent compatibility handling.
+- **Follow-up needed:** If external users still rely on old config files, provide a one-time migration script or documented conversion path rather than reintroducing dual-shape runtime support.
+
 ### [2026-04-04] Export no longer reroutes permit-family records into police detail by description text
 - **What changed:** Removed the export-layer fallback that sent `permit` records to the police-detail section when their raw description contained the word `police`, and added a regression proving permit-family records now stay in the permits section regardless of description text.
 - **Why:** Permits and police detail are now distinct families with separate upstream routing, so description-based rerouting in export had become a stale workaround that conflicted with the intended product model.

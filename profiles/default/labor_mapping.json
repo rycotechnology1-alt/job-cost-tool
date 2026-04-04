@@ -1,11 +1,4 @@
 {
-  "phase_defaults": {
-    "20": "103",
-    "21": "104"
-  },
-  "apprentice_aliases": [
-    "APP"
-  ],
   "raw_mappings": {
     "96/2 APP": "103 Apprentice",
     "103/10J APP": "103 Apprentice",

@@ -19,7 +19,7 @@ from services.validation_service import validate_records
 class NormalizationRuleTests(unittest.TestCase):
     """Verify targeted normalization business rules."""
 
-    def test_exact_raw_labor_mapping_wins_over_legacy_fallback(self) -> None:
+    def test_exact_raw_labor_mapping_applies_target_classification(self) -> None:
         record = Record(
             record_type=LABOR,
             phase_code="20",
@@ -43,17 +43,13 @@ class NormalizationRuleTests(unittest.TestCase):
             "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
             return_value={
                 "raw_mappings": {"103/F": "Big Boy"},
-                "aliases": {"F": "F"},
-                "class_mappings": {"103": {"F": "Legacy Foreman"}},
-                "apprentice_aliases": [],
             },
         ), patch(
             "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
             return_value={
-                "classifications": ["Big Boy", "Legacy Foreman"],
+                "classifications": ["Big Boy"],
                 "slots": [
                     {"slot_id": "labor_1", "label": "Big Boy", "active": True},
-                    {"slot_id": "labor_2", "label": "Legacy Foreman", "active": True},
                 ],
             },
         ):
@@ -116,7 +112,7 @@ class NormalizationRuleTests(unittest.TestCase):
         self.assertEqual(normalized_record.recap_labor_slot_id, "labor_1")
         self.assertEqual(normalized_record.record_type_normalized, LABOR)
 
-    def test_unmapped_raw_labor_key_no_longer_falls_back_to_legacy_mapping(self) -> None:
+    def test_unmapped_raw_labor_key_remains_unmapped_without_exact_raw_mapping(self) -> None:
         record = Record(
             record_type=LABOR,
             phase_code="20",
@@ -138,11 +134,7 @@ class NormalizationRuleTests(unittest.TestCase):
 
         with patch(
             "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
-            return_value={
-                "aliases": {"F": "F"},
-                "class_mappings": {"*": {"F": "Big Boy"}},
-                "apprentice_aliases": [],
-            },
+            return_value={},
         ), patch(
             "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
             return_value={
@@ -233,9 +225,6 @@ class NormalizationRuleTests(unittest.TestCase):
             "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
             return_value={
                 "raw_mappings": {"103/F": "Not In Profile"},
-                "aliases": {"F": "F"},
-                "class_mappings": {"103": {"F": "103 Foreman"}},
-                "apprentice_aliases": [],
             },
         ), patch(
             "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
@@ -685,7 +674,7 @@ class NormalizationRuleTests(unittest.TestCase):
         self.assertEqual(normalized_record.equipment_description, "627/2025 FORD TRANSIT VAN")
         self.assertEqual(normalized_record.equipment_mapping_key, "FORD TRANSIT VAN")
 
-    def test_unmapped_raw_equipment_description_no_longer_falls_back_to_keyword_matching(self) -> None:
+    def test_unmapped_raw_equipment_description_remains_unmapped_without_exact_raw_mapping(self) -> None:
         record = Record(
             record_type=EQUIPMENT,
             phase_code="31",
@@ -707,7 +696,7 @@ class NormalizationRuleTests(unittest.TestCase):
 
         with patch(
             "core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
-            return_value={"keyword_mappings": {"FORD TRANSIT": "Utility Van"}},
+            return_value={},
         ), patch(
             "core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
             return_value={

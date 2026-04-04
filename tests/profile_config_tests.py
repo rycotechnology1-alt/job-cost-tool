@@ -54,8 +54,14 @@ class ProfileConfigTests(unittest.TestCase):
                 "is_active": False,
             },
         )
-        self._write_json(TEST_ROOT / "profiles" / "default" / "labor_mapping.json", {"aliases": {}})
-        self._write_json(TEST_ROOT / "profiles" / "default" / "equipment_mapping.json", {"keyword_mappings": {}})
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "labor_mapping.json",
+            {"raw_mappings": {}, "saved_mappings": []},
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "equipment_mapping.json",
+            {"raw_mappings": {}, "saved_mappings": []},
+        )
         self._write_json(TEST_ROOT / "profiles" / "default" / "phase_mapping.json", {"50": "MATERIAL"})
         self._write_json(TEST_ROOT / "profiles" / "default" / "vendor_normalization.json", {})
         self._write_json(
@@ -395,6 +401,10 @@ class ProfileConfigTests(unittest.TestCase):
                 {"raw_value": "104/EO", "target_classification": "", "notes": "todo"},
             ],
         )
+        self.assertNotIn("phase_defaults", labor_mapping)
+        self.assertNotIn("aliases", labor_mapping)
+        self.assertNotIn("class_mappings", labor_mapping)
+        self.assertNotIn("apprentice_aliases", labor_mapping)
 
     def test_config_loader_normalizes_raw_first_equipment_mapping_structure(self) -> None:
         self._write_json(
@@ -422,7 +432,7 @@ class ProfileConfigTests(unittest.TestCase):
                 {"raw_description": "CRANE TRUCK", "target_category": ""},
             ],
         )
-        self.assertEqual(equipment_mapping["keyword_mappings"], {"FORD F600 BUCKET/MAT HANDLER": "Pick-up Truck"})
+        self.assertNotIn("keyword_mappings", equipment_mapping)
 
     def test_config_loader_migrates_old_classification_list_to_slots_using_template_capacity(self) -> None:
         self._write_json(
@@ -522,13 +532,15 @@ class ProfileConfigTests(unittest.TestCase):
                 "saved_mappings": [
                     {"raw_value": "103/J", "target_classification": "Old Journeyman", "notes": "note"},
                 ],
-                "class_mappings": {"contract_a": {"J": "Old Journeyman"}},
                 "mapping_notes": {"103/J|Old Journeyman": "note"},
             },
             labor_rename_map,
         )
         updated_equipment_mapping = _rename_equipment_mapping_config_targets(
-            {"keyword_mappings": {"truck": "Old Truck"}},
+            {
+                "raw_mappings": {"TRUCK": "Old Truck"},
+                "saved_mappings": [{"raw_description": "TRUCK", "target_category": "Old Truck"}],
+            },
             equipment_rename_map,
         )
         updated_rates = _rename_rates_config_targets(
@@ -553,24 +565,19 @@ class ProfileConfigTests(unittest.TestCase):
             updated_labor_mapping["saved_mappings"],
             [{"raw_value": "103/J", "target_classification": "New Journeyman", "notes": "note"}],
         )
-        self.assertNotIn("class_mappings", updated_labor_mapping)
         self.assertNotIn("mapping_notes", updated_labor_mapping)
-        self.assertEqual(updated_equipment_mapping["keyword_mappings"]["TRUCK"], "New Truck")
+        self.assertEqual(updated_equipment_mapping["raw_mappings"]["TRUCK"], "New Truck")
+        self.assertEqual(
+            updated_equipment_mapping["saved_mappings"],
+            [{"raw_description": "TRUCK", "target_category": "New Truck"}],
+        )
         self.assertIn("New Journeyman", updated_rates["labor_rates"])
         self.assertIn("New Truck", updated_rates["equipment_rates"])
         self.assertIn("New Journeyman", updated_recap_map["labor_rows"])
         self.assertIn("New Truck", updated_recap_map["equipment_rows"])
 
-    def test_build_labor_mapping_rows_ignores_legacy_only_config_without_raw_first_rows(self) -> None:
-        rows = _build_labor_mapping_rows(
-            {
-                "aliases": {"103/F": "F"},
-                "class_mappings": {
-                    "103": {"F": "103 Foreman"},
-                },
-                "mapping_notes": {"103/F|103 Foreman": "legacy note"},
-            }
-        )
+    def test_build_labor_mapping_rows_returns_empty_when_no_raw_first_data_exists(self) -> None:
+        rows = _build_labor_mapping_rows({})
 
         self.assertEqual(rows, [])
 
@@ -657,33 +664,22 @@ class ProfileConfigTests(unittest.TestCase):
             ],
         )
 
-    def test_build_equipment_mapping_rows_uses_raw_mappings_then_keyword_mappings_for_compatibility(self) -> None:
-        raw_rows = _build_equipment_mapping_rows(
+    def test_build_equipment_mapping_rows_uses_raw_mappings_when_saved_rows_are_absent(self) -> None:
+        rows = _build_equipment_mapping_rows(
             {
                 "raw_mappings": {
                     "FORD TRANSIT VAN": "Pick-up Truck",
                 },
             }
         )
-        keyword_rows = _build_equipment_mapping_rows(
-            {
-                "keyword_mappings": {
-                    "bucket truck": "Pick-up Truck",
-                },
-            }
-        )
 
         self.assertEqual(
-            raw_rows,
+            rows,
             [{"raw_description": "FORD TRANSIT VAN", "raw_pattern": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"}],
         )
-        self.assertEqual(
-            keyword_rows,
-            [{"raw_description": "BUCKET TRUCK", "raw_pattern": "BUCKET TRUCK", "target_category": "Pick-up Truck"}],
-        )
 
 
-    def test_config_loader_synthesizes_keyword_compatibility_view_from_raw_only_equipment_config(self) -> None:
+    def test_config_loader_keeps_raw_first_equipment_config_without_keyword_compatibility_view(self) -> None:
         self._write_json(
             TEST_ROOT / "profiles" / "default" / "equipment_mapping.json",
             {
@@ -701,7 +697,11 @@ class ProfileConfigTests(unittest.TestCase):
         equipment_mapping = loader.get_equipment_mapping()
 
         self.assertEqual(equipment_mapping["raw_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
-        self.assertEqual(equipment_mapping["keyword_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
+        self.assertEqual(
+            equipment_mapping["saved_mappings"],
+            [{"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"}],
+        )
+        self.assertNotIn("keyword_mappings", equipment_mapping)
 
     def test_save_labor_mappings_persists_raw_mappings_and_blank_saved_rows(self) -> None:
         manager = self._build_manager()
@@ -976,7 +976,6 @@ class ProfileConfigTests(unittest.TestCase):
                 "saved_mappings": [
                     {"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
                 ],
-                "keyword_mappings": {"FORD TRANSIT VAN": "Pick-up Truck"},
             },
         )
 
@@ -985,7 +984,6 @@ class ProfileConfigTests(unittest.TestCase):
 
         self.assertTrue(did_update)
         self.assertEqual(updated["raw_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
-        self.assertNotIn("keyword_mappings", updated)
         self.assertEqual(
             updated["saved_mappings"],
             [

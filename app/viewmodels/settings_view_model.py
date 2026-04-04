@@ -274,11 +274,11 @@ class SettingsViewModel(QObject):
             )
 
         # Labor mapping persistence is now raw-first. Save exact admin rows and direct
-        # raw lookups only, and stop regenerating legacy alias/group fields here.
+        # raw lookups only.
         new_config = {
             key: value
             for key, value in dict(existing_config).items()
-            if key not in {"aliases", "class_mappings", "mapping_notes"}
+            if key != "mapping_notes"
         }
         new_config["raw_mappings"] = _build_raw_mappings_from_rows(saved_mappings)
         new_config["saved_mappings"] = _normalize_saved_labor_mapping_rows(saved_mappings)
@@ -324,13 +324,8 @@ class SettingsViewModel(QObject):
             )
 
         # Equipment mapping persistence is now raw-first. Save exact admin rows
-        # and direct raw lookups only; ConfigLoader can still synthesize an
-        # in-memory keyword_mappings compatibility view for the current runtime fallback.
-        new_config = {
-            key: value
-            for key, value in dict(existing_config).items()
-            if key != "keyword_mappings"
-        }
+        # and direct raw lookups only.
+        new_config = dict(existing_config)
         new_config["raw_mappings"] = _build_raw_equipment_mappings_from_rows(saved_mappings)
         new_config["saved_mappings"] = _normalize_saved_equipment_mapping_rows(saved_mappings)
         _write_json_file(profile_dir / "equipment_mapping.json", new_config)
@@ -714,11 +709,7 @@ def persist_observed_equipment_raw_values(profile_dir: Path, observed_raw_descri
     if not did_update:
         return False
 
-    updated_mapping = {
-        key: value
-        for key, value in dict(equipment_mapping).items()
-        if key != "keyword_mappings"
-    }
+    updated_mapping = dict(equipment_mapping)
     updated_mapping["saved_mappings"] = _normalize_saved_equipment_mapping_rows(base_rows)
     updated_mapping["raw_mappings"] = _build_raw_equipment_mappings_from_rows(updated_mapping["saved_mappings"])
     _write_json_file(config_path, updated_mapping)
@@ -908,12 +899,7 @@ def _build_equipment_mapping_rows(
         rows = saved_rows
     else:
         raw_mappings = _normalize_raw_equipment_mappings(equipment_mapping.get("raw_mappings", {}))
-        if raw_mappings:
-            rows = _build_saved_equipment_rows_from_raw_mappings(raw_mappings)
-        else:
-            rows = _build_saved_equipment_rows_from_raw_mappings(
-                _normalize_raw_equipment_mappings(equipment_mapping.get("keyword_mappings", {}))
-            )
+        rows = _build_saved_equipment_rows_from_raw_mappings(raw_mappings)
 
     seen_raw_descriptions = {
         str(row.get("raw_description", "")).strip().casefold()
@@ -1200,7 +1186,7 @@ def _rename_labor_mapping_config_targets(
     updated_config = {
         key: value
         for key, value in dict(labor_mapping).items()
-        if key not in {"aliases", "class_mappings", "mapping_notes"}
+        if key != "mapping_notes"
     }
 
     raw_mappings = _normalize_raw_labor_mappings(labor_mapping.get("raw_mappings", {}))
@@ -1252,13 +1238,6 @@ def _rename_equipment_mapping_config_targets(
             }
             for row in saved_rows
         ]
-
-    keyword_mappings = _normalize_raw_equipment_mappings(equipment_mapping.get("keyword_mappings", {}))
-    if keyword_mappings or "keyword_mappings" in equipment_mapping:
-        updated_config["keyword_mappings"] = {
-            raw_description: rename_map.get(target_category, target_category)
-            for raw_description, target_category in keyword_mappings.items()
-        }
     return updated_config
 
 
