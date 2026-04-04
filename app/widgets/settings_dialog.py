@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from job_cost_tool.app.viewmodels.settings_view_model import SettingsViewModel
+from app.viewmodels.settings_view_model import SettingsViewModel
 
 
 class SettingsDialog(QDialog):

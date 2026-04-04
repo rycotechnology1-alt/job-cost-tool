@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from job_cost_tool.core.config.path_utils import get_app_settings_path, get_legacy_config_root, get_profiles_root
+from core.config.path_utils import get_app_settings_path, get_legacy_config_root, get_profiles_root
 
 _PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _DEFAULT_APP_SETTINGS = {"active_profile": "default", "default_profile_unlocked": False}

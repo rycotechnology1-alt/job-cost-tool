@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PROJECT_MANAGEMENT, Record
+from core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PROJECT_MANAGEMENT, Record
 
 _BLOCKING_WARNING_PHRASES = (
     "ambiguous",

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from job_cost_tool.app.window import MainWindow
+from app.window import MainWindow
 
 
 def main() -> int:

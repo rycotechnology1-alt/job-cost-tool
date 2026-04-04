@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import List, Tuple
 
-from job_cost_tool.core.models.record import Record
-from job_cost_tool.core.validation.rules import get_record_blocking_issues, get_record_warnings
+from core.models.record import Record
+from core.validation.rules import get_record_blocking_issues, get_record_warnings
 
 
 def validate_records(records: List[Record]) -> Tuple[List[Record], List[str]]:

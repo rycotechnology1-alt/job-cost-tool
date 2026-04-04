@@ -6,10 +6,10 @@ from dataclasses import replace
 from functools import lru_cache
 from typing import Any, Optional
 
-from job_cost_tool.core.config import ConfigLoader
-from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots
-from job_cost_tool.core.models.record import EQUIPMENT, Record
-from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
+from core.config import ConfigLoader
+from core.config.classification_slots import build_slot_lookup, get_active_slots
+from core.models.record import EQUIPMENT, Record
+from core.equipment_keys import derive_equipment_mapping_key
 
 
 @lru_cache(maxsize=1)

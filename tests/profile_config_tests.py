@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from job_cost_tool.app.viewmodels.review_view_model import ReviewViewModel
-from job_cost_tool.app.viewmodels.settings_view_model import (
+from app.viewmodels.review_view_model import ReviewViewModel
+from app.viewmodels.settings_view_model import (
     SettingsViewModel,
     _active_labels_from_slots,
     _build_equipment_mapping_rows,
@@ -27,11 +27,11 @@ from job_cost_tool.app.viewmodels.settings_view_model import (
     persist_observed_equipment_raw_values,
     persist_observed_labor_raw_values,
 )
-from job_cost_tool.core.config import ConfigLoader, ProfileManager
-from job_cost_tool.core.models.record import LABOR, MATERIAL, Record
+from core.config import ConfigLoader, ProfileManager
+from core.models.record import LABOR, MATERIAL, Record
 
 
-TEST_ROOT = Path("job_cost_tool/tests/_profile_tmp")
+TEST_ROOT = Path("tests/_profile_tmp")
 
 
 class ProfileConfigTests(unittest.TestCase):
@@ -264,7 +264,7 @@ class ProfileConfigTests(unittest.TestCase):
     def test_settings_view_model_respects_default_profile_lock_and_unlock(self) -> None:
         manager = self._build_manager()
 
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
             view_model = SettingsViewModel()
             self.assertTrue(view_model.is_default_profile)
             self.assertTrue(view_model.is_default_profile_locked)
@@ -306,8 +306,8 @@ class ProfileConfigTests(unittest.TestCase):
             },
         )
 
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager), patch(
-            "job_cost_tool.core.config.config_loader.get_legacy_config_root",
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager), patch(
+            "core.config.config_loader.get_legacy_config_root",
             return_value=TEST_ROOT / "legacy_config",
         ):
             view_model = SettingsViewModel()
@@ -347,8 +347,8 @@ class ProfileConfigTests(unittest.TestCase):
 
     def test_settings_view_model_uses_shared_phase_catalog_without_loaded_pdf(self) -> None:
         manager = self._build_manager()
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager), patch(
-            "job_cost_tool.core.config.config_loader.get_legacy_config_root",
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager), patch(
+            "core.config.config_loader.get_legacy_config_root",
             return_value=TEST_ROOT / "legacy_config",
         ):
             view_model = SettingsViewModel()
@@ -702,7 +702,7 @@ class ProfileConfigTests(unittest.TestCase):
         )
         manager.set_active_profile("editable_profile")
 
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
             view_model = SettingsViewModel()
             message = view_model.save_labor_mappings(
                 [
@@ -738,7 +738,7 @@ class ProfileConfigTests(unittest.TestCase):
         )
         manager.set_active_profile("editable_profile")
 
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
             view_model = SettingsViewModel()
             with self.assertRaisesRegex(ValueError, "Duplicate labor mapping raw value"):
                 view_model.save_labor_mappings(
@@ -759,7 +759,7 @@ class ProfileConfigTests(unittest.TestCase):
         )
         manager.set_active_profile("editable_profile")
 
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
             view_model = SettingsViewModel()
             message = view_model.save_equipment_mappings(
                 [
@@ -793,7 +793,7 @@ class ProfileConfigTests(unittest.TestCase):
         )
         manager.set_active_profile("editable_profile")
 
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
             view_model = SettingsViewModel()
             with self.assertRaisesRegex(ValueError, "Duplicate equipment mapping raw description"):
                 view_model.save_equipment_mappings(
@@ -813,7 +813,7 @@ class ProfileConfigTests(unittest.TestCase):
         )
         manager.set_active_profile("editable_profile")
 
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
             view_model = SettingsViewModel()
             with self.assertRaisesRegex(ValueError, "Duplicate equipment mapping raw description"):
                 view_model.save_equipment_mappings(
@@ -833,7 +833,7 @@ class ProfileConfigTests(unittest.TestCase):
         )
         manager.set_active_profile("editable_profile")
 
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
             view_model = SettingsViewModel()
             view_model.save_equipment_mappings(
                 [
@@ -1010,7 +1010,7 @@ class ProfileConfigTests(unittest.TestCase):
             ["593/2024 Freightliner Bucket/MH", "619/2025 Freightliner Digger Derrick"],
         )
 
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
             view_model = SettingsViewModel()
 
         self.assertEqual(
@@ -1031,7 +1031,7 @@ class ProfileConfigTests(unittest.TestCase):
         )
         manager.set_active_profile("editable_profile")
 
-        with patch("job_cost_tool.app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
+        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
             view_model = SettingsViewModel()
             view_model.set_observed_equipment_raw_values([
                 "593/2024 Freightliner Bucket/MH",
@@ -1097,14 +1097,14 @@ class ProfileConfigTests(unittest.TestCase):
             vendor_name_normalized="Market Recovery",
         )
 
-        with patch("job_cost_tool.app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.ConfigLoader",
+        with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
+            "app.viewmodels.review_view_model.ConfigLoader",
             side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.parse_pdf",
+            "app.viewmodels.review_view_model.parse_pdf",
             return_value=[matching_record, non_matching_record],
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.normalize_records",
+            "app.viewmodels.review_view_model.normalize_records",
             return_value=[matching_record, non_matching_record],
         ):
             view_model = ReviewViewModel()
@@ -1153,14 +1153,14 @@ class ProfileConfigTests(unittest.TestCase):
             recap_labor_classification=None,
         )
 
-        with patch("job_cost_tool.app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.ConfigLoader",
+        with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
+            "app.viewmodels.review_view_model.ConfigLoader",
             side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.parse_pdf",
+            "app.viewmodels.review_view_model.parse_pdf",
             return_value=[record],
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.normalize_records",
+            "app.viewmodels.review_view_model.normalize_records",
             return_value=[record],
         ):
             view_model = ReviewViewModel()
@@ -1204,10 +1204,10 @@ class ProfileConfigTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.app.viewmodels.review_view_model.parse_pdf",
+            "app.viewmodels.review_view_model.parse_pdf",
             return_value=[record],
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.normalize_records",
+            "app.viewmodels.review_view_model.normalize_records",
             return_value=[record],
         ):
             view_model = ReviewViewModel()
@@ -1254,17 +1254,17 @@ class ProfileConfigTests(unittest.TestCase):
             source_line_text="source",
         )
 
-        with patch("job_cost_tool.app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.parse_pdf",
+        with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
+            "app.viewmodels.review_view_model.parse_pdf",
             return_value=[record],
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.normalize_records",
+            "app.viewmodels.review_view_model.normalize_records",
             return_value=[record],
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.validate_records",
+            "app.viewmodels.review_view_model.validate_records",
             side_effect=lambda records: (records, []),
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.persist_observed_labor_raw_values"
+            "app.viewmodels.review_view_model.persist_observed_labor_raw_values"
         ) as persist_mock:
             view_model = ReviewViewModel()
             view_model.load_pdf("sample.pdf")
@@ -1307,19 +1307,19 @@ class ProfileConfigTests(unittest.TestCase):
             source_line_text="source",
         )
 
-        with patch("job_cost_tool.app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.parse_pdf",
+        with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
+            "app.viewmodels.review_view_model.parse_pdf",
             return_value=[record],
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.normalize_records",
+            "app.viewmodels.review_view_model.normalize_records",
             return_value=[record],
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.validate_records",
+            "app.viewmodels.review_view_model.validate_records",
             side_effect=lambda records: (records, []),
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.persist_observed_labor_raw_values"
+            "app.viewmodels.review_view_model.persist_observed_labor_raw_values"
         ), patch(
-            "job_cost_tool.app.viewmodels.review_view_model.persist_observed_equipment_raw_values"
+            "app.viewmodels.review_view_model.persist_observed_equipment_raw_values"
         ) as persist_mock:
             view_model = ReviewViewModel()
             view_model.load_pdf("sample.pdf")

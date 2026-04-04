@@ -9,10 +9,10 @@ from unittest.mock import patch
 
 from openpyxl import Workbook, load_workbook
 
-import job_cost_tool.core.export.recap_mapper as recap_mapper
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT, SUBCONTRACTOR, Record
-from job_cost_tool.services.export_service import export_records_to_recap
-from job_cost_tool.services.validation_service import validate_records
+import core.export.recap_mapper as recap_mapper
+from core.models.record import EQUIPMENT, LABOR, MATERIAL, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT, SUBCONTRACTOR, Record
+from services.export_service import export_records_to_recap
+from services.validation_service import validate_records
 
 
 TEST_TEMPLATE_MAP = {
@@ -132,7 +132,7 @@ TARGET_RATES = {
         "Utility Van": {"rate": 44.5},
     },
 }
-TEST_TMP_ROOT = Path("job_cost_tool/tests/_tmp")
+TEST_TMP_ROOT = Path("tests/_tmp")
 
 
 class ExportWorkflowTests(unittest.TestCase):
@@ -158,31 +158,31 @@ class ExportWorkflowTests(unittest.TestCase):
         recap_mapper._get_material_section_capacity.cache_clear()
 
         self.recap_map_patch = patch(
-            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_recap_template_map",
+            "core.export.excel_exporter.ConfigLoader.get_recap_template_map",
             return_value=TEST_TEMPLATE_MAP,
         )
         self.recap_map_mapper_patch = patch(
-            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_recap_template_map",
+            "core.export.recap_mapper.ConfigLoader.get_recap_template_map",
             return_value=TEST_TEMPLATE_MAP,
         )
         self.labor_row_slots_patch = patch(
-            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_labor_row_slots",
+            "core.export.excel_exporter.ConfigLoader.get_labor_row_slots",
             return_value=TEST_LABOR_ROW_SLOTS,
         )
         self.equipment_row_slots_patch = patch(
-            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_equipment_row_slots",
+            "core.export.excel_exporter.ConfigLoader.get_equipment_row_slots",
             return_value=TEST_EQUIPMENT_ROW_SLOTS,
         )
         self.labor_patch = patch(
-            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_target_labor_classifications",
+            "core.export.recap_mapper.ConfigLoader.get_target_labor_classifications",
             return_value=TEST_LABOR_SLOT_CONFIG,
         )
         self.equipment_patch = patch(
-            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_target_equipment_classifications",
+            "core.export.recap_mapper.ConfigLoader.get_target_equipment_classifications",
             return_value=TEST_EQUIPMENT_SLOT_CONFIG,
         )
         self.rates_patch = patch(
-            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_rates",
+            "core.export.recap_mapper.ConfigLoader.get_rates",
             return_value=TARGET_RATES,
         )
         self.recap_map_patch.start()
@@ -267,13 +267,13 @@ class ExportWorkflowTests(unittest.TestCase):
         }
 
         with patch(
-            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_target_labor_classifications",
+            "core.export.recap_mapper.ConfigLoader.get_target_labor_classifications",
             return_value=renamed_labor_slot_config,
         ), patch(
-            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_rates",
+            "core.export.recap_mapper.ConfigLoader.get_rates",
             return_value=renamed_rates,
         ), patch(
-            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_labor_row_slots",
+            "core.export.excel_exporter.ConfigLoader.get_labor_row_slots",
             return_value=renamed_labor_row_slots,
         ):
             recap_mapper._get_target_labor_classifications.cache_clear()
@@ -318,13 +318,13 @@ class ExportWorkflowTests(unittest.TestCase):
         }
 
         with patch(
-            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_target_equipment_classifications",
+            "core.export.recap_mapper.ConfigLoader.get_target_equipment_classifications",
             return_value=renamed_equipment_slot_config,
         ), patch(
-            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_rates",
+            "core.export.recap_mapper.ConfigLoader.get_rates",
             return_value=renamed_rates,
         ), patch(
-            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_equipment_row_slots",
+            "core.export.excel_exporter.ConfigLoader.get_equipment_row_slots",
             return_value=renamed_equipment_row_slots,
         ):
             recap_mapper._get_target_equipment_classifications.cache_clear()
@@ -393,7 +393,7 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertIsNone(worksheet["H65"].value)
 
     def test_export_succeeds_with_actual_modified_default_template(self) -> None:
-        actual_template = Path("job_cost_tool/profiles/default/recap_template.xlsx")
+        actual_template = Path("profiles/default/recap_template.xlsx")
         records = [
             self._material_record(vendor=f"Vendor {index}", cost=10 + index)
             for index in range(10)
@@ -528,7 +528,7 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["F63"].value, "=SUM(F52:F62)")
 
     def test_export_writes_project_management_total_into_actual_modified_default_template(self) -> None:
-        actual_template = Path("job_cost_tool/profiles/default/recap_template.xlsx")
+        actual_template = Path("profiles/default/recap_template.xlsx")
         records = [
             self._project_management_record(cost=20000.0),
             self._material_record(vendor="Vendor A", cost=100),
@@ -577,7 +577,7 @@ class ExportWorkflowTests(unittest.TestCase):
         ]
 
         with patch(
-            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_recap_template_map",
+            "core.export.recap_mapper.ConfigLoader.get_recap_template_map",
             return_value=smaller_template_map,
         ):
             recap_mapper._get_material_section_capacity.cache_clear()
@@ -609,7 +609,7 @@ class ExportWorkflowTests(unittest.TestCase):
         ]
 
         with patch(
-            "job_cost_tool.core.export.recap_mapper.ConfigLoader.get_recap_template_map",
+            "core.export.recap_mapper.ConfigLoader.get_recap_template_map",
             return_value=smaller_template_map,
         ):
             recap_mapper._get_material_section_capacity.cache_clear()
@@ -638,7 +638,7 @@ class ExportWorkflowTests(unittest.TestCase):
         }
 
         with patch(
-            "job_cost_tool.core.export.excel_exporter.ConfigLoader.get_labor_row_slots",
+            "core.export.excel_exporter.ConfigLoader.get_labor_row_slots",
             return_value=broken_labor_row_slots,
         ):
             records = [self._labor_record(recap_classification="103 Journeyman", recap_slot_id="labor_1", hours=8)]
@@ -676,7 +676,7 @@ class ExportWorkflowTests(unittest.TestCase):
             )
         ]
 
-        with patch("job_cost_tool.services.export_service.build_recap_payload") as build_payload_mock:
+        with patch("services.export_service.build_recap_payload") as build_payload_mock:
             with self.assertRaisesRegex(ValueError, "Labor hour type is missing for export"):
                 export_records_to_recap(records, str(self.template_path), str(self.output_path))
 

@@ -12,12 +12,12 @@ WORKSPACE_ROOT = PROJECT_ROOT.parent
 if str(WORKSPACE_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKSPACE_ROOT))
 
-from job_cost_tool.core.export import excel_exporter, recap_mapper
-from job_cost_tool.core.export.recap_mapper import build_recap_payload
-from job_cost_tool.services import export_service
-from job_cost_tool.services.normalization_service import normalize_records
-from job_cost_tool.services.parsing_service import parse_pdf
-from job_cost_tool.services.validation_service import validate_records
+from core.export import excel_exporter, recap_mapper
+from core.export.recap_mapper import build_recap_payload
+from services import export_service
+from services.normalization_service import normalize_records
+from services.parsing_service import parse_pdf
+from services.validation_service import validate_records
 
 
 def main() -> int:
@@ -73,7 +73,7 @@ def main() -> int:
 
     export_service.export_records_to_recap(
         records=validated_records,
-        template_path=str(Path(r"c:\Apps\recap tool\job_cost_tool\profiles\default\recap_template.xlsx")),
+        template_path=str(Path(r"c:\Apps\recap tool\profiles\default\recap_template.xlsx")),
         output_path=str(output_path),
     )
 

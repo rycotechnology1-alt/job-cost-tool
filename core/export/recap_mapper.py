@@ -9,9 +9,9 @@ from decimal import Decimal
 from functools import lru_cache
 from typing import Any, Optional
 
-from job_cost_tool.core.config import ConfigLoader
-from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots
-from job_cost_tool.core.models.record import (
+from core.config import ConfigLoader
+from core.config.classification_slots import build_slot_lookup, get_active_slots
+from core.models.record import (
     EQUIPMENT,
     LABOR,
     MATERIAL,
@@ -22,7 +22,7 @@ from job_cost_tool.core.models.record import (
     SUBCONTRACTOR,
     Record,
 )
-from job_cost_tool.core.phase_codes import canonicalize_phase_code
+from core.phase_codes import canonicalize_phase_code
 
 _ALLOWED_HOUR_TYPES = {"ST", "OT", "DT"}
 _SUPPORTED_FAMILIES = {LABOR, EQUIPMENT, MATERIAL, SUBCONTRACTOR, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT}

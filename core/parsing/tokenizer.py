@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from job_cost_tool.core.models.record import (
+from core.models.record import (
     EQUIPMENT,
     LABOR,
     MATERIAL,
@@ -15,8 +15,8 @@ from job_cost_tool.core.models.record import (
     PROJECT_MANAGEMENT,
     SUBCONTRACTOR,
 )
-from job_cost_tool.core.parsing.line_classifier import infer_record_type_from_phase_context
-from job_cost_tool.core.parsing.types import TokenizationResult
+from core.parsing.line_classifier import infer_record_type_from_phase_context
+from core.parsing.types import TokenizationResult
 
 _TRANSACTION_RE = re.compile(r"^(?P<transaction_type>[A-Z]{2})\s+(?P<date>\d{2}/\d{2}/\d{2})\s+(?P<body>.+)$")
 _HOURS_TYPE_COST_RE = re.compile(

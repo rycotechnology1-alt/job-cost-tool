@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.worksheet.worksheet import Worksheet
 
-from job_cost_tool.core.config import ConfigLoader
+from core.config import ConfigLoader
 
 
 

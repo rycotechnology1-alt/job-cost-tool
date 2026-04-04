@@ -6,9 +6,9 @@ from dataclasses import replace
 from functools import lru_cache
 from typing import Any, Optional
 
-from job_cost_tool.core.config import ConfigLoader
-from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots
-from job_cost_tool.core.models.record import LABOR, Record
+from core.config import ConfigLoader
+from core.config.classification_slots import build_slot_lookup, get_active_slots
+from core.models.record import LABOR, Record
 
 
 @lru_cache(maxsize=1)

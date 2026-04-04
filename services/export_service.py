@@ -7,10 +7,10 @@ import sys
 from collections import Counter
 from typing import List
 
-from job_cost_tool.core.export.excel_exporter import export_to_excel
-from job_cost_tool.core.export.recap_mapper import build_recap_payload
-from job_cost_tool.core.models.record import Record
-from job_cost_tool.services.validation_service import validate_records
+from core.export.excel_exporter import export_to_excel
+from core.export.recap_mapper import build_recap_payload
+from core.models.record import Record
+from services.validation_service import validate_records
 
 
 def _export_debug_enabled() -> bool:

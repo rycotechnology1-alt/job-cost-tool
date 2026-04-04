@@ -16,10 +16,10 @@ os.environ["JOB_COST_TOOL_EXPORT_DEBUG"] = "1"
 
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from job_cost_tool.app import window as app_window
-from job_cost_tool.app.window import MainWindow
-from job_cost_tool.core.export import excel_exporter, recap_mapper
-from job_cost_tool.services import export_service
+from app import window as app_window
+from app.window import MainWindow
+from core.export import excel_exporter, recap_mapper
+from services import export_service
 
 
 def main() -> int:

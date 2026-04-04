@@ -6,8 +6,8 @@ import re
 from functools import lru_cache
 from typing import Any, Optional
 
-from job_cost_tool.core.config import ConfigLoader
-from job_cost_tool.core.models.record import (
+from core.config import ConfigLoader
+from core.models.record import (
     EQUIPMENT,
     LABOR,
     MATERIAL,
@@ -17,7 +17,7 @@ from job_cost_tool.core.models.record import (
     PROJECT_MANAGEMENT,
     SUBCONTRACTOR,
 )
-from job_cost_tool.core.phase_codes import canonicalize_phase_code
+from core.phase_codes import canonicalize_phase_code
 
 _PHASE_HEADER_RE = re.compile(
     r"^(?P<phase_code>\d{1,3}(?:\s*\.\s*(?:\d{1,3}\s*)?)+)(?P<phase_name>[A-Za-z].+?)\s*$"

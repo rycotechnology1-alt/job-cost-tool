@@ -6,14 +6,14 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT, SUBCONTRACTOR, Record
-from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
-from job_cost_tool.core.normalization.equipment_normalizer import normalize_equipment_record
-from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
-from job_cost_tool.core.normalization.normalizer import normalize_records
-from job_cost_tool.core.parsing.report_parser import parse_report_pages
-from job_cost_tool.core.parsing.tokenizer import tokenize_detail_line
-from job_cost_tool.services.validation_service import validate_records
+from core.models.record import EQUIPMENT, LABOR, MATERIAL, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT, SUBCONTRACTOR, Record
+from core.equipment_keys import derive_equipment_mapping_key
+from core.normalization.equipment_normalizer import normalize_equipment_record
+from core.normalization.labor_normalizer import normalize_labor_record
+from core.normalization.normalizer import normalize_records
+from core.parsing.report_parser import parse_report_pages
+from core.parsing.tokenizer import tokenize_detail_line
+from services.validation_service import validate_records
 
 
 class NormalizationRuleTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
             return_value={
                 "raw_mappings": {"103/F": "Big Boy"},
                 "aliases": {"F": "F"},
@@ -48,7 +48,7 @@ class NormalizationRuleTests(unittest.TestCase):
                 "apprentice_aliases": [],
             },
         ), patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
             return_value={
                 "classifications": ["Big Boy", "Legacy Foreman"],
                 "slots": [
@@ -90,7 +90,7 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
             return_value={
                 "raw_mappings": {"103/F": "Big Boy"},
                 "saved_mappings": [
@@ -98,7 +98,7 @@ class NormalizationRuleTests(unittest.TestCase):
                 ],
             },
         ), patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
             return_value={
                 "classifications": ["Big Boy"],
                 "slots": [{"slot_id": "labor_1", "label": "Big Boy", "active": True}],
@@ -137,14 +137,14 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
             return_value={
                 "aliases": {"F": "F"},
                 "class_mappings": {"*": {"F": "Big Boy"}},
                 "apprentice_aliases": [],
             },
         ), patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
             return_value={
                 "classifications": ["Big Boy"],
                 "slots": [{"slot_id": "labor_1", "label": "Big Boy", "active": True}],
@@ -187,12 +187,12 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
             return_value={
                 "raw_mappings": {"103/F": "Big Boy"},
             },
         ), patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
             return_value={
                 "classifications": ["Big Boy"],
                 "slots": [{"slot_id": "labor_1", "label": "Big Boy", "active": True}],
@@ -230,7 +230,7 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
             return_value={
                 "raw_mappings": {"103/F": "Not In Profile"},
                 "aliases": {"F": "F"},
@@ -238,7 +238,7 @@ class NormalizationRuleTests(unittest.TestCase):
                 "apprentice_aliases": [],
             },
         ), patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
             return_value={
                 "classifications": ["103 Foreman"],
                 "slots": [{"slot_id": "labor_1", "label": "103 Foreman", "active": True}],
@@ -278,10 +278,10 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
             return_value={"raw_mappings": {"103/F": "Big Boy"}},
         ), patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
             return_value={
                 "classifications": ["Big Boy"],
                 "slots": [{"slot_id": "labor_1", "label": "Big Boy", "active": False}],
@@ -323,12 +323,12 @@ class NormalizationRuleTests(unittest.TestCase):
 
         fallback_raw_key = "1.00 / 186 / CULHANE , JOHN P5 REGULAR EARNINGS"
         with patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
             return_value={
                 "raw_mappings": {fallback_raw_key: "21 Labor Fallback"},
             },
         ), patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
             return_value={
                 "classifications": ["21 Labor Fallback"],
                 "slots": [{"slot_id": "labor_1", "label": "21 Labor Fallback", "active": True}],
@@ -488,7 +488,7 @@ class NormalizationRuleTests(unittest.TestCase):
     def test_phase_50_other_job_cost_pr_line_can_validate_after_vendor_correction(self) -> None:
         line = "PR 03/07/26 1.00 / 557 / Summiel , Devin A18 P/Diem Reimb 0.00 ST 200.00"
 
-        with patch("job_cost_tool.core.parsing.tokenizer.infer_record_type_from_phase_context", return_value=MATERIAL):
+        with patch("core.parsing.tokenizer.infer_record_type_from_phase_context", return_value=MATERIAL):
             tokenized = tokenize_detail_line(line, transaction_type=None, phase_code="50", phase_name_raw="Other Job Cost")
 
         record = Record(
@@ -544,10 +544,10 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
+            "core.normalization.labor_normalizer.ConfigLoader.get_labor_mapping",
             return_value={"raw_mappings": {}},
         ), patch(
-            "job_cost_tool.core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
+            "core.normalization.labor_normalizer.ConfigLoader.get_target_labor_classifications",
             return_value={"classifications": [], "slots": []},
         ):
             normalize_labor_record.__globals__["_get_labor_mapping"].cache_clear()
@@ -658,7 +658,7 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
             return_value={
                 "raw_mappings": {"FORD TRANSIT VAN": "Utility Van"},
                 "saved_mappings": [
@@ -666,7 +666,7 @@ class NormalizationRuleTests(unittest.TestCase):
                 ],
             },
         ), patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
             return_value={
                 "classifications": ["Utility Van"],
                 "slots": [{"slot_id": "equipment_1", "label": "Utility Van", "active": True}],
@@ -706,10 +706,10 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
             return_value={"keyword_mappings": {"FORD TRANSIT": "Utility Van"}},
         ), patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
             return_value={
                 "classifications": ["Utility Van"],
                 "slots": [{"slot_id": "equipment_1", "label": "Utility Van", "active": True}],
@@ -749,10 +749,10 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
             return_value={"raw_mappings": {"FORD TRANSIT VAN": "Utility Van"}},
         ), patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
             return_value={
                 "classifications": ["Utility Van"],
                 "slots": [{"slot_id": "equipment_1", "label": "Utility Van", "active": True}],
@@ -789,10 +789,10 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
             return_value={"raw_mappings": {"FORD TRANSIT VAN": "Not In Profile"}},
         ), patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
             return_value={
                 "classifications": ["Utility Van"],
                 "slots": [{"slot_id": "equipment_1", "label": "Utility Van", "active": True}],
@@ -832,10 +832,10 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
             return_value={"raw_mappings": {"FORD TRANSIT VAN": "Utility Van"}},
         ), patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
             return_value={
                 "classifications": ["Utility Van"],
                 "slots": [
@@ -877,10 +877,10 @@ class NormalizationRuleTests(unittest.TestCase):
         )
 
         with patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_equipment_mapping",
             return_value={"raw_mappings": {}},
         ), patch(
-            "job_cost_tool.core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
+            "core.normalization.equipment_normalizer.ConfigLoader.get_target_equipment_classifications",
             return_value={"classifications": [], "slots": []},
         ):
             normalize_equipment_record.__globals__["_get_equipment_mapping"].cache_clear()
@@ -953,16 +953,16 @@ class NormalizationRuleTests(unittest.TestCase):
         phase_cache = normalize_records.__globals__["_get_phase_mapping"]
         phase_cache.cache_clear()
         with patch(
-            "job_cost_tool.core.normalization.normalizer.ConfigLoader.get_phase_mapping",
+            "core.normalization.normalizer.ConfigLoader.get_phase_mapping",
             return_value={},
         ), patch(
-            "job_cost_tool.core.normalization.normalizer.normalize_labor_record",
+            "core.normalization.normalizer.normalize_labor_record",
             side_effect=lambda record: replace(record, warnings=record.warnings + ["labor path"]),
         ), patch(
-            "job_cost_tool.core.normalization.normalizer.normalize_equipment_record",
+            "core.normalization.normalizer.normalize_equipment_record",
             side_effect=lambda record: replace(record, warnings=record.warnings + ["equipment path"]),
         ), patch(
-            "job_cost_tool.core.normalization.normalizer.normalize_material_record",
+            "core.normalization.normalizer.normalize_material_record",
             side_effect=lambda record: replace(record, warnings=record.warnings + ["material path"]),
         ):
             normalized_records = normalize_records([labor_record, equipment_record, material_record])
@@ -1049,13 +1049,13 @@ class NormalizationRuleTests(unittest.TestCase):
         phase_cache = normalize_records.__globals__["_get_phase_mapping"]
         phase_cache.cache_clear()
         with patch(
-            "job_cost_tool.core.normalization.normalizer.ConfigLoader.get_phase_mapping",
+            "core.normalization.normalizer.ConfigLoader.get_phase_mapping",
             return_value={"29": "MATERIAL", "29 .999": "LABOR"},
         ), patch(
-            "job_cost_tool.core.normalization.normalizer.normalize_labor_record",
+            "core.normalization.normalizer.normalize_labor_record",
             side_effect=lambda record: replace(record, warnings=record.warnings + ["labor path"]),
         ), patch(
-            "job_cost_tool.core.normalization.normalizer.normalize_material_record",
+            "core.normalization.normalizer.normalize_material_record",
             side_effect=lambda record: replace(record, warnings=record.warnings + ["material path"]),
         ):
             normalized_records = normalize_records([subphase_record, market_recovery_record])
@@ -1095,7 +1095,7 @@ class NormalizationRuleTests(unittest.TestCase):
         phase_cache = normalize_records.__globals__["_get_phase_mapping"]
         phase_cache.cache_clear()
         with patch(
-            "job_cost_tool.core.normalization.normalizer.ConfigLoader.get_phase_mapping",
+            "core.normalization.normalizer.ConfigLoader.get_phase_mapping",
             return_value={"40": "SUBCONTRACTOR"},
         ):
             normalized_record = normalize_records([record])[0]

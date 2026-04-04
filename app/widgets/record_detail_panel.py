@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from job_cost_tool.core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
+from core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
 
 
 class RecordDetailPanel(QWidget):

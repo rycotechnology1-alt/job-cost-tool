@@ -10,10 +10,10 @@ from typing import Any
 
 from PySide6.QtCore import QObject, Signal
 
-from job_cost_tool.core.config import ConfigLoader, ProfileManager
-from job_cost_tool.core.config.classification_slots import build_slot_config_from_rows
-from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
-from job_cost_tool.core.phase_codes import canonicalize_phase_code, phase_code_sort_key
+from core.config import ConfigLoader, ProfileManager
+from core.config.classification_slots import build_slot_config_from_rows
+from core.equipment_keys import derive_equipment_mapping_key
+from core.phase_codes import canonicalize_phase_code, phase_code_sort_key
 
 
 
@@ -576,9 +576,9 @@ def clear_profile_dependent_caches() -> None:
     """Clear cached config-derived helpers so the active profile can switch safely."""
     ConfigLoader._shared_cache.clear()
 
-    from job_cost_tool.core.export import recap_mapper
-    from job_cost_tool.core.normalization import equipment_normalizer, labor_normalizer, material_normalizer, normalizer
-    from job_cost_tool.core.parsing import line_classifier
+    from core.export import recap_mapper
+    from core.normalization import equipment_normalizer, labor_normalizer, material_normalizer, normalizer
+    from core.parsing import line_classifier
 
     cache_functions = [
         line_classifier._get_input_model,

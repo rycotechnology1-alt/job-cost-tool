@@ -6,12 +6,12 @@ import json
 from pathlib import Path
 from typing import Any, ClassVar
 
-from job_cost_tool.core.config.classification_slots import build_slot_lookup, get_active_slots, normalize_slot_config
-from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
-from job_cost_tool.core.phase_codes import canonicalize_phase_code
-from job_cost_tool.core.review_defaults import normalize_review_rules_config
-from job_cost_tool.core.config.path_utils import get_legacy_config_root
-from job_cost_tool.core.config.profile_manager import ProfileManager
+from core.config.classification_slots import build_slot_lookup, get_active_slots, normalize_slot_config
+from core.equipment_keys import derive_equipment_mapping_key
+from core.phase_codes import canonicalize_phase_code
+from core.review_defaults import normalize_review_rules_config
+from core.config.path_utils import get_legacy_config_root
+from core.config.profile_manager import ProfileManager
 
 
 JsonDict = dict[str, Any]

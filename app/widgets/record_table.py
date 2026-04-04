@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
 
-from job_cost_tool.core.models.record import Record
+from core.models.record import Record
 
 _OMITTED_ROW_COLOR = QColor("#FDECEC")
 

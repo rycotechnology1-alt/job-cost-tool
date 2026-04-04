@@ -6,8 +6,8 @@ from dataclasses import replace
 from functools import lru_cache
 from typing import List, Optional
 
-from job_cost_tool.core.config import ConfigLoader
-from job_cost_tool.core.models.record import (
+from core.config import ConfigLoader
+from core.models.record import (
     EQUIPMENT,
     LABOR,
     MATERIAL,
@@ -18,10 +18,10 @@ from job_cost_tool.core.models.record import (
     SUBCONTRACTOR,
     Record,
 )
-from job_cost_tool.core.normalization.equipment_normalizer import normalize_equipment_record
-from job_cost_tool.core.normalization.labor_normalizer import normalize_labor_record
-from job_cost_tool.core.normalization.material_normalizer import normalize_material_record
-from job_cost_tool.core.phase_codes import canonicalize_phase_code
+from core.normalization.equipment_normalizer import normalize_equipment_record
+from core.normalization.labor_normalizer import normalize_labor_record
+from core.normalization.material_normalizer import normalize_material_record
+from core.phase_codes import canonicalize_phase_code
 
 
 @lru_cache(maxsize=1)

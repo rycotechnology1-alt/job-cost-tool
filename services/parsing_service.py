@@ -2,9 +2,9 @@
 
 from typing import List
 
-from job_cost_tool.core.models.record import Record
-from job_cost_tool.core.parsing.pdf_reader import extract_pdf_pages
-from job_cost_tool.core.parsing.report_parser import parse_report_pages
+from core.models.record import Record
+from core.parsing.pdf_reader import extract_pdf_pages
+from core.parsing.report_parser import parse_report_pages
 
 
 def parse_pdf(file_path: str) -> List[Record]:

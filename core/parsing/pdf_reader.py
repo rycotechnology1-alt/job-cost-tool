@@ -7,7 +7,7 @@ from typing import List
 
 import pdfplumber
 
-from job_cost_tool.core.parsing.types import PDFPageData
+from core.parsing.types import PDFPageData
 
 
 def extract_pdf_pages(file_path: str) -> List[PDFPageData]:

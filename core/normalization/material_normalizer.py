@@ -7,9 +7,9 @@ from dataclasses import replace
 from functools import lru_cache
 from typing import Any, Optional
 
-from job_cost_tool.core.config import ConfigLoader
-from job_cost_tool.core.models.record import MATERIAL, Record
-from job_cost_tool.core.phase_codes import canonicalize_phase_code
+from core.config import ConfigLoader
+from core.models.record import MATERIAL, Record
+from core.phase_codes import canonicalize_phase_code
 
 _EMPLOYEE_EXPENSE_VENDOR = "Employee Expense"
 _REIMBURSEMENT_PATTERN = re.compile(r"\bjob\s+reimb(?:urse(?:ment)?)?\b", re.IGNORECASE)

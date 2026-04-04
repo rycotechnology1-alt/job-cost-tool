@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional
 
-from job_cost_tool.core.models.record import (
+from core.models.record import (
     EQUIPMENT,
     LABOR,
     MATERIAL,
@@ -15,7 +15,7 @@ from job_cost_tool.core.models.record import (
     SUBCONTRACTOR,
     Record,
 )
-from job_cost_tool.core.parsing.line_classifier import (
+from core.parsing.line_classifier import (
     extract_phase_header,
     infer_record_type_from_phase_context,
     is_blank_line,
@@ -25,8 +25,8 @@ from job_cost_tool.core.parsing.line_classifier import (
     is_total_line,
     is_transaction_start,
 )
-from job_cost_tool.core.parsing.tokenizer import tokenize_detail_line
-from job_cost_tool.core.parsing.types import PDFPageData, TokenizationResult
+from core.parsing.tokenizer import tokenize_detail_line
+from core.parsing.types import PDFPageData, TokenizationResult
 
 _PROJECT_HEADER_RE = re.compile(r"^(?P<job_number>\d+)\.\s+(?P<job_name>.+?)(?:\s+-\s+Continued)?$")
 

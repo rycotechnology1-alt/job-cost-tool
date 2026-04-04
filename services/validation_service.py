@@ -2,8 +2,8 @@
 
 from typing import List, Tuple
 
-from job_cost_tool.core.models.record import Record
-from job_cost_tool.core.validation.validator import validate_records as validate_record_list
+from core.models.record import Record
+from core.validation.validator import validate_records as validate_record_list
 
 
 def validate_records(records: List[Record]) -> Tuple[List[Record], List[str]]:

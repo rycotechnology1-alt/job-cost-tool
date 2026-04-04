@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from job_cost_tool.core.models.record import Record
-from job_cost_tool.core.phase_codes import canonicalize_phase_code
+from core.models.record import Record
+from core.phase_codes import canonicalize_phase_code
 
 JsonDict = dict[str, Any]
 

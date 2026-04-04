@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from job_cost_tool.core.models.record import LABOR, MATERIAL, PROJECT_MANAGEMENT, SUBCONTRACTOR
-from job_cost_tool.core.parsing.report_parser import parse_report_pages
+from core.models.record import LABOR, MATERIAL, PROJECT_MANAGEMENT, SUBCONTRACTOR
+from core.parsing.report_parser import parse_report_pages
 
 
 class ReportParserTests(unittest.TestCase):

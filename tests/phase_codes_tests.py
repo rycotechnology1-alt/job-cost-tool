@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from job_cost_tool.core.parsing.line_classifier import extract_phase_header
-from job_cost_tool.core.phase_codes import canonicalize_phase_code, phase_code_sort_key
+from core.parsing.line_classifier import extract_phase_header
+from core.phase_codes import canonicalize_phase_code, phase_code_sort_key
 
 
 class PhaseCodeTests(unittest.TestCase):

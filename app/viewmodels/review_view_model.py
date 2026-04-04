@@ -7,15 +7,15 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 
-from job_cost_tool.core.config import ConfigLoader, ProfileManager
-from job_cost_tool.core.models.record import Record
-from job_cost_tool.core.equipment_keys import derive_equipment_mapping_key
-from job_cost_tool.core.phase_codes import canonicalize_phase_code
-from job_cost_tool.core.review_defaults import apply_default_omit_rules
-from job_cost_tool.services.normalization_service import normalize_records
-from job_cost_tool.services.parsing_service import parse_pdf
-from job_cost_tool.services.validation_service import validate_records
-from job_cost_tool.app.viewmodels.settings_view_model import (
+from core.config import ConfigLoader, ProfileManager
+from core.models.record import Record
+from core.equipment_keys import derive_equipment_mapping_key
+from core.phase_codes import canonicalize_phase_code
+from core.review_defaults import apply_default_omit_rules
+from services.normalization_service import normalize_records
+from services.parsing_service import parse_pdf
+from services.validation_service import validate_records
+from app.viewmodels.settings_view_model import (
     persist_observed_equipment_raw_values,
     persist_observed_labor_raw_values,
 )

@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def get_project_root() -> Path:
-    """Return the root directory of the job_cost_tool package."""
+    """Return the root directory of the package."""
     return Path(__file__).resolve().parents[2]
 
 

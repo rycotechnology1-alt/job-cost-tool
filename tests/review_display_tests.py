@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from job_cost_tool.core.models.record import LABOR, Record
+from core.models.record import LABOR, Record
 
 
 class ReviewDisplayTests(unittest.TestCase):

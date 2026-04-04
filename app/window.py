@@ -18,13 +18,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from job_cost_tool.app.viewmodels.review_view_model import ReviewViewModel
-from job_cost_tool.app.widgets.issues_panel import IssuesPanel
-from job_cost_tool.app.widgets.record_detail_panel import RecordDetailPanel
-from job_cost_tool.app.widgets.record_table import RecordTable
-from job_cost_tool.app.widgets.settings_dialog import SettingsDialog
-from job_cost_tool.core.config import ConfigLoader, ProfileManager
-from job_cost_tool.services.export_service import export_records_to_recap
+from app.viewmodels.review_view_model import ReviewViewModel
+from app.widgets.issues_panel import IssuesPanel
+from app.widgets.record_detail_panel import RecordDetailPanel
+from app.widgets.record_table import RecordTable
+from app.widgets.settings_dialog import SettingsDialog
+from core.config import ConfigLoader, ProfileManager
+from services.export_service import export_records_to_recap
 
 
 class MainWindow(QMainWindow):

@@ -2,8 +2,8 @@
 
 from typing import List
 
-from job_cost_tool.core.models.record import Record
-from job_cost_tool.core.normalization.normalizer import normalize_records as normalize_record_list
+from core.models.record import Record
+from core.normalization.normalizer import normalize_records as normalize_record_list
 
 
 def normalize_records(records: List[Record]) -> List[Record]:

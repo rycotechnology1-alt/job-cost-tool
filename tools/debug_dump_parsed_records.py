@@ -11,8 +11,8 @@ from typing import Iterable
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from job_cost_tool.core.models.record import Record
-from job_cost_tool.services.parsing_service import parse_pdf
+from core.models.record import Record
+from services.parsing_service import parse_pdf
 
 CSV_COLUMNS = (
     "record_index",

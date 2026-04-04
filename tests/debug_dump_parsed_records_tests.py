@@ -5,8 +5,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from job_cost_tool.core.models.record import EQUIPMENT, Record
-from job_cost_tool.tools.debug_dump_parsed_records import _default_output_path, _record_to_row
+from core.models.record import EQUIPMENT, Record
+from tools.debug_dump_parsed_records import _default_output_path, _record_to_row
 
 
 class DebugDumpParsedRecordsTests(unittest.TestCase):
