@@ -1,0 +1,79 @@
+{
+  "slots": [
+    {
+      "slot_id": "equipment_1",
+      "label": "Excavator/ Drill Rig",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_2",
+      "label": "Bucket Truck",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_3",
+      "label": "Digger Derrick",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_4",
+      "label": "Backyard Machine",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_5",
+      "label": "3-Reel Trailer",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_6",
+      "label": "Pick-up Truck",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_7",
+      "label": "Utility Van",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_8",
+      "label": "Winch Truck",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_9",
+      "label": "Load Lugger",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_10",
+      "label": "Power Fed Trailer",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_11",
+      "label": "1-Reel Trailer",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_12",
+      "label": "Boom Truck",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_13",
+      "label": "Box Truck",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_14",
+      "label": "Pulling/Tension Trailer",
+      "active": true
+    },
+    {
+      "slot_id": "equipment_15",
+      "label": "Pole Trailer",
+      "active": true
+    }
+  ]
+}

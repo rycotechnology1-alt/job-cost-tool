@@ -1,0 +1,312 @@
+{
+  "case_name": "material_vendor_resolution",
+  "source_document": {
+    "filename": "report.pdf"
+  },
+  "trusted_profile": {
+    "profile_name": "default",
+    "bundle": {
+      "profile.json": {
+        "profile_name": "default",
+        "display_name": "Default Profile",
+        "description": "Parity harness default profile",
+        "version": "1.0",
+        "template_filename": "recap_template.xlsx",
+        "is_active": false
+      },
+      "labor_mapping.json": {
+        "raw_mappings": {},
+        "saved_mappings": []
+      },
+      "equipment_mapping.json": {
+        "raw_mappings": {},
+        "saved_mappings": []
+      },
+      "phase_mapping.json": {
+        "50": "MATERIAL"
+      },
+      "vendor_normalization.json": {},
+      "input_model.json": {
+        "report_type": "vista_job_cost",
+        "section_headers": {}
+      },
+      "target_labor_classifications.json": {
+        "slots": [
+          {
+            "slot_id": "labor_1",
+            "label": "103 Journeyman",
+            "active": true
+          }
+        ],
+        "classifications": [
+          "103 Journeyman"
+        ]
+      },
+      "target_equipment_classifications.json": {
+        "slots": [
+          {
+            "slot_id": "equipment_1",
+            "label": "Pick-up Truck",
+            "active": true
+          }
+        ],
+        "classifications": [
+          "Pick-up Truck"
+        ]
+      },
+      "rates.json": {
+        "labor_rates": {},
+        "equipment_rates": {}
+      },
+      "review_rules.json": {
+        "default_omit_rules": []
+      },
+      "recap_template_map.json": {
+        "worksheet_name": "Recap",
+        "header_fields": {
+          "project": {
+            "cell": "B6"
+          },
+          "job_number": {
+            "cell": "H6"
+          }
+        },
+        "labor_rows": {
+          "103 Journeyman": {
+            "st_hours": "B14",
+            "ot_hours": "C14",
+            "dt_hours": "D14",
+            "st_rate": "E14",
+            "ot_rate": "F14",
+            "dt_rate": "G14"
+          }
+        },
+        "equipment_rows": {
+          "Pick-up Truck": {
+            "hours_qty": "B32",
+            "rate": "D32"
+          }
+        },
+        "materials_section": {
+          "start_row": 27,
+          "end_row": 41,
+          "columns": {
+            "name": "G",
+            "amount": "H"
+          }
+        },
+        "subcontractors_section": {
+          "start_row": 46,
+          "end_row": 50,
+          "columns": {
+            "name": "A",
+            "amount": "C"
+          }
+        },
+        "permits_fees_section": {
+          "start_row": 55,
+          "end_row": 56,
+          "columns": {
+            "description": "A",
+            "amount": "C"
+          }
+        },
+        "police_detail_section": {
+          "start_row": 61,
+          "end_row": 62,
+          "columns": {
+            "description": "A",
+            "amount": "C"
+          }
+        },
+        "sales_tax_area": {
+          "rate_label_cell": "G60",
+          "rate_input_cell": "H60",
+          "amount_label_cell": "G61",
+          "amount_formula_cell": "H61",
+          "material_total_cell": "H54"
+        }
+      }
+    },
+    "template_seed": {
+      "filename": "recap_template.xlsx",
+      "worksheet_name": "Recap",
+      "cells": {
+        "A1": {
+          "value": "Parity Template"
+        },
+        "A6": {
+          "value": "Project"
+        },
+        "G6": {
+          "value": "Job Number"
+        },
+        "G25": {
+          "value": "MATERIALS"
+        },
+        "G26": {
+          "value": "Vendor"
+        },
+        "H26": {
+          "value": "Amount"
+        },
+        "G27": {
+          "value": null,
+          "style": {
+            "fill": "FFF0D8",
+            "bold": true
+          }
+        },
+        "H27": {
+          "value": null,
+          "style": {
+            "fill": "D8EEF5",
+            "number_format": "$#,##0.00"
+          }
+        },
+        "H42": {
+          "value": "=SUM(H27:H41)"
+        },
+        "H54": {
+          "value": 0
+        },
+        "G60": {
+          "value": "Sales Tax Rate"
+        },
+        "H60": {
+          "value": 0
+        },
+        "G61": {
+          "value": "Sales Tax"
+        },
+        "H61": {
+          "value": "=H54*H60"
+        }
+      }
+    }
+  },
+  "parsed_records": [
+    {
+      "record_type": "material",
+      "phase_code": "50",
+      "cost": 100.0,
+      "hours": null,
+      "hour_type": null,
+      "union_code": null,
+      "labor_class_normalized": null,
+      "vendor_name": null,
+      "equipment_description": null,
+      "equipment_category": null,
+      "confidence": 0.92,
+      "raw_description": "Material line",
+      "labor_class_raw": null,
+      "job_number": "JOB-100",
+      "job_name": "Sample Project",
+      "transaction_type": "AP",
+      "phase_name_raw": null,
+      "employee_id": null,
+      "employee_name": null,
+      "vendor_id_raw": null,
+      "source_page": 1,
+      "source_line_text": "Material source",
+      "warnings": []
+    }
+  ],
+  "scripted_edit_batches": [
+    [
+      {
+        "record_key": "record-0",
+        "changed_fields": {
+          "vendor_name_normalized": "Vendor Approved"
+        }
+      }
+    ]
+  ],
+  "expected": {
+    "base_review": {
+      "blocking_issues": [
+        "Record on page 1 (phase 50, material): Material/vendor identity is missing for recap preparation."
+      ],
+      "records": [
+        {
+          "record_key": "record-0",
+          "record_type": "material",
+          "record_type_normalized": "material",
+          "phase_code": "50",
+          "raw_description": "Material line",
+          "cost": 100.0,
+          "hours": null,
+          "hour_type": null,
+          "job_number": "JOB-100",
+          "job_name": "Sample Project",
+          "transaction_type": "AP",
+          "source_page": 1,
+          "source_line_text": "Material source",
+          "vendor_name": null,
+          "vendor_name_normalized": null,
+          "recap_labor_classification": null,
+          "equipment_category": null,
+          "warnings": [
+            "Material-oriented record is missing a vendor name for recap preparation.",
+            "BLOCKING: Material/vendor identity is missing for recap preparation."
+          ],
+          "is_omitted": false
+        }
+      ]
+    },
+    "edited_review": {
+      "blocking_issues": [],
+      "records": [
+        {
+          "record_key": "record-0",
+          "record_type": "material",
+          "record_type_normalized": "material",
+          "phase_code": "50",
+          "raw_description": "Material line",
+          "cost": 100.0,
+          "hours": null,
+          "hour_type": null,
+          "job_number": "JOB-100",
+          "job_name": "Sample Project",
+          "transaction_type": "AP",
+          "source_page": 1,
+          "source_line_text": "Material source",
+          "vendor_name": null,
+          "vendor_name_normalized": "Vendor Approved",
+          "recap_labor_classification": null,
+          "equipment_category": null,
+          "warnings": [
+            "Material-oriented record is missing a vendor name for recap preparation.",
+            "Medium-confidence record should be reviewed before export."
+          ],
+          "is_omitted": false
+        }
+      ]
+    },
+    "export_workbook": {
+      "worksheet_name": "Recap",
+      "cells": {
+        "A1": {
+          "value": "Parity Template"
+        },
+        "B6": {
+          "value": "Sample Project"
+        },
+        "H6": {
+          "value": "JOB-100"
+        },
+        "G27": {
+          "value": "Vendor Approved",
+          "style_id": 1
+        },
+        "H27": {
+          "value": 100,
+          "style_id": 2
+        },
+        "H42": {
+          "value": "=SUM(H27:H41)"
+        }
+      }
+    }
+  }
+}

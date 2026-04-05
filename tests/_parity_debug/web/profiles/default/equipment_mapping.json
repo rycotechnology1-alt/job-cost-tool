@@ -1,0 +1,450 @@
+{
+  "raw_mappings": {
+    "CHEVROLET SILVERADO": "Pick-up Truck",
+    "INTERNATIONAL KNUCKLEBOOM FLATBED H.R.": "Boom Truck",
+    "PETERBILT 567 CRANE": "Boom Truck",
+    "CHEVROLET 6500 26FT BOX TRUCK (LOOPS)": "Box Truck",
+    "DODGE RAM 3500 BOX/UTILITY TRUCK": "Box Truck",
+    "DODGE RAM 5500 BOX/UTILTY BODY": "Box Truck",
+    "FORD E350 BOX TRUCK": "Box Truck",
+    "FORD E350 BOX/VAN": "Box Truck",
+    "FORD F350 BOX TRUCK": "Box Truck",
+    "FORD F550 BOX TRUCK": "Box Truck",
+    "FORD F600 BOX TRUCK": "Box Truck",
+    "FREIGHTLINER BOX TRUCK": "Box Truck",
+    "GMC 3500 BOX TRUCK": "Box Truck",
+    "ISUZU 16' BOX TRUCK": "Box Truck",
+    "ISUZU 16FT BOX TRUCK W/LIFT GATE": "Box Truck",
+    "ISUZU BOX TRUCK": "Box Truck",
+    "DODGE BUCKET/MH": "Bucket Truck",
+    "DODGE RAM 5500 BUCKET TRUCK": "Bucket Truck",
+    "DODGE RAM 5500 BUCKET/MAT HANDLER": "Bucket Truck",
+    "DODGE RAM 5500 BUCKET/MH": "Bucket Truck",
+    "DODGE RAM 5500 BUCKET/MH TRUCK": "Bucket Truck",
+    "FORD F550 BUCKET/MAT HANDLER": "Bucket Truck",
+    "FORD F550 BUCKET/MH": "Bucket Truck",
+    "FORD F550 HI-RAI BUCKET TRUCK": "Bucket Truck",
+    "FORD F600 BUCKET/MAT HANDLER": "Bucket Truck",
+    "FORD F600 BUCKET/MAT HANDLER TRUCK": "Bucket Truck",
+    "FREIGHTLINER BUCKET/MAT HANDLER": "Bucket Truck",
+    "FREIGHTLINER BUCKET/MH": "Bucket Truck",
+    "WESTERN STAR HI-RAIL BUCKET TRUCK": "Bucket Truck",
+    "C 618/2025 FREIGHTLINER DIGGER DERRICK/1 -5.00 -300.00": "Digger Derrick",
+    "FORD F750 DIGGER DERRICK": "Digger Derrick",
+    "FREIGHTLINER DIGGER DERRICK": "Digger Derrick",
+    "FREIGHTLINER DIGGER DERRICK H.R.": "Digger Derrick",
+    "CHEVROLET 2500 PICK UP": "Pick-up Truck",
+    "CHEVROLET 2500 SILVERADO UTILITY BODY": "Pick-up Truck",
+    "CHEVROLET 4500 UTILITY BODY": "Pick-up Truck",
+    "CHEVROLET EXPRESS UTILITY TRUCK": "Pick-up Truck",
+    "CHEVROLET SILVERADO 4500HD UTILITY BODY": "Pick-up Truck",
+    "CHEVROLET SILVERADO PICK UP TRUCK": "Pick-up Truck",
+    "FORD E350 UTILITY BODY": "Pick-up Truck",
+    "FORD ESCAPE": "Pick-up Truck",
+    "FORD F350 DUMP TRUCK W/PLOW": "Pick-up Truck",
+    "FORD F350 UTILITY BODY": "Pick-up Truck",
+    "FORD F350 UTILITY TRUCK": "Pick-up Truck",
+    "FORD F450 UTILITY TRUCK": "Pick-up Truck",
+    "FORD F750 UTILTY/CRANE H.R.": "Pick-up Truck",
+    "FORD MAVERICK": "Pick-up Truck",
+    "ISUZU UTILITY BODY W/LIFT GATE": "Pick-up Truck",
+    "KEVIN MCELLIOTT-PERSONAL": "Pick-up Truck",
+    "CHEVROLET 2500 VAN": "Utility Van",
+    "CHEVROLET EXPRESS 2500 VAN": "Utility Van",
+    "CHEVROLET EXPRESS VAN": "Utility Van",
+    "CHEVROLET VAN 1500": "Utility Van",
+    "FORD TRANSIT VAN": "Utility Van",
+    "GMC SAVANA CARGO VAN": "Utility Van",
+    "GMC SAVANA VAN": "Utility Van"
+  },
+  "saved_mappings": [
+    {
+      "raw_description": "26 EQUIPMENT FROM 230728 TO 230724 - WRONG JOB # (JCA 0078)",
+      "target_category": ""
+    },
+    {
+      "raw_description": "26 EQUIPMENT FROM 240057 TO 250763 - WRONG JOB # (JCA 0078)",
+      "target_category": ""
+    },
+    {
+      "raw_description": "26 EQUIPMENT FROM 240361 TO 250108-044 (JCA 0078)",
+      "target_category": ""
+    },
+    {
+      "raw_description": "26 MISCODE DAVID COELLA 2/6/26 433/2019 ISUZU",
+      "target_category": ""
+    },
+    {
+      "raw_description": "A 512/2022 FORD F550 BUCKET/MAT HANDLER/1 JC 02/04/26 EQUIPMENT FROM 230566 TO 260089 (JCA 0078) -4.00 -152.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "A 512/2022 FORD F550 BUCKET/MAT HANDLER/1 JC 02/22/26 EQUIPMENT FROM 240057 TO 250763 - WRONG JOB # (JCA 0078) -4.00 -152.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "ALTEC TRACKED BACK YARD DIGGER DERRICK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "B 456/2018 FREIGHTLINER DIGGER DERRICK/1 -8.00 -480.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "BOBCAT E35 COMPACT MINI EXCAVATOR",
+      "target_category": ""
+    },
+    {
+      "raw_description": "CAT 305E EXCAVATOR",
+      "target_category": ""
+    },
+    {
+      "raw_description": "CHEVROLET 4500 RACK TRUCK W/LIFT GATE",
+      "target_category": ""
+    },
+    {
+      "raw_description": "CHEVROLET SILVERADO",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "CHEVROLET UTILITY BODY W/LIFT GATE",
+      "target_category": ""
+    },
+    {
+      "raw_description": "DODGE RAM PICK-UP",
+      "target_category": ""
+    },
+    {
+      "raw_description": "E 577/2022 DODGE RAM 5500 BUCKET/MH/1 -8.00 -304.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "E 577/2022 DODGE RAM 5500 BUCKET/MH/1 JC 03/20/26 MISCODE STEVEN REYNOLDS 03/12/26 577/2022 DODGE RAM -8.00 -304.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "FORD F150 EXTENEDE CAB PICK UP TRUCK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "FORD F150 EXTENEDED CAB PICK-UP TRUCK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "FORD F150 PICK UP TRUCK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "FORD F250 CREW CAB PICK UP TRUCK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "FORD F650 10FT DUMP TRUCK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "FORD F650 DUMP TRUCK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "FORD F650 HI RAIL RACK BODY W/LIFT GATE",
+      "target_category": ""
+    },
+    {
+      "raw_description": "FORD F650XL DUMP TRUCK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "HINO 15' CRASH TRUCK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "HINO 18' CRASH TRUCK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "I 516/2022 GMC 3500 BOX TRUCK/1 -8.00 -200.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "INT'L ROCK TRUCK H.R.",
+      "target_category": ""
+    },
+    {
+      "raw_description": "ISUZU NPRHD RACK TRUCK",
+      "target_category": ""
+    },
+    {
+      "raw_description": "ISUZU RACK TRUCK W/LIFT GATE",
+      "target_category": ""
+    },
+    {
+      "raw_description": "ISUZU UTILITY BODY W/LIFT GATE/1 JC 02/26/26 MISCODE DAVID COELLA 2/2/26 433/2019 ISUZU -8.00 -200.00 JC 02/26/26 MISCODE DAVID COELLA 2/3/26 433/2019 ISUZU -8.00 -200.00 JC 02/26/26 MISCODE DAVID COELLA 2/4/26 433/2019 ISUZU -8.00 -200.00 JC 02/26/26 MISCODE DAVID COELLA 2/5/26 433/2019 ISUZU -8.00 -200.00 JC 02/26/26 MISCODE DAVID COELLA 2/6/26 433/2019 ISUZU -8.00 -200.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "KUBOTA TRACKED SKID STEER",
+      "target_category": ""
+    },
+    {
+      "raw_description": "KUBOTA WALK BEHIND SAW",
+      "target_category": ""
+    },
+    {
+      "raw_description": "L 513/2022 FORD F550 BUCKET/MAT HANDLER/1 JC 02/02/26 EQUIPMENT FROM 240361 TO 250108-083 (JCA 0078) -3.00 -114.00 JC 02/24/26 EQUIPMENT FROM 240361 TO 250108-044 (JCA 0078) -2.00 -70.00 JC 02/24/26 EQUIPMENT FROM 240361 TO 250108-044 (JCA 0078) -2.00 -76.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "L 513/2022 FORD F550 BUCKET/MAT HANDLER/1 JC 02/12/26 EQUIPMENT FROM 230728 TO 230724 - WRONG JOB # (JCA 0078) -3.50 -133.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "M 579/2022 DODGE BUCKET/MH/1 JC 02/11/26 EQUIPMENT FROM 250793 TO 250108-086 (JCA 0078) -3.00 -114.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "M 579/2022 DODGE BUCKET/MH/1 JC 02/21/26 EQUIPMENT FROM 110394 TO 250108-090 (JCA 0078) -2.00 -76.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "S 608/2024 CHEVROLET 2500 SILVERADO UTILITY BODY/1 JC 02/20/26 MISCODE JAMES LEONARD 1/08/26 2500 SILVERADO UTILITY BODY -8.00 -224.00 JC 02/20/26 MISCODE JAMES LEONARD 1/09/26 2500 SILVERADO UTILITY BODY -8.00 -224.00 JC 02/20/26 MISCODE JAMES LEONARD 2/09/26 2500 SILVERADO UTILITY BODY -8.00 -224.00 JC 02/20/26 MISCODE JAMES LEONARD 2/10/26 2500 SILVERADO UTILITY BODY -8.00 -224.00 JC 02/20/26 MISCODE JAMES LEONARD 2/11/26 2500 SILVERADO UTILITY BODY -8.00 -224.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "SULLAIR TOW BEHIND COMPRESSOR",
+      "target_category": ""
+    },
+    {
+      "raw_description": "SURE TRAC TRAILER",
+      "target_category": ""
+    },
+    {
+      "raw_description": "W 417/2019 FORD F550 BUCKET/MH/1 JC 02/20/26 EQUIPMENT FROM 160595 TO 250108-086 (JCA 0078) -3.00 -114.00 JC 02/20/26 EQUIPMENT FROM 160595 TO 250108-086 (JCA 0078) -3.00 -105.00",
+      "target_category": ""
+    },
+    {
+      "raw_description": "WANCO ARROW BOARD",
+      "target_category": ""
+    },
+    {
+      "raw_description": "INTERNATIONAL KNUCKLEBOOM FLATBED H.R.",
+      "target_category": "Boom Truck"
+    },
+    {
+      "raw_description": "PETERBILT 567 CRANE",
+      "target_category": "Boom Truck"
+    },
+    {
+      "raw_description": "CHEVROLET 6500 26FT BOX TRUCK (LOOPS)",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "DODGE RAM 3500 BOX/UTILITY TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "DODGE RAM 5500 BOX/UTILTY BODY",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FORD E350 BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FORD E350 BOX/VAN",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FORD F350 BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FORD F550 BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FORD F600 BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "FREIGHTLINER BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "GMC 3500 BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "ISUZU 16' BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "ISUZU 16FT BOX TRUCK W/LIFT GATE",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "ISUZU BOX TRUCK",
+      "target_category": "Box Truck"
+    },
+    {
+      "raw_description": "DODGE BUCKET/MH",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "DODGE RAM 5500 BUCKET TRUCK",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "DODGE RAM 5500 BUCKET/MAT HANDLER",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "DODGE RAM 5500 BUCKET/MH",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "DODGE RAM 5500 BUCKET/MH TRUCK",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "FORD F550 BUCKET/MAT HANDLER",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "FORD F550 BUCKET/MH",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "FORD F550 HI-RAI BUCKET TRUCK",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "FORD F600 BUCKET/MAT HANDLER",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "FORD F600 BUCKET/MAT HANDLER TRUCK",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "FREIGHTLINER BUCKET/MAT HANDLER",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "FREIGHTLINER BUCKET/MH",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "WESTERN STAR HI-RAIL BUCKET TRUCK",
+      "target_category": "Bucket Truck"
+    },
+    {
+      "raw_description": "C 618/2025 FREIGHTLINER DIGGER DERRICK/1 -5.00 -300.00",
+      "target_category": "Digger Derrick"
+    },
+    {
+      "raw_description": "FORD F750 DIGGER DERRICK",
+      "target_category": "Digger Derrick"
+    },
+    {
+      "raw_description": "FREIGHTLINER DIGGER DERRICK",
+      "target_category": "Digger Derrick"
+    },
+    {
+      "raw_description": "FREIGHTLINER DIGGER DERRICK H.R.",
+      "target_category": "Digger Derrick"
+    },
+    {
+      "raw_description": "CHEVROLET 2500 PICK UP",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "CHEVROLET 2500 SILVERADO UTILITY BODY",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "CHEVROLET 4500 UTILITY BODY",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "CHEVROLET EXPRESS UTILITY TRUCK",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "CHEVROLET SILVERADO 4500HD UTILITY BODY",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "CHEVROLET SILVERADO PICK UP TRUCK",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "FORD E350 UTILITY BODY",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "FORD ESCAPE",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "FORD F350 DUMP TRUCK W/PLOW",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "FORD F350 UTILITY BODY",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "FORD F350 UTILITY TRUCK",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "FORD F450 UTILITY TRUCK",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "FORD F750 UTILTY/CRANE H.R.",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "FORD MAVERICK",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "ISUZU UTILITY BODY W/LIFT GATE",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "KEVIN MCELLIOTT-PERSONAL",
+      "target_category": "Pick-up Truck"
+    },
+    {
+      "raw_description": "CHEVROLET 2500 VAN",
+      "target_category": "Utility Van"
+    },
+    {
+      "raw_description": "CHEVROLET EXPRESS 2500 VAN",
+      "target_category": "Utility Van"
+    },
+    {
+      "raw_description": "CHEVROLET EXPRESS VAN",
+      "target_category": "Utility Van"
+    },
+    {
+      "raw_description": "CHEVROLET VAN 1500",
+      "target_category": "Utility Van"
+    },
+    {
+      "raw_description": "FORD TRANSIT VAN",
+      "target_category": "Utility Van"
+    },
+    {
+      "raw_description": "GMC SAVANA CARGO VAN",
+      "target_category": "Utility Van"
+    },
+    {
+      "raw_description": "GMC SAVANA VAN",
+      "target_category": "Utility Van"
+    }
+  ]
+}

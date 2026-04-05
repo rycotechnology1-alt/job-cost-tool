@@ -1,0 +1,18 @@
+{
+  "case_name": "17harness",
+  "notes": "Clean revision-0 reference case from desktop production testing. Useful as a larger no-review export parity sample with no scripted edits.",
+  "source_document": {
+    "filename": "report.pdf"
+  },
+  "reference_export": {
+    "filename": "reference_export.xlsx"
+  },
+  "trusted_profile": {
+    "profile_name": "default",
+    "template_filename": "recap_template.xlsx",
+    "profile_source_dir": "../../../profiles/default"
+  },
+  "scripted_edit_batches": [],
+  "target_export_revision": 0,
+  "expected": {}
+}

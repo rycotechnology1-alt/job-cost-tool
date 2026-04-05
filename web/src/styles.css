@@ -1,0 +1,245 @@
+:root {
+  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+  color: #13212b;
+  background:
+    radial-gradient(circle at top right, rgba(207, 229, 241, 0.75), transparent 32%),
+    linear-gradient(180deg, #f7f3ea 0%, #eef4f6 100%);
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.72rem 1.2rem;
+  background: #0f5d6a;
+  color: #f9fbfb;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #d8e6e6;
+  color: #17333a;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+input,
+select {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #b7cad0;
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.7rem 0.8rem;
+  border-bottom: 1px solid #dbe4e6;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #46616b;
+}
+
+.app-shell {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 2rem 1.1rem 3rem;
+}
+
+.hero {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.9fr);
+  align-items: start;
+  margin-bottom: 1.5rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.25rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6b5944;
+}
+
+.hero h1 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2.4rem, 4vw, 4rem);
+  line-height: 1;
+}
+
+.hero-copy {
+  max-width: 55rem;
+  margin: 0.8rem 0 0;
+  color: #2d4a54;
+}
+
+.status-card,
+.panel,
+.banner {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(170, 193, 198, 0.7);
+  border-radius: 1.3rem;
+  box-shadow: 0 18px 48px rgba(20, 46, 54, 0.08);
+}
+
+.status-card {
+  padding: 1rem 1.1rem;
+}
+
+.status-card p,
+.summary-card p,
+.panel p,
+.banner {
+  margin: 0.35rem 0 0;
+}
+
+.muted {
+  color: #5d7480;
+}
+
+.banner {
+  padding: 0.95rem 1.1rem;
+  margin-bottom: 1.2rem;
+}
+
+.banner.error {
+  border-color: rgba(176, 73, 54, 0.34);
+  background: rgba(252, 239, 232, 0.94);
+  color: #7b291a;
+}
+
+.workflow-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.panel {
+  padding: 1.15rem;
+}
+
+.panel-heading h2,
+.edit-card h3 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.panel-heading p {
+  color: #46616b;
+}
+
+.form-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.field span,
+.summary-list dt,
+.status-block strong {
+  font-size: 0.86rem;
+  color: #4e6770;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+
+.summary-card,
+.edit-card,
+.status-block {
+  margin-top: 1rem;
+  padding: 0.95rem 1rem;
+  border-radius: 1rem;
+  background: rgba(243, 248, 248, 0.92);
+  border: 1px solid #d7e3e5;
+}
+
+.summary-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0.6rem 0 0;
+}
+
+.summary-list.compact {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.summary-list div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.summary-list dt,
+.summary-list dd {
+  margin: 0;
+}
+
+.summary-list dd {
+  word-break: break-word;
+}
+
+.message-list {
+  margin: 0.55rem 0 0;
+  padding-left: 1.15rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  margin-top: 1rem;
+}
+
+.empty-state {
+  color: #59717a;
+}
+
+@media (max-width: 920px) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell {
+    padding: 1.25rem 0.85rem 2rem;
+  }
+}

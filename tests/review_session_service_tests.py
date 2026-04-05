@@ -1,0 +1,439 @@
+"""Service-level tests for review-session overlays and exact-revision export lineage."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import patch
+
+from openpyxl import Workbook, load_workbook
+
+from core.config import ConfigLoader, ProfileManager
+from core.models import MATERIAL, PendingRecordEdit, Record
+from infrastructure.persistence.sqlite_lineage_store import SqliteLineageStore
+from infrastructure.storage import LocalRuntimeFileStore
+from services.processing_run_service import ProcessingRunService
+from services.review_session_service import HistoricalExportUnavailableError, ReviewSessionService
+
+
+TEST_ROOT = Path("tests/_review_session_tmp")
+
+
+class ReviewSessionServiceTests(unittest.TestCase):
+    """Verify append-only review overlays and exact-revision export generation."""
+
+    def setUp(self) -> None:
+        ConfigLoader.clear_runtime_caches()
+        shutil.rmtree(TEST_ROOT, ignore_errors=True)
+        (TEST_ROOT / "profiles" / "default").mkdir(parents=True, exist_ok=True)
+        (TEST_ROOT / "legacy_config").mkdir(parents=True, exist_ok=True)
+        self.settings_path = TEST_ROOT / "app_settings.json"
+        self.source_document_path = TEST_ROOT / "sample_report.pdf"
+        self.source_document_path.write_bytes(b"sample pdf bytes")
+        self.created_at = datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc)
+
+        self._write_profile_bundle()
+        self._write_json(self.settings_path, {"active_profile": "default"})
+        self._write_json(TEST_ROOT / "legacy_config" / "phase_catalog.json", {"phases": []})
+
+        self.profile_manager = ProfileManager(
+            profiles_root=TEST_ROOT / "profiles",
+            settings_path=self.settings_path,
+            legacy_config_root=TEST_ROOT / "legacy_config",
+        )
+        self.lineage_store = SqliteLineageStore()
+        self.processing_run_service = ProcessingRunService(
+            lineage_store=self.lineage_store,
+            profile_manager=self.profile_manager,
+            engine_version="engine-1",
+            now_provider=lambda: self.created_at,
+        )
+        self.review_session_service = ReviewSessionService(
+            lineage_store=self.lineage_store,
+            now_provider=lambda: self.created_at,
+        )
+
+    def tearDown(self) -> None:
+        self.lineage_store.close()
+        shutil.rmtree(TEST_ROOT, ignore_errors=True)
+        ConfigLoader.clear_runtime_caches()
+
+    def test_review_edits_are_persisted_as_overlays_without_mutating_run_records(self) -> None:
+        processing_result = self._create_processing_run()
+
+        updated_state = self.review_session_service.apply_review_edits(
+            processing_result.processing_run.processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"vendor_name_normalized": "Vendor B"},
+                )
+            ],
+        )
+
+        persisted_run_records = self.lineage_store.list_run_records(processing_result.processing_run.processing_run_id)
+        persisted_edits = self.lineage_store.list_reviewed_record_edits(updated_state.review_session.review_session_id)
+
+        self.assertEqual(updated_state.review_session.current_revision, 1)
+        self.assertEqual(updated_state.session_revision, 1)
+        self.assertEqual(updated_state.records[0].vendor_name_normalized, "Vendor B")
+        self.assertEqual(persisted_run_records[0].canonical_record["vendor_name_normalized"], "Vendor A")
+        self.assertEqual(persisted_edits[0].changed_fields, {"vendor_name_normalized": "Vendor B"})
+
+    def test_reopening_review_session_resumes_latest_revision_for_the_run(self) -> None:
+        processing_result = self._create_processing_run()
+        self.review_session_service.apply_review_edits(
+            processing_result.processing_run.processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"vendor_name_normalized": "Vendor B"},
+                )
+            ],
+        )
+
+        reopened_state = self.review_session_service.open_review_session(
+            processing_result.processing_run.processing_run_id,
+        )
+
+        self.assertEqual(reopened_state.review_session.current_revision, 1)
+        self.assertEqual(reopened_state.session_revision, 1)
+        self.assertEqual(reopened_state.records[0].vendor_name_normalized, "Vendor B")
+
+    def test_export_uses_one_exact_session_revision_even_after_later_edits_exist(self) -> None:
+        processing_result = self._create_processing_run()
+        processing_run_id = processing_result.processing_run.processing_run_id
+
+        self.review_session_service.apply_review_edits(
+            processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"vendor_name_normalized": "Vendor Rev 1"},
+                )
+            ],
+        )
+        self.review_session_service.apply_review_edits(
+            processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"vendor_name_normalized": "Vendor Rev 2"},
+                )
+            ],
+        )
+
+        revision_one_output = TEST_ROOT / "exports" / "revision-1.xlsx"
+        revision_one_output.parent.mkdir(parents=True, exist_ok=True)
+        export_result = self.review_session_service.export_session_revision(
+            processing_run_id,
+            session_revision=1,
+            output_path=revision_one_output,
+        )
+
+        worksheet = load_workbook(revision_one_output)["Recap"]
+        persisted_artifacts = self.lineage_store.list_export_artifacts(
+            export_result.review_session_state.review_session.review_session_id,
+        )
+
+        self.assertEqual(export_result.export_artifact.session_revision, 1)
+        self.assertEqual(
+            export_result.export_artifact.template_artifact_id,
+            processing_result.profile_snapshot.template_artifact_id,
+        )
+        self.assertEqual(export_result.review_session_state.review_session.current_revision, 2)
+        self.assertEqual(export_result.review_session_state.session_revision, 1)
+        self.assertEqual(worksheet["G27"].value, "Vendor Rev 1")
+        self.assertEqual(persisted_artifacts[0].session_revision, 1)
+        self.assertEqual(persisted_artifacts[0].processing_run_id, processing_run_id)
+
+    def test_historical_export_uses_persisted_template_artifact_even_if_on_disk_workbook_changes(self) -> None:
+        processing_result = self._create_processing_run()
+        processing_run_id = processing_result.processing_run.processing_run_id
+
+        original_snapshot = self.lineage_store.get_profile_snapshot(
+            processing_result.processing_run.profile_snapshot_id,
+        )
+        original_template_artifact = self.lineage_store.get_template_artifact(
+            original_snapshot.template_artifact_id,
+        )
+
+        self._create_template(
+            TEST_ROOT / "profiles" / "default" / "recap_template.xlsx",
+            marker_value="Template V2 Mutated",
+        )
+
+        output_path = TEST_ROOT / "exports" / "historical.xlsx"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        export_result = self.review_session_service.export_session_revision(
+            processing_run_id,
+            session_revision=0,
+            output_path=output_path,
+        )
+
+        worksheet = load_workbook(output_path)["Recap"]
+
+        self.assertEqual(original_template_artifact.original_filename, "recap_template.xlsx")
+        self.assertEqual(
+            export_result.export_artifact.template_artifact_id,
+            original_snapshot.template_artifact_id,
+        )
+        self.assertEqual(worksheet["A1"].value, "Template V1")
+        self.assertNotEqual(worksheet["A1"].value, "Template V2 Mutated")
+
+    def test_historical_export_preserves_fixed_row_label_order_from_snapshot_config(self) -> None:
+        processing_result = self._create_processing_run()
+        processing_run_id = processing_result.processing_run.processing_run_id
+
+        output_path = TEST_ROOT / "exports" / "ordered-labels.xlsx"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.review_session_service.export_session_revision(
+            processing_run_id,
+            session_revision=0,
+            output_path=output_path,
+        )
+
+        worksheet = load_workbook(output_path)["Recap"]
+
+        self.assertEqual(worksheet["A12"].value, "103 General FM")
+        self.assertEqual(worksheet["A13"].value, "103 Foreman")
+        self.assertEqual(worksheet["A14"].value, "103 Journeyman")
+
+    def test_export_artifact_storage_uses_runtime_storage_seam_without_changing_workbook_behavior(self) -> None:
+        processing_result = self._create_processing_run()
+        artifact_store = LocalRuntimeFileStore(
+            upload_root=TEST_ROOT / "runtime" / "uploads",
+            export_root=TEST_ROOT / "runtime" / "exports",
+        )
+        service = ReviewSessionService(
+            lineage_store=self.lineage_store,
+            artifact_store=artifact_store,
+            now_provider=lambda: self.created_at,
+        )
+
+        export_result = service.export_session_revision(
+            processing_result.processing_run.processing_run_id,
+            session_revision=0,
+        )
+
+        worksheet = load_workbook(export_result.output_path)["Recap"]
+        resolved_payload = service.resolve_export_artifact_payload(export_result.export_artifact.export_artifact_id)
+
+        self.assertTrue(export_result.export_artifact.storage_ref.startswith("exports/"))
+        self.assertEqual(export_result.stored_artifact.storage_ref, export_result.export_artifact.storage_ref)
+        self.assertEqual(resolved_payload.file_path, export_result.output_path)
+        self.assertEqual(worksheet["G27"].value, "Vendor A")
+
+    def test_legacy_runs_are_marked_non_reproducible_and_fail_closed_for_historical_export(self) -> None:
+        processing_result = self._create_processing_run()
+        processing_run_id = processing_result.processing_run.processing_run_id
+        self.lineage_store._connection.execute(
+            """
+            UPDATE profile_snapshots
+            SET template_artifact_id = NULL,
+                template_file_hash = NULL
+            WHERE profile_snapshot_id = ?
+            """,
+            (processing_result.profile_snapshot.profile_snapshot_id,),
+        )
+        self.lineage_store._connection.commit()
+
+        state = self.review_session_service.get_review_session_state(processing_run_id)
+
+        self.assertEqual(state.historical_export_status.status_code, "legacy_non_reproducible")
+        self.assertFalse(state.historical_export_status.is_reproducible)
+        with self.assertRaises(HistoricalExportUnavailableError):
+            self.review_session_service.export_session_revision(
+                processing_run_id,
+                session_revision=0,
+                output_path=TEST_ROOT / "exports" / "legacy.xlsx",
+            )
+
+    def _create_processing_run(self):
+        parsed_record = self._make_material_record(vendor_name_normalized="Vendor A")
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[parsed_record],
+        ):
+            return self.processing_run_service.create_processing_run(self.source_document_path)
+
+    def _write_profile_bundle(self) -> None:
+        profile_dir = TEST_ROOT / "profiles" / "default"
+        self._write_json(
+            profile_dir / "profile.json",
+            {
+                "profile_name": "default",
+                "display_name": "Default Profile",
+                "description": "Default test profile",
+                "version": "1.0",
+                "template_filename": "recap_template.xlsx",
+                "is_active": False,
+            },
+        )
+        self._write_json(profile_dir / "labor_mapping.json", {"raw_mappings": {}, "saved_mappings": []})
+        self._write_json(profile_dir / "equipment_mapping.json", {"raw_mappings": {}, "saved_mappings": []})
+        self._write_json(profile_dir / "phase_mapping.json", {"50": "MATERIAL"})
+        self._write_json(profile_dir / "vendor_normalization.json", {})
+        self._write_json(
+            profile_dir / "input_model.json",
+            {"report_type": "vista_job_cost", "section_headers": {}},
+        )
+        self._write_json(
+            profile_dir / "target_labor_classifications.json",
+            {
+                "slots": [
+                    {"slot_id": "labor_1", "label": "103 General FM", "active": True},
+                    {"slot_id": "labor_2", "label": "103 Foreman", "active": True},
+                    {"slot_id": "labor_3", "label": "103 Journeyman", "active": True},
+                ],
+                "classifications": ["103 General FM", "103 Foreman", "103 Journeyman"],
+            },
+        )
+        self._write_json(
+            profile_dir / "target_equipment_classifications.json",
+            {
+                "slots": [
+                    {"slot_id": "equipment_1", "label": "Pick-up Truck", "active": True},
+                ],
+                "classifications": ["Pick-up Truck"],
+            },
+        )
+        self._write_json(
+            profile_dir / "rates.json",
+            {"labor_rates": {}, "equipment_rates": {}},
+        )
+        self._write_json(
+            profile_dir / "review_rules.json",
+            {"default_omit_rules": []},
+        )
+        self._write_json(
+            profile_dir / "recap_template_map.json",
+            {
+                "worksheet_name": "Recap",
+                "header_fields": {
+                    "project": {"cell": "B6"},
+                    "job_number": {"cell": "H6"},
+                },
+                "labor_rows": {
+                    "103 General FM": {
+                        "st_hours": "B12",
+                        "ot_hours": "C12",
+                        "dt_hours": "D12",
+                        "st_rate": "E12",
+                        "ot_rate": "F12",
+                        "dt_rate": "G12",
+                    },
+                    "103 Foreman": {
+                        "st_hours": "B13",
+                        "ot_hours": "C13",
+                        "dt_hours": "D13",
+                        "st_rate": "E13",
+                        "ot_rate": "F13",
+                        "dt_rate": "G13",
+                    },
+                    "103 Journeyman": {
+                        "st_hours": "B14",
+                        "ot_hours": "C14",
+                        "dt_hours": "D14",
+                        "st_rate": "E14",
+                        "ot_rate": "F14",
+                        "dt_rate": "G14",
+                    }
+                },
+                "equipment_rows": {
+                    "Pick-up Truck": {"hours_qty": "B32", "rate": "D32"}
+                },
+                "materials_section": {
+                    "start_row": 27,
+                    "end_row": 41,
+                    "columns": {"name": "G", "amount": "H"},
+                },
+                "subcontractors_section": {
+                    "start_row": 46,
+                    "end_row": 50,
+                    "columns": {"name": "A", "amount": "C"},
+                },
+                "permits_fees_section": {
+                    "start_row": 55,
+                    "end_row": 56,
+                    "columns": {"description": "A", "amount": "C"},
+                },
+                "police_detail_section": {
+                    "start_row": 61,
+                    "end_row": 62,
+                    "columns": {"description": "A", "amount": "C"},
+                },
+                "sales_tax_area": {
+                    "rate_label_cell": "G60",
+                    "rate_input_cell": "H60",
+                    "amount_label_cell": "G61",
+                    "amount_formula_cell": "H61",
+                    "material_total_cell": "H54",
+                },
+            },
+        )
+        self._create_template(profile_dir / "recap_template.xlsx")
+
+    def _create_template(self, path: Path, *, marker_value: str = "Template V1") -> None:
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Recap"
+
+        for cell, value in {
+            "A1": marker_value,
+            "A6": "Project",
+            "G6": "Job Number",
+            "H23": "=SUM(H12:H22)",
+            "A25": "EQUIPMENT",
+            "A26": "Category",
+            "B26": "Hours / Qty",
+            "D26": "Rate",
+            "G25": "MATERIALS",
+            "G26": "Vendor",
+            "H26": "Amount",
+            "E42": "=SUM(E27:E41)",
+            "H42": "=SUM(H27:H41)",
+            "C51": "=SUM(C46:C50)",
+            "C57": "=SUM(C55:C56)",
+            "C63": "=SUM(C61:C62)",
+            "F58": 0,
+        }.items():
+            worksheet[cell] = value
+
+        workbook.save(path)
+
+    def _make_material_record(self, *, vendor_name_normalized: str) -> Record:
+        return Record(
+            record_type=MATERIAL,
+            phase_code="50",
+            raw_description="Material line",
+            cost=100.0,
+            hours=None,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name="Vendor A",
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="Material source",
+            record_type_normalized=MATERIAL,
+            recap_labor_classification=None,
+            vendor_name_normalized=vendor_name_normalized,
+        )
+
+    def _write_json(self, path: Path, payload: object) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    unittest.main()

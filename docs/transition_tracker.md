@@ -1,3 +1,43 @@
+### [2026-04-05] Phase-1 operational hardening now uses explicit runtime storage, legacy-run export status, and small startup settings seams
+- **What changed:** Added a small runtime storage contract for uploads and export artifacts, routed API export persistence/download through that seam instead of assuming raw file paths, encoded legacy pre-template-artifact runs as explicitly `legacy_non_reproducible` for exact historical export, added a small `ApiSettings` seam plus default ASGI entrypoint for cleaner FastAPI startup, and moved browser API/backend defaults behind a tiny runtime-config helper. Added regressions for storage round-tripping, legacy-run fail-closed export handling, and runtime default resolution.
+- **Why:** The readiness review identified three narrow pre-pilot hardening seams that mattered more than new workflow features: remove the hard-coded file-path assumption around artifact delivery, stop treating pre-artifact historical runs as implicitly reproducible, and make local API/browser startup less brittle without broadening the platform.
+- **Area:** Persistence/API prep / Web delivery / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that exact historical export for legacy runs now fails more explicitly in API/service flows instead of as a generic missing-template error, though that is the intended conservative product posture.
+- **Follow-up needed:** Before any limited pilot discussion, the main remaining hardening question is whether the current local-file plus SQLite-backed artifact path is sufficient for the expected pilot footprint or whether one more storage-adapter implementation pass is warranted for deployment operations; desktop remains the fallback either way.
+
+### [2026-04-05] The final readily available sample batch is now in the parity corpus, with one reviewed project-management case modeled explicitly
+- **What changed:** Added `2pass`, `5pass`, `12pass`, and `19pass` to the real acceptance corpus. `2pass`, `5pass`, and `19pass` were added as clean revision-0 reference cases, while `12pass` was added as a reviewed export case that explicitly un-omits the single project-management row before export. Extended the representative parity batch to cover these final readily available samples.
+- **Why:** This was the last available batch of easy-access historical desktop-tested samples, and corpus expansion at this stage is about improving signoff coverage while encoding review context honestly rather than assuming every accepted workbook was produced at revision 0.
+- **Area:** Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that future parity blind spots are now more likely to come from missing sample diversity rather than missing sample count, because the readily available corpus now covers both clean revision-0 exports and multiple post-review export patterns.
+- **Follow-up needed:** Any further parity-confidence gains now likely depend on curated edge-case/customer-specific samples or intentional corpus maintenance, not on another easy batch of readily available desktop reference files.
+
+### [2026-04-05] The parity corpus now includes three more clean revision-0 desktop-tested cases
+- **What changed:** Added `1harness`, `11harness`, and `17harness` to the real acceptance corpus as revision-0 reference cases with no scripted review edits, and extended the representative parity batch to run them through the existing semantic desktop-versus-web harness.
+- **Why:** The next controlled corpus-expansion slice needed a few more high-value real cases, and these three all matched their accepted historical desktop workbooks directly under default processing without requiring any post-review export context.
+- **Area:** Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that revision-0 assumptions are now overused, because `11harness` still documents a default-omitted dotted-subphase row while proving that not every historically accepted workbook depends on explicit post-review edits.
+- **Follow-up needed:** Keep balancing future corpus additions between clean revision-0 cases and reviewed cases so signoff coverage reflects the real desktop workflow rather than only one happy-path mode.
+
+### [2026-04-05] The parity corpus now includes three more real desktop-tested cases across clean, user-un-omit, and manual-correction flows
+- **What changed:** Added `10harness` as a clean revision-0 export case, `15harness-user-omit` as a reviewed export case that explicitly un-omits three omitted Herc Rentals rows, and `22harness` as a reviewed export case that explicitly corrects a blocking per-diem reimbursement material row to vendor `pdiem`. Also added optional `notes` metadata on parity cases and extended the representative parity test batch to run these real cases through the existing semantic desktop-versus-web harness.
+- **Why:** The next migration step is corpus depth and triage, not new architecture, so the parity gate needed a few more representative real-world cases covering clean export, manual omission-state changes, and manual blocker-clearing correction behavior.
+- **Area:** Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that more real cases may still reveal missing review-context or settings-context assumptions, though the harness now has a proven pattern for encoding that context explicitly instead of misclassifying it as product drift.
+- **Follow-up needed:** Keep growing the corpus with a small number of high-value real cases and continue classifying each one explicitly as revision 0 or post-review export before using it as a signoff signal.
+
+### [2026-04-05] Real production harness samples now run as revision-aware parity cases over the fixed historical export seam
+- **What changed:** Added the provided `6harness`, `7harness`, and `18harness` production-tested samples into the parity corpus, extended the harness to run real PDF inputs and compare semantic workbook snapshots against supplied reference exports, fixed a web-only historical export bug where profile snapshot canonicalization/materialization was reordering fixed recap row mappings, and then updated the corpus format to support scripted review-edit batches plus an explicit `target_export_revision` so historical reference workbooks can be compared against the intended post-edit revision rather than assumed revision 0.
+- **Why:** The parity gate needed real acceptance samples, and those samples exposed both a real web export lineage bug and a corpus-shape gap: some accepted historical desktop exports were produced only after manual un-omit/correction edits.
+- **Area:** Application services / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that future real corpus cases may require more than one accepted revision before export, though the harness now models that explicitly instead of baking revision-0 assumptions into reference comparisons.
+- **Follow-up needed:** Keep expanding the corpus with real reviewed cases and encode accepted manual edits directly into the case files so the parity gate stays reviewable and deterministic.
+
 ### [2026-04-02] Phase 50 .15 now routes utility service connection refunds as material
 - **What changed:** Added explicit phase-map support for 50 .15 as MATERIAL, which lets generic JC lines under Utility Service Connections inherit a stable material family instead of surviving as unresolved other.
 - **Why:** Valid report-body JC lines like National Grid Refund 0.00 -2,904.00 had strong phase context but no configured family, so they stayed blocked by unresolved-family and ambiguity warnings even though signed numeric parsing already worked.
@@ -366,6 +406,8 @@ Use this section to record areas that are still tightly tied to the desktop deli
 - [ ] Settings/profile flows are too tied to local desktop assumptions
 
 ### Notes
+- Review pipeline orchestration now lives in `services/review_workflow_service`, while Qt signals, selection state, and filtering remain in desktop view-model code for the current migration slice.
+- Settings/profile/options/observed-value orchestration now lives in `services/settings_workflow_service`, while dialogs, widget tables, and other Settings screen mechanics remain in the desktop shell.
 - Add concise notes here as needed when a change increases or reduces desktop coupling.
 
 ---
@@ -390,6 +432,83 @@ Use this section for features or decisions that should not be overbuilt in the d
 
 # 6) Architecture decisions
 Record important decisions briefly. Add newest items at the top.
+
+### [2026-04-05] Phase-1 parity is now enforced through a semantic acceptance harness that compares desktop and accepted web paths
+- **Decision:** Added a parity-harness layer under `tests/` that treats the current desktop/core workflow as the reference path, drives the web path through the accepted FastAPI API flow, compares record/order/blocker/edit/export semantics instead of UI state or raw XLSX bytes, and anchors that comparison to a reusable acceptance corpus structure.
+- **Reason:** `prd.md` step 8 requires a signoff gate that fails on meaningful business-result drift while ignoring generated ids, timestamps, storage keys, and workbook container noise; `AGENTS.md` also keeps desktop as the fallback until that corpus passes.
+- **Impact on desktop MVP:** Desktop behavior is unchanged; the harness only formalizes it as the acceptance reference.
+- **Impact on future web product:** Improves parity readiness by creating the first reusable semantic signoff mechanism for desktop-versus-web comparison without weakening the comparison to coarse aggregates.
+- **Follow-up:** Expand the corpus from the initial representative case to real customer reports, trusted profiles, scripted edits, and expected workbook semantics before using the harness for pilot or cutover decisions.
+
+### [2026-04-05] Phase-1 web profile usability uses a read-only trusted-profile listing seam, not browser-side profile entry or management
+- **Decision:** Added a minimal read-only trusted-profile service and API route that expose the available phase-1 profiles for selection/inspection, and updated the browser workflow to pick from that list instead of accepting a freeform profile name.
+- **Reason:** `prd.md` requires web v1 to use trusted profiles correctly, but broader profile editing/import/admin work remains deferred; this closes the pilot usability gap without expanding into profile management.
+- **Impact on desktop MVP:** Desktop profile behavior is unchanged; the new route is additive and reuses the existing profile bundle discovery model.
+- **Impact on future web product:** Improves portability by giving the browser a stable profile-selection seam while keeping profile resolution and processing rules in the backend/service layer.
+- **Follow-up:** If parity-pilot users need richer profile context later, add only narrow read-only detail fields or listing filters before considering any profile-management expansion.
+
+### [2026-04-05] Phase-1 browser delivery stays a thin React shell over the accepted FastAPI workflow
+- **Decision:** Added a minimal standalone React/TypeScript browser shell that talks only to the accepted upload, run, review-session, edit, export, and download endpoints, with a tiny fetch client and simple workflow panels instead of re-implementing lineage, blocker, or export-readiness rules in the browser.
+- **Reason:** `prd.md` step 7 explicitly asks for the thinnest browser workflow on top of the accepted API surface, while `AGENTS.md` requires `core/` and the existing service layer to remain the source of truth and desktop to stay the fallback.
+- **Impact on desktop MVP:** Desktop behavior is unchanged; the browser workflow is additive and uses the already accepted backend/service contracts.
+- **Impact on future web product:** Improves portability by proving the immutable-run and append-only review flow can be exercised end to end from a browser without coupling UI state to PySide or mutable active-profile behavior.
+- **Follow-up:** Keep browser state thin, add no client-side workflow rewrites, and defer richer profile/admin UX until after parity-harness work.
+
+### [2026-04-05] Phase-1 HTTP delivery is a thin FastAPI layer over the existing immutable-run and review-session services
+- **Decision:** Added the first FastAPI backend slice as thin route adapters over the accepted upload, processing-run, review-session, and export services, with explicit API schemas and small response/error-mapping helpers rather than re-implementing workflow logic in HTTP handlers.
+- **Reason:** `prd.md` step 6 explicitly starts the HTTP API only after immutable run/session/export lineage is in place, and `AGENTS.md` requires the current service layer to remain the source of truth while desktop stays the fallback.
+- **Impact on desktop MVP:** Desktop behavior is unchanged; the new backend is additive and uses the same parsing, normalization, validation, review, and export services underneath.
+- **Impact on future web product:** Improves portability by exposing the accepted immutable-run and append-only review workflow through explicit contracts that future browser work can consume without coupling to PySide or mutable desktop state.
+- **Follow-up:** Keep the route layer thin as browser work begins, and add broader auth/org concerns only when the minimal browser workflow actually needs them.
+
+### [2026-04-05] Historical export now resolves workbook content from immutable template artifacts instead of the trusted-profile folder
+- **Decision:** Added a minimal immutable `TemplateArtifact` seam, persisted exact template workbook bytes by content hash during run snapshot resolution, linked `ProfileSnapshot` and `ExportArtifact` lineage to that artifact, and changed exact-revision export to materialize workbook bytes from persisted lineage rather than from whichever file currently exists on disk for the trusted profile.
+- **Reason:** The prior export-from-lineage path still depended on a mutable workbook file in the trusted-profile bundle, which meant a later template replacement could change or block historical exports for an older run.
+- **Impact on desktop MVP:** The current trusted-profile/template workflow and workbook export behavior remain the same for day-to-day desktop use; the change only hardens lineage so historical exports replay from captured template content.
+- **Impact on future web product:** Improves portability and parity readiness by making historical export reproducibility independent of local mutable files, which is a prerequisite for later API-backed run/export retrieval.
+- **Follow-up:** The current artifact storage is intentionally phase-1 minimal and SQLite-backed; later production persistence should move template/export artifact bytes behind a storage adapter without changing the lineage contract.
+
+### [2026-04-05] Review sessions now persist append-only overlays, and export replays one exact revision against the run snapshot
+- **Decision:** Added a non-Qt review-session service that reopens one primary `ReviewSession` per `ProcessingRun`, stores user edits only as append-only `ReviewedRecordEdit` overlays keyed by run-scoped `record_key`, rebuilds effective records by replaying those overlays onto immutable `RunRecord`s, and requires export generation to target one explicit `session_revision`.
+- **Reason:** `prd.md` sequences review-session overlays and export-from-specific-revision immediately after processing-run persistence, and `AGENTS.md` requires edits to remain non-destructive while exports stay bound to exact run/session lineage.
+- **Impact on desktop MVP:** Desktop parsing/normalization/validation behavior is unchanged; this adds a persistence-ready service boundary beneath the current review/export workflow without moving any Qt dialogs, signals, or widget behavior.
+- **Impact on future web product:** Improves reuse by giving later API work a tested application-service path for reopen/resume review state, exact revision replay, and export lineage that does not depend on mutable UI state.
+- **Follow-up:** Persist template workbooks as first-class artifacts in a later slice so historical exports can be regenerated even if a trusted profile bundle no longer contains the original workbook bytes.
+
+### [2026-04-05] Processing runs now inject an explicit profile-config context instead of relying on the active desktop profile
+- **Decision:** Tightened the review-processing seam so processing-run creation passes an explicit selected profile bundle context into parse/normalize/default-omit/validate work, while lower `ConfigLoader()` calls temporarily bind to that injected context through a narrow runtime override rather than silently falling back to whichever profile is globally active in desktop settings.
+- **Reason:** The prior run-creation path could snapshot one trusted profile but produce `RunRecord`s from a different active profile, which violated the lineage rule that each `ProcessingRun` must capture the exact selected bundle actually used.
+- **Impact on desktop MVP:** Desktop behavior stays the same for normal active-profile review, but the service boundary is now explicit enough to support trusted-profile processing outside the UI shell without leaking desktop state.
+- **Impact on future web product:** Improves reuse and parity readiness by making processing services deterministic for selected trusted profiles and by reducing hidden dependence on global single-user profile state.
+- **Follow-up:** Reuse the same explicit profile-config context pattern for later export-from-lineage services so run/session/export behavior stays aligned to one exact selected bundle.
+
+### [2026-04-05] Processing-run creation now reloads the selected trusted profile bundle into immutable lineage
+- **Decision:** Added a plain Python processing-run service plus a minimal SQLite lineage store that resolve the selected trusted profile from the caller's profile roots at process start, canonicalize the effective bundle into a reusable `ProfileSnapshot`, and persist each processing invocation as a new immutable `ProcessingRun` with ordered `RunRecord`s and run-scoped `record_key`s.
+- **Reason:** `prd.md` sequences trusted-profile snapshot resolution and processing-run persistence immediately after the lineage contract, and `AGENTS.md` requires reruns with changed settings to create new immutable lineage instead of mutating older runs.
+- **Impact on desktop MVP:** Desktop parsing, normalization, validation, and review behavior are unchanged; this adds a persistence-ready service seam underneath the existing workflow without introducing routes, background work, or UI changes.
+- **Impact on future web product:** Improves reuse by giving later API work a tested application-service path for trusted-profile resolution, fixed run creation, and immutable run-record storage.
+- **Follow-up:** Build review-session persistence and export-from-specific-revision services on top of this store next, still without jumping ahead into broad HTTP or frontend scaffolding.
+
+### [2026-04-05] Phase-1 lineage is defined as immutable runs plus append-only review revisions
+- **Decision:** Added portable lineage models for `Organization`, `User`, `TrustedProfile`, `ProfileSnapshot`, `SourceDocument`, `ProcessingRun`, `RunRecord`, `ReviewSession`, `ReviewedRecordEdit`, and `ExportArtifact`, plus a phase-1 persistence schema contract and pure helpers for canonical snapshot hashing, run-scoped `record_key` assignment, append-only `session_revision` progression, and export-from-exact-revision lineage.
+- **Reason:** `prd.md` explicitly sequences lineage/persistence definition before any API work, and `AGENTS.md` requires immutability and review-session lineage rules to be locked down before migration expands into web delivery.
+- **Impact on desktop MVP:** Desktop behavior is unchanged; this work defines the persistence contract underneath the current app without introducing database runtime behavior or web scaffolding.
+- **Impact on future web product:** Improves reuse by giving later profile snapshot resolution, run persistence, review overlay storage, and export lineage API work a tested contract instead of ad hoc assumptions.
+- **Follow-up:** The next persistence slice can build trusted-profile snapshot resolution and processing-run creation on top of this contract, but should still avoid broad API/frontend work until those services are in place.
+
+### [2026-04-05] Settings/profile administration now sits behind a plain Python workflow service
+- **Decision:** Profile discovery, active-profile switching, config-table reload shaping, default-omit/rate/mapping/classification saves, cache clearing, and observed-value merging/persistence now live in `services/settings_workflow_service`, while `SettingsViewModel` retains only Qt signal emission and desktop-facing property/method forwarding.
+- **Reason:** `prd.md`, `AGENTS.md`, and the migration-execution-tracker workflow all call for extracting remaining non-Qt settings/profile orchestration out of `SettingsViewModel` before any persistence/API/web phases begin.
+- **Impact on desktop MVP:** The desktop Settings/Admin dialog keeps the same behavior, but its workflow logic is now reusable and testable without PySide.
+- **Impact on future web product:** Improves reuse by creating a non-Qt service seam for trusted-profile selection, read-only inspection, observed mapping suggestions, and profile-backed option shaping.
+- **Follow-up:** Keep desktop dialogs/widgets thin, and only move later to lineage/persistence design after both review and settings workflow services are stable and covered.
+
+### [2026-04-05] Review workflow orchestration now sits behind a plain Python service boundary
+- **Decision:** The parse -> normalize -> default-omit -> validate review load path, record-update revalidation path, status-text shaping, and edit-option loading now live in `services/review_workflow_service`, while `ReviewViewModel` retains only Qt-facing state, signals, filtering, and selection behavior.
+- **Reason:** This is the first approved migration slice from `prd.md` and `AGENTS.md`: move workflow orchestration and business-state shaping out of Qt before persistence/API/web work, and protect parity with non-Qt tests.
+- **Impact on desktop MVP:** Desktop behavior stays the same, but the review screen now depends on a reusable service instead of owning the workflow directly.
+- **Impact on future web product:** Improves reuse by giving future API/web entry points a review-workflow service seam that is already covered outside PySide.
+- **Follow-up:** Continue the same pattern for observed-value persistence and `SettingsViewModel` orchestration so profile/admin workflow logic also moves below the desktop shell.
 
 ### [2026-04-01] Default omission stays a review-state policy driven by canonical phase codes
 - **Decision:** Default omit rules are stored in profile config, matched through one shared phase-code canonicalization helper, and applied only when building the review dataset by setting the existing `is_omitted` flag.
@@ -423,6 +542,94 @@ Record important decisions briefly. Add newest items at the top.
 ---
 
 # 7) Recent meaningful changes
+
+### [2026-04-05] A semantic desktop-versus-web parity harness now exists with the first reusable acceptance-corpus case
+- **What changed:** Added a parity harness under `tests/parity_harness/` plus a stable corpus layout under `tests/parity_corpus/`, including a representative material-vendor-resolution case with a source-report fixture, trusted-profile bundle seed, scripted review edits keyed by `record_key`, expected review semantics, and expected workbook-cell/style semantics. The harness now runs the desktop reference path through the core/services layer, the web path through the accepted FastAPI API, and fails on mismatched records, blockers, correction outcomes, or semantic workbook results.
+- **Why:** `prd.md` step 8 requires a conservative acceptance gate before any pilot/cutover thinking, and `AGENTS.md` keeps desktop as the fallback until semantic parity against the corpus is demonstrated.
+- **Area:** Tests / Application services / Web delivery
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that the corpus is still intentionally small and the initial representative case uses a deterministic parser fixture to focus first on workflow/export parity rather than broad real-PDF coverage.
+- **Follow-up needed:** Before pilot/fallback decision-making, expand the acceptance corpus to real customer report/profile combinations and keep expected workbook semantics curated as the signoff source of truth.
+
+### [2026-04-05] Web workflow now uses a read-only trusted-profile picker instead of freeform profile-name entry
+- **What changed:** Added a small read-only trusted-profile service plus `GET /api/trusted-profiles`, returned stable phase-1 selection metadata from existing profile bundles, updated the browser upload flow to load/select/inspect trusted profiles from that API, and added backend/browser tests proving the selected picker value drives processing-run creation.
+- **Why:** The minimal browser shell still relied on a temporary freeform profile-name input, which left a gap against the PRD’s mandatory web v1 trusted-profile behavior even though broader profile management remains deferred.
+- **Area:** Application services / Web delivery / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that profile inspection is intentionally summary-level only, because phase 1 still avoids browser-native profile editing, import/export UI, and broader admin expansion.
+- **Follow-up needed:** The main remaining blocker before parity-harness work is no longer profile selection; the next step can stay focused on the acceptance corpus and semantic parity checks rather than on more browser-side profile UX.
+
+### [2026-04-05] A minimal browser workflow now exercises the accepted phase-1 API end to end
+- **What changed:** Added a standalone `web/` React/TypeScript shell with a tiny API client, sequential panels for upload/run/review/export, Vite-based local build tooling, and a focused frontend workflow test that mocks the accepted API surface through upload, immutable run inspection, review edit submission, exact-revision export, and artifact download.
+- **Why:** `prd.md` step 7 calls for the thinnest browser workflow on top of the accepted FastAPI API, and `AGENTS.md` requires browser delivery to stay thin while preserving the backend/service lineage rules and keeping desktop as the fallback.
+- **Area:** Web delivery / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that trusted-profile choice is still a conservative name entry rather than a richer browser-side picker, because broader profile/admin UX remains deferred in phase 1.
+- **Follow-up needed:** Before parity-harness work, decide whether the browser needs a tiny read-only trusted-profile listing endpoint or whether the current conservative profile-name input remains sufficient for the pilot workflow.
+
+### [2026-04-05] A minimal FastAPI backend now exposes phase-1 upload, run, review-session, and export endpoints
+- **What changed:** Added a new `api/` package with a FastAPI app factory, thin route modules for source upload, run creation/retrieval, review-session open/edit, and exact-revision export/download, plus explicit request/response schemas and small serializer/error helpers. Added local runtime file storage for uploaded PDFs/exported workbooks and API tests covering upload, processing-run creation, immutable run retrieval, review-session open, append-only edit revisioning, exact-revision export, and artifact download.
+- **Why:** The approved migration sequence in `prd.md` reaches step 6 only after the service and lineage rules are accepted, so the next conservative move is a narrow HTTP API around those existing services without starting frontend or worker infrastructure.
+- **Area:** Application services / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that the current FastAPI slice still uses the phase-1 SQLite store and a local runtime file store, including a small `check_same_thread=False` compatibility shim for sync route execution in FastAPI's worker threads.
+- **Follow-up needed:** Before the minimal browser workflow starts, keep the route layer thin and decide whether API startup/config should graduate from the current in-code defaults into a small environment/settings module.
+
+### [2026-04-05] Historical exports now replay from persisted template artifacts rather than mutable on-disk workbooks
+- **What changed:** Added an immutable `TemplateArtifact` lineage model plus SQLite persistence for exact workbook bytes, linked snapshots and export artifacts to that template artifact, persisted template content during processing-run creation, and updated review-session export to materialize the historical workbook from stored artifact bytes instead of the trusted-profile directory. Added regressions proving that replacing the on-disk workbook after a run does not change historical export output and that exports still stay tied to one exact revision and template lineage.
+- **Why:** The previous review-session export seam still relied on the current trusted-profile workbook file, so historical exports were not fully reproducible if that file changed after the run was created.
+- **Area:** Application services / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that template artifacts are currently stored directly in the phase-1 SQLite store, so later production persistence still needs a storage abstraction pass rather than assuming database-embedded blobs remain the final deployment model.
+- **Follow-up needed:** Keep the lineage contract stable, but introduce a dedicated artifact-storage adapter before broader API work depends on larger binary payloads or non-SQLite backends.
+
+### [2026-04-05] Review-session overlays and exact-revision export now sit behind a plain Python lineage service
+- **What changed:** Added `services/review_session_service.py` plus SQLite store support for `ReviewSession`, `ReviewedRecordEdit`, and `ExportArtifact`; review edits are now persisted as append-only overlays and replayed onto immutable `RunRecord`s when sessions reopen; export now accepts an explicit config context and generates workbooks from one requested `session_revision` only; and new service tests lock overlay immutability, latest-revision reopen behavior, and exact revision export lineage.
+- **Why:** The next approved slice in `prd.md` is to implement review-session overlay persistence and export generation from an exact revision on top of existing processing-run lineage, while `AGENTS.md` requires append-only edit behavior and exact export binding to stay explicit before any API or UI buildout.
+- **Area:** Application services / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that exact historical export currently verifies the trusted-profile template hash and fails closed if the original workbook has drifted, because template bytes are not yet persisted as first-class lineage artifacts.
+- **Follow-up needed:** In a later persistence slice, capture template workbooks as durable artifacts so historical exports can be regenerated without depending on the trusted profile bundle still being present on disk.
+
+### [2026-04-05] Processing-run lineage no longer drifts to the active desktop profile, and snapshot reuse is now behavior-only
+- **What changed:** Refactored review processing so `ProcessingRunService` injects the selected profile bundle context into the review pipeline, added explicit config-context binding in `ConfigLoader` for lower parsing/normalization helpers, tightened snapshot hashing to behavioral inputs only while moving selected trusted-profile identity onto `ProcessingRun`, and added regressions for non-active profile processing, metadata-insensitive snapshot reuse, and behaviorally relevant config changes creating a new snapshot/run.
+- **Why:** A lineage-integrity review found that run creation could snapshot one trusted profile while `RunRecord`s were still produced from the globally active desktop profile, and that non-behavioral profile metadata could block valid snapshot reuse.
+- **Area:** Core engine / Application services / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that the new explicit config-context override depends on careful cache clearing around config-sensitive helpers, though the regression suite now exercises the critical non-active-profile path directly.
+- **Follow-up needed:** Keep later export/session lineage work on the same explicit selected-profile seam so no later service reintroduces active-profile drift.
+
+### [2026-04-05] Trusted-profile snapshot resolution and immutable processing-run persistence now sit behind a non-Qt service
+- **What changed:** Added `services/processing_run_service.py` and `infrastructure/persistence/sqlite_lineage_store.py` to resolve trusted-profile bundles from the selected profile roots, reuse immutable `ProfileSnapshot`s by content hash, create new `ProcessingRun`s for each processing invocation, persist ordered `RunRecord`s with run-scoped `record_key`s, and added service-focused regression tests covering unchanged-bundle snapshot reuse plus changed-settings rerun lineage.
+- **Why:** The next approved slice in `prd.md` is to implement trusted-profile snapshot resolution and processing-run persistence on top of the lineage contract before any HTTP/API or web-shell work begins, while `AGENTS.md` requires old runs to stay fixed when settings change.
+- **Area:** Application services / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that the current store is intentionally SQLite-only and phase-1 minimal, so later production database wiring still needs an adapter pass instead of assuming this exact implementation survives unchanged.
+- **Follow-up needed:** Add review-session overlay persistence and export-artifact generation on top of the same lineage store, then keep broader API delivery deferred until those rules are fully covered.
+
+### [2026-04-05] Phase-1 lineage models and persistence schema were defined before API work
+- **What changed:** Added portable lineage dataclasses under `core/models/lineage.py`, pure lineage helpers in `services/lineage_service.py`, an initial SQL persistence schema contract under `infrastructure/persistence/phase1_lineage_schema.sql`, and regression tests covering immutable profile snapshots, deterministic run-scoped `record_key`s, append-only `session_revision` behavior, exact export revision lineage, and key schema constraints.
+- **Why:** The approved migration sequence in `prd.md` calls for defining immutable run/session/export lineage and persistence schema before any API buildout, and `AGENTS.md` requires those rules to stay explicit and test-protected.
+- **Area:** Core engine / Application services / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that the current SQL contract is intentionally minimal and runtime-agnostic, so later concrete database implementation still needs careful translation if storage-specific features are introduced.
+- **Follow-up needed:** Build trusted-profile snapshot resolution and processing-run persistence services on top of this contract, then delay HTTP/API work until those services are stable.
+
+### [2026-04-05] Settings/profile/options workflow moved out of `SettingsViewModel` into a non-Qt service
+- **What changed:** Added `services/settings_workflow_service.py` for profile discovery/switching, active-profile summary shaping, default-omit/mapping/classification/rate save orchestration, cache clearing, and observed-value merge/persistence behavior; rewired `SettingsViewModel` into a thin Qt adapter; moved review observed-value persistence imports to the service layer; and added service-focused regression tests.
+- **Why:** This is the next conservative migration slice after review-service extraction: finish pulling remaining non-Qt settings/profile/options/observed-value orchestration out of PySide while keeping dialogs and widget behavior in the desktop shell.
+- **Area:** Application services / Desktop UI / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that some helper functions are still shared through the desktop module surface for compatibility during the transition, though the workflow logic itself now lives below the UI layer.
+- **Follow-up needed:** Decide whether any helper re-exports should be cleaned up after the new service seam settles, then move to the next approved slice only after staying within the PRD sequence.
+
+### [2026-04-05] Review workflow orchestration moved out of `ReviewViewModel` into a non-Qt service
+- **What changed:** Added `services/review_workflow_service.py` for review-load orchestration, record-update revalidation, status-text shaping, and edit-option loading; rewired `ReviewViewModel` to delegate to that service; and added non-Qt service tests plus seam-preserving view-model test updates.
+- **Why:** The approved migration slice says to extract plain Python application services from `ReviewViewModel` before later persistence/API/web phases, while proving desktop behavior is preserved with service-level tests.
+- **Area:** Application services / Desktop UI / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that some review concerns are still split across the service and view model until observed-value persistence and more settings orchestration are extracted in later slices.
+- **Follow-up needed:** Apply the same extraction pattern to `SettingsViewModel` and decide whether observed-value persistence belongs in a shared profile/application service rather than desktop view-model code.
 
 ### [2026-04-04] Legacy mapping-shape compatibility was removed in favor of raw-first configs only
 - **What changed:** Removed runtime/settings compatibility handling for equipment `keyword_mappings` and old labor mapping keys (`phase_defaults`, `aliases`, `class_mappings`, `apprentice_aliases`), updated shipped config JSON to modern raw-first shapes, and converted compatibility-only tests to raw-first coverage.

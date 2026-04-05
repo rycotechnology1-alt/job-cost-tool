@@ -1,3 +1,7 @@
-﻿PySide6
+PySide6
 pdfplumber
 openpyxl
+fastapi
+httpx
+python-multipart
+uvicorn

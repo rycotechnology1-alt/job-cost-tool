@@ -1,0 +1,27 @@
+{
+  "case_name": "22harness",
+  "notes": "Reviewed export case covering a historically tricky per-diem reimbursement row. The accepted desktop workbook reflects a manual vendor correction of the blocking reimbursement material row to 'pdiem' before export.",
+  "source_document": {
+    "filename": "report.pdf"
+  },
+  "reference_export": {
+    "filename": "reference_export.xlsx"
+  },
+  "trusted_profile": {
+    "profile_name": "default",
+    "template_filename": "recap_template.xlsx",
+    "profile_source_dir": "../../../profiles/default"
+  },
+  "scripted_edit_batches": [
+    [
+      {
+        "record_key": "record-6",
+        "changed_fields": {
+          "vendor_name_normalized": "pdiem"
+        }
+      }
+    ]
+  ],
+  "target_export_revision": 1,
+  "expected": {}
+}

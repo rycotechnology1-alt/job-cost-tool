@@ -1,0 +1,60 @@
+"""Storage contracts for phase-1 uploaded source documents and export artifacts."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+
+@dataclass(frozen=True, slots=True)
+class StoredUpload:
+    """Uploaded source document stored for later processing-run creation."""
+
+    upload_id: str
+    original_filename: str
+    content_type: str
+    file_size_bytes: int
+    storage_ref: str
+    file_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class StoredArtifact:
+    """Persisted export artifact resolved through the runtime storage seam."""
+
+    storage_ref: str
+    original_filename: str
+    content_type: str
+    file_size_bytes: int
+    file_path: Path
+
+
+class RuntimeStorage(Protocol):
+    """Storage seam for uploaded source documents and generated export artifacts."""
+
+    def save_upload(
+        self,
+        *,
+        original_filename: str,
+        content_bytes: bytes,
+        content_type: str | None = None,
+    ) -> StoredUpload:
+        """Persist one uploaded source document and return its runtime reference."""
+
+    def get_upload(self, upload_id: str) -> StoredUpload:
+        """Resolve one uploaded source document by upload id."""
+
+    def save_export_artifact(
+        self,
+        *,
+        processing_run_id: str,
+        session_revision: int,
+        original_filename: str,
+        content_bytes: bytes,
+        content_type: str | None = None,
+    ) -> StoredArtifact:
+        """Persist one generated export artifact and return its runtime reference."""
+
+    def get_export_artifact(self, storage_ref: str) -> StoredArtifact:
+        """Resolve one previously stored export artifact by storage reference."""

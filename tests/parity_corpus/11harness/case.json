@@ -1,0 +1,18 @@
+{
+  "case_name": "11harness",
+  "notes": "Revision-0 reference case that still exercises default-omission behavior on a dotted 29 .999 labor row. The accepted historical workbook already reflects the default processing state with no post-review edits.",
+  "source_document": {
+    "filename": "report.pdf"
+  },
+  "reference_export": {
+    "filename": "reference_export.xlsx"
+  },
+  "trusted_profile": {
+    "profile_name": "default",
+    "template_filename": "recap_template.xlsx",
+    "profile_source_dir": "../../../profiles/default"
+  },
+  "scripted_edit_batches": [],
+  "target_export_revision": 0,
+  "expected": {}
+}

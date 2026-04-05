@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Iterator
 
 from core.config.classification_slots import build_slot_lookup, get_active_slots, normalize_slot_config
 from core.equipment_keys import derive_equipment_mapping_key
@@ -56,6 +58,10 @@ class ConfigLoader:
         ),
     }
     _shared_cache: ClassVar[dict[Path, dict[str, JsonDict]]] = {}
+    _explicit_context: ClassVar[ContextVar[tuple[Path, Path] | None]] = ContextVar(
+        "job_cost_tool_explicit_config_context",
+        default=None,
+    )
 
     def __init__(
         self,
@@ -64,12 +70,77 @@ class ConfigLoader:
         legacy_config_dir: Path | None = None,
     ) -> None:
         """Initialize the loader using an explicit config dir or the active profile."""
+        context_override = self._explicit_context.get()
         if config_dir is not None:
             self._config_dir = config_dir.resolve()
+        elif context_override is not None:
+            self._config_dir = context_override[0]
         else:
             self._config_dir = ProfileManager().get_active_profile_dir()
-        self._legacy_config_dir = (legacy_config_dir or get_legacy_config_root()).resolve()
+        if legacy_config_dir is not None:
+            self._legacy_config_dir = legacy_config_dir.resolve()
+        elif context_override is not None:
+            self._legacy_config_dir = context_override[1]
+        else:
+            self._legacy_config_dir = get_legacy_config_root().resolve()
         self._cache = self._shared_cache.setdefault(self._config_dir, {})
+
+    @classmethod
+    @contextmanager
+    def use_explicit_context(
+        cls,
+        *,
+        config_dir: Path,
+        legacy_config_dir: Path | None = None,
+    ) -> Iterator[None]:
+        """Temporarily bind implicit ConfigLoader() calls to one explicit config bundle."""
+        resolved_context = (
+            config_dir.resolve(),
+            (legacy_config_dir or get_legacy_config_root()).resolve(),
+        )
+        token = cls._explicit_context.set(resolved_context)
+        cls.clear_runtime_caches()
+        try:
+            yield
+        finally:
+            cls._explicit_context.reset(token)
+            cls.clear_runtime_caches()
+
+    @classmethod
+    def clear_runtime_caches(cls) -> None:
+        """Clear shared config caches plus module-level config-derived helper caches."""
+        cls._shared_cache.clear()
+
+        from core.export import recap_mapper
+        from core.normalization import equipment_normalizer, labor_normalizer, material_normalizer, normalizer
+        from core.parsing import line_classifier
+
+        cache_functions = [
+            line_classifier._get_input_model,
+            line_classifier._get_phase_mapping,
+            line_classifier._get_ignore_patterns,
+            line_classifier._get_section_headers,
+            labor_normalizer._get_labor_mapping,
+            labor_normalizer._get_target_labor_classifications,
+            labor_normalizer._get_active_labor_slot_lookup,
+            equipment_normalizer._get_equipment_mapping,
+            equipment_normalizer._get_target_equipment_classifications,
+            equipment_normalizer._get_active_equipment_slot_lookup,
+            material_normalizer._get_vendor_normalization,
+            normalizer._get_phase_mapping,
+            recap_mapper._get_target_labor_classifications,
+            recap_mapper._get_target_equipment_classifications,
+            recap_mapper._get_active_labor_slots,
+            recap_mapper._get_active_equipment_slots,
+            recap_mapper._get_active_labor_slot_lookup,
+            recap_mapper._get_active_equipment_slot_lookup,
+            recap_mapper._get_rates,
+            recap_mapper._get_material_section_capacity,
+        ]
+
+        for cache_function in cache_functions:
+            if hasattr(cache_function, "cache_clear"):
+                cache_function.cache_clear()
 
     def load_all_configs(self) -> None:
         """Load and cache all required configuration files."""
@@ -160,12 +231,18 @@ class ConfigLoader:
             return "default"
         profile_file = profile_dir / "profile.json"
         if profile_file.is_file():
-            metadata = ProfileManager().get_active_profile_metadata()
+            metadata = self._load_profile_metadata_file(profile_file)
             return str(metadata.get("profile_name", "default"))
         return "default"
 
     def get_profile_metadata(self) -> JsonDict:
         """Return metadata describing the active profile."""
+        profile_file = self._config_dir / "profile.json"
+        if profile_file.is_file():
+            metadata = self._load_profile_metadata_file(profile_file)
+            metadata["profile_dir"] = str(self._config_dir)
+            metadata["is_active_profile"] = self._config_dir == ProfileManager().get_active_profile_dir()
+            return {str(key): value for key, value in metadata.items()}
         metadata = ProfileManager().get_active_profile_metadata()
         return {str(key): value for key, value in metadata.items()}
 
@@ -188,6 +265,29 @@ class ConfigLoader:
         raise FileNotFoundError(
             f"No recap template workbook could be resolved for config bundle '{self._config_dir}'."
         )
+
+    def _load_profile_metadata_file(self, profile_file: Path) -> JsonDict:
+        """Load and validate one profile metadata file relative to the current config dir."""
+        try:
+            with profile_file.open("r", encoding="utf-8-sig") as metadata_file:
+                loaded_metadata = json.load(metadata_file)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Profile metadata file '{profile_file}' contains invalid JSON: {exc.msg}"
+            ) from exc
+
+        if not isinstance(loaded_metadata, dict):
+            raise ValueError(
+                f"Profile metadata file '{profile_file}' must contain a JSON object at the top level"
+            )
+
+        required_keys = ("profile_name", "display_name", "description", "version", "template_filename")
+        for key in required_keys:
+            if key not in loaded_metadata:
+                raise ValueError(
+                    f"Profile metadata file '{profile_file}' is missing required top-level key '{key}'"
+                )
+        return {str(key): value for key, value in loaded_metadata.items()}
 
     def _validate_required_configs(self) -> None:
         """Ensure all required config files are present on disk."""

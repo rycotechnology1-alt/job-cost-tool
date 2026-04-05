@@ -1,0 +1,24 @@
+{
+  "report_type": "vista_job_cost",
+  "section_headers": {
+    "labor": [
+      "Labor-Electricians",
+      "Labor-Multi-Trade"
+    ],
+    "equipment": [
+      "Internal Equip. Charges"
+    ],
+    "material": [
+      "Material-Electrical",
+      "Other Job Cost"
+    ],
+    "subcontractor": [
+      "Subcontracted"
+    ]
+  },
+  "ignore_patterns": [
+    "Totals:",
+    "Grand Total",
+    "continued..."
+  ]
+}

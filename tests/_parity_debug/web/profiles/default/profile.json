@@ -1,0 +1,8 @@
+﻿{
+  "profile_name": "default",
+  "display_name": "Default Recap Profile",
+  "description": "Standard company recap mappings, template, and rates.",
+  "version": "1.0",
+  "template_filename": "recap_template.xlsx",
+  "is_active": false
+}

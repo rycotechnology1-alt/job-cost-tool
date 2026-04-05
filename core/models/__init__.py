@@ -1,5 +1,20 @@
-﻿"""Domain models for parsed and normalized job cost data."""
+"""Domain models for parsed, normalized, and persisted job cost data."""
 
+from .lineage import (
+    ExportArtifact,
+    HistoricalExportStatus,
+    Organization,
+    PendingRecordEdit,
+    ProcessingRun,
+    ProfileSnapshot,
+    ReviewSession,
+    ReviewedRecordEdit,
+    RunRecord,
+    SourceDocument,
+    TemplateArtifact,
+    TrustedProfile,
+    User,
+)
 from .record import (
     EQUIPMENT,
     LABOR,
@@ -14,12 +29,25 @@ from .record import (
 
 __all__ = [
     "EQUIPMENT",
+    "ExportArtifact",
+    "HistoricalExportStatus",
     "LABOR",
     "MATERIAL",
     "OTHER",
+    "Organization",
+    "PendingRecordEdit",
     "PERMIT",
     "POLICE_DETAIL",
+    "ProcessingRun",
+    "ProfileSnapshot",
     "PROJECT_MANAGEMENT",
+    "ReviewSession",
+    "ReviewedRecordEdit",
+    "RunRecord",
+    "SourceDocument",
     "SUBCONTRACTOR",
+    "TemplateArtifact",
     "Record",
+    "TrustedProfile",
+    "User",
 ]

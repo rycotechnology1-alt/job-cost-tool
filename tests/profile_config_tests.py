@@ -1107,13 +1107,13 @@ class ProfileConfigTests(unittest.TestCase):
         )
 
         with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "app.viewmodels.review_view_model.ConfigLoader",
+            "services.review_workflow_service.ConfigLoader",
             side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
         ), patch(
-            "app.viewmodels.review_view_model.parse_pdf",
+            "services.review_workflow_service.parse_pdf",
             return_value=[matching_record, non_matching_record],
         ), patch(
-            "app.viewmodels.review_view_model.normalize_records",
+            "services.review_workflow_service.normalize_records",
             return_value=[matching_record, non_matching_record],
         ):
             view_model = ReviewViewModel()
@@ -1163,13 +1163,13 @@ class ProfileConfigTests(unittest.TestCase):
         )
 
         with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "app.viewmodels.review_view_model.ConfigLoader",
+            "services.review_workflow_service.ConfigLoader",
             side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
         ), patch(
-            "app.viewmodels.review_view_model.parse_pdf",
+            "services.review_workflow_service.parse_pdf",
             return_value=[record],
         ), patch(
-            "app.viewmodels.review_view_model.normalize_records",
+            "services.review_workflow_service.normalize_records",
             return_value=[record],
         ):
             view_model = ReviewViewModel()
@@ -1213,10 +1213,10 @@ class ProfileConfigTests(unittest.TestCase):
         )
 
         with patch(
-            "app.viewmodels.review_view_model.parse_pdf",
+            "services.review_workflow_service.parse_pdf",
             return_value=[record],
         ), patch(
-            "app.viewmodels.review_view_model.normalize_records",
+            "services.review_workflow_service.normalize_records",
             return_value=[record],
         ):
             view_model = ReviewViewModel()
@@ -1264,13 +1264,13 @@ class ProfileConfigTests(unittest.TestCase):
         )
 
         with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "app.viewmodels.review_view_model.parse_pdf",
+            "services.review_workflow_service.parse_pdf",
             return_value=[record],
         ), patch(
-            "app.viewmodels.review_view_model.normalize_records",
+            "services.review_workflow_service.normalize_records",
             return_value=[record],
         ), patch(
-            "app.viewmodels.review_view_model.validate_records",
+            "services.review_workflow_service.validate_records",
             side_effect=lambda records: (records, []),
         ), patch(
             "app.viewmodels.review_view_model.persist_observed_labor_raw_values"
@@ -1317,13 +1317,13 @@ class ProfileConfigTests(unittest.TestCase):
         )
 
         with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "app.viewmodels.review_view_model.parse_pdf",
+            "services.review_workflow_service.parse_pdf",
             return_value=[record],
         ), patch(
-            "app.viewmodels.review_view_model.normalize_records",
+            "services.review_workflow_service.normalize_records",
             return_value=[record],
         ), patch(
-            "app.viewmodels.review_view_model.validate_records",
+            "services.review_workflow_service.validate_records",
             side_effect=lambda records: (records, []),
         ), patch(
             "app.viewmodels.review_view_model.persist_observed_labor_raw_values"

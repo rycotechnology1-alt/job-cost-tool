@@ -1,0 +1,221 @@
+{
+  "default_template_path": "c:\\Users\\rcogan\\OneDrive - Dagle Electrical Construction\\_Take Home Job Folders\\AI Recap Tests\\Recap_Template_Draft6 DEV REV.xlsx",
+  "worksheet_name": "Recap",
+  "header_fields": {
+    "project": {
+      "cell": "B6"
+    },
+    "description": {
+      "cell": "B7"
+    },
+    "prepared_by": {
+      "cell": "B8"
+    },
+    "job_number": {
+      "cell": "H6"
+    },
+    "date": {
+      "cell": "H7"
+    },
+    "report_or_co_number": {
+      "cell": "H8"
+    }
+  },
+  "labor_rows": {
+    "103 General FM": {
+      "st_hours": "B12",
+      "ot_hours": "C12",
+      "dt_hours": "D12",
+      "st_rate": "E12",
+      "ot_rate": "F12",
+      "dt_rate": "G12"
+    },
+    "103 Foreman": {
+      "st_hours": "B13",
+      "ot_hours": "C13",
+      "dt_hours": "D13",
+      "st_rate": "E13",
+      "ot_rate": "F13",
+      "dt_rate": "G13"
+    },
+    "103 Journeyman": {
+      "st_hours": "B14",
+      "ot_hours": "C14",
+      "dt_hours": "D14",
+      "st_rate": "E14",
+      "ot_rate": "F14",
+      "dt_rate": "G14"
+    },
+    "103 Apprentice": {
+      "st_hours": "B15",
+      "ot_hours": "C15",
+      "dt_hours": "D15",
+      "st_rate": "E15",
+      "ot_rate": "F15",
+      "dt_rate": "G15"
+    },
+    "104 General FM": {
+      "st_hours": "B16",
+      "ot_hours": "C16",
+      "dt_hours": "D16",
+      "st_rate": "E16",
+      "ot_rate": "F16",
+      "dt_rate": "G16"
+    },
+    "104 Foreman": {
+      "st_hours": "B17",
+      "ot_hours": "C17",
+      "dt_hours": "D17",
+      "st_rate": "E17",
+      "ot_rate": "F17",
+      "dt_rate": "G17"
+    },
+    "104 Lead Lineman": {
+      "st_hours": "B18",
+      "ot_hours": "C18",
+      "dt_hours": "D18",
+      "st_rate": "E18",
+      "ot_rate": "F18",
+      "dt_rate": "G18"
+    },
+    "104 Journeyman LM": {
+      "st_hours": "B19",
+      "ot_hours": "C19",
+      "dt_hours": "D19",
+      "st_rate": "E19",
+      "ot_rate": "F19",
+      "dt_rate": "G19"
+    },
+    "104 Equipment Operator": {
+      "st_hours": "B20",
+      "ot_hours": "C20",
+      "dt_hours": "D20",
+      "st_rate": "E20",
+      "ot_rate": "F20",
+      "dt_rate": "G20"
+    },
+    "104 Groundsman": {
+      "st_hours": "B21",
+      "ot_hours": "C21",
+      "dt_hours": "D21",
+      "st_rate": "E21",
+      "ot_rate": "F21",
+      "dt_rate": "G21"
+    },
+    "104 Apprentice": {
+      "st_hours": "B22",
+      "ot_hours": "C22",
+      "dt_hours": "D22",
+      "st_rate": "E22",
+      "ot_rate": "F22",
+      "dt_rate": "G22"
+    }
+  },
+  "equipment_rows": {
+    "Excavator/ Drill Rig": {
+      "hours_qty": "B27",
+      "rate": "D27"
+    },
+    "Bucket Truck": {
+      "hours_qty": "B28",
+      "rate": "D28"
+    },
+    "Digger Derrick": {
+      "hours_qty": "B29",
+      "rate": "D29"
+    },
+    "Backyard Machine": {
+      "hours_qty": "B30",
+      "rate": "D30"
+    },
+    "3-Reel Trailer": {
+      "hours_qty": "B31",
+      "rate": "D31"
+    },
+    "Pick-up Truck": {
+      "hours_qty": "B32",
+      "rate": "D32"
+    },
+    "Utility Van": {
+      "hours_qty": "B33",
+      "rate": "D33"
+    },
+    "Winch Truck": {
+      "hours_qty": "B34",
+      "rate": "D34"
+    },
+    "Load Lugger": {
+      "hours_qty": "B35",
+      "rate": "D35"
+    },
+    "Power Fed Trailer": {
+      "hours_qty": "B36",
+      "rate": "D36"
+    },
+    "1-Reel Trailer": {
+      "hours_qty": "B37",
+      "rate": "D37"
+    },
+    "Boom Truck": {
+      "hours_qty": "B38",
+      "rate": "D38"
+    },
+    "Box Truck": {
+      "hours_qty": "B39",
+      "rate": "D39"
+    },
+    "Pulling/Tension Trailer": {
+      "hours_qty": "B40",
+      "rate": "D40"
+    },
+    "Pole Trailer": {
+      "hours_qty": "B41",
+      "rate": "D41"
+    }
+  },
+  "materials_section": {
+    "start_row": 27,
+    "end_row": 41,
+    "columns": {
+      "name": "G",
+      "amount": "H"
+    }
+  },
+  "subcontractors_section": {
+    "start_row": 46,
+    "end_row": 50,
+    "columns": {
+      "name": "A",
+      "amount": "C"
+    }
+  },
+  "permits_fees_section": {
+    "start_row": 55,
+    "end_row": 56,
+    "columns": {
+      "description": "A",
+      "amount": "C"
+    }
+  },
+  "police_detail_section": {
+    "start_row": 61,
+    "end_row": 62,
+    "columns": {
+      "description": "A",
+      "amount": "C"
+    }
+  },
+  "protected_cells": {
+    "markup_controls": [
+      "H52",
+      "H56"
+    ]
+  },
+  "sales_tax_area": {
+    "rate_label_cell": "G60",
+    "rate_input_cell": "H60",
+    "amount_label_cell": "G61",
+    "amount_formula_cell": "H61",
+    "material_total_cell": "H54"
+  }
+}

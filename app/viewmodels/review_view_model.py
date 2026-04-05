@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 
-from core.config import ConfigLoader, ProfileManager
+from core.config import ProfileManager
 from core.models.record import Record
 from core.equipment_keys import derive_equipment_mapping_key
 from core.phase_codes import canonicalize_phase_code
-from core.review_defaults import apply_default_omit_rules
-from services.normalization_service import normalize_records
-from services.parsing_service import parse_pdf
-from services.validation_service import validate_records
-from app.viewmodels.settings_view_model import (
+from services import review_workflow_service
+from services.settings_workflow_service import (
     persist_observed_equipment_raw_values,
     persist_observed_labor_raw_values,
 )
@@ -28,12 +24,7 @@ class ReviewViewModel(QObject):
     FILTER_BLOCKING = "Blocking Only"
     FILTER_WARNINGS = "Warnings Only"
     FILTER_OPTIONS = [FILTER_ALL, FILTER_BLOCKING, FILTER_WARNINGS]
-    EDITABLE_FIELDS = {
-        "recap_labor_classification",
-        "equipment_category",
-        "vendor_name_normalized",
-        "is_omitted",
-    }
+    EDITABLE_FIELDS = review_workflow_service.EDITABLE_FIELDS
 
     state_changed = Signal()
     error_occurred = Signal(str)
@@ -49,7 +40,7 @@ class ReviewViewModel(QObject):
         self._blocking_issues: list[str] = []
         self._filter_mode = self.FILTER_ALL
         self._selected_record_id: Optional[str] = None
-        self._labor_options, self._equipment_options = self._load_edit_options()
+        self._labor_options, self._equipment_options = review_workflow_service.load_edit_options()
 
     @property
     def records(self) -> list[Record]:
@@ -162,10 +153,7 @@ class ReviewViewModel(QObject):
         self.state_changed.emit()
 
         try:
-            parsed_records = parse_pdf(file_path)
-            normalized_records = normalize_records(parsed_records)
-            review_rules = ConfigLoader().get_review_rules().get("default_omit_rules", [])
-            normalized_records = apply_default_omit_rules(normalized_records, review_rules)
+            result = review_workflow_service.load_review_data(file_path)
         except Exception as exc:
             self.is_processing = False
             self._review_records = []
@@ -177,14 +165,15 @@ class ReviewViewModel(QObject):
             self.error_occurred.emit(str(exc))
             return
 
-        self._review_records = list(normalized_records)
+        self._review_records = list(result.review_records)
         self._persist_observed_labor_raw_values()
         self._persist_observed_equipment_raw_values()
         self._record_ids = [self._build_record_id(index) for index, _ in enumerate(self._review_records)]
-        self._revalidate_records()
+        self._records = list(result.records)
+        self._blocking_issues = list(result.blocking_issues)
         self._selected_record_id = self._record_ids[0] if self._record_ids else None
         self.is_processing = False
-        self.status_text = self._build_status_text(file_path, self._records, self._blocking_issues)
+        self.status_text = result.status_text
         self.state_changed.emit()
 
     def reload_current_pdf(self) -> None:
@@ -194,7 +183,7 @@ class ReviewViewModel(QObject):
 
     def reload_profile_options(self) -> None:
         """Reload profile-driven editor options after a profile change."""
-        self._labor_options, self._equipment_options = self._load_edit_options()
+        self._labor_options, self._equipment_options = review_workflow_service.load_edit_options()
         self.state_changed.emit()
 
     def set_filter_mode(self, filter_mode: str) -> None:
@@ -224,32 +213,24 @@ class ReviewViewModel(QObject):
         if index is None:
             return
 
-        allowed_updates: dict[str, object] = {}
-        for key, value in updates.items():
-            if key not in self.EDITABLE_FIELDS:
-                continue
-            if key == "is_omitted":
-                allowed_updates[key] = bool(value)
-            else:
-                allowed_updates[key] = value if value not in {"", None} else None
-
-        if not allowed_updates:
+        result = review_workflow_service.update_review_record(
+            self._review_records,
+            index,
+            updates,
+            file_path=self.current_pdf_path,
+        )
+        if result is None:
             return
 
-        self._apply_slot_backed_updates(allowed_updates)
-        self._review_records[index] = replace(self._review_records[index], **allowed_updates)
-        self._revalidate_records()
+        self._review_records = list(result.review_records)
+        self._records = list(result.records)
+        self._blocking_issues = list(result.blocking_issues)
         if self.selected_record not in self.filtered_records:
             first_filtered_record = self.filtered_records[0] if self.filtered_records else None
             self._selected_record_id = self._record_id_for_record(first_filtered_record) if first_filtered_record else None
         else:
             self._selected_record_id = record_id
-        self.status_text = self._build_status_text(
-            self.current_pdf_path or "current session",
-            self._records,
-            self._blocking_issues,
-            prefix="Changes applied.",
-        )
+        self.status_text = result.status_text
         self.state_changed.emit()
 
     def _persist_observed_labor_raw_values(self) -> None:
@@ -278,10 +259,6 @@ class ReviewViewModel(QObject):
         except Exception:
             return
 
-    def _revalidate_records(self) -> None:
-        """Re-run validation using the current in-memory normalized records."""
-        self._records, self._blocking_issues = validate_records(self._review_records)
-
     def _record_id_for_record(self, record: Optional[Record]) -> Optional[str]:
         """Return the managed identifier for a validated record object."""
         if record is None:
@@ -302,39 +279,6 @@ class ReviewViewModel(QObject):
         """Build a stable in-memory identifier for a review record."""
         return f"record-{index}"
 
-    def _build_status_text(
-        self,
-        file_path: str,
-        records: list[Record],
-        blocking_issues: list[str],
-        prefix: str = "",
-    ) -> str:
-        """Build the high-level pipeline status text shown in the UI."""
-        prefix_text = f"{prefix} " if prefix else ""
-        if not records:
-            return f"{prefix_text}No records found for: {file_path}".strip()
-
-        if blocking_issues:
-            return (
-                f"{prefix_text}Processed {len(records)} records from {file_path}. "
-                f"Export blocked by {len(blocking_issues)} issue(s)."
-            ).strip()
-
-        return f"{prefix_text}Processed {len(records)} records from {file_path}. Ready for review.".strip()
-
-    def _load_edit_options(self) -> tuple[list[str], list[str]]:
-        """Load config-driven edit options for review controls."""
-        try:
-            loader = ConfigLoader()
-            labor_config = loader.get_target_labor_classifications()
-            equipment_config = loader.get_target_equipment_classifications()
-        except Exception:
-            return [], []
-
-        labor_options = [str(item) for item in labor_config.get("classifications", []) if str(item).strip()]
-        equipment_options = [str(item) for item in equipment_config.get("classifications", []) if str(item).strip()]
-        return labor_options, equipment_options
-
     def _format_observed_labor_raw_value(self, record: Record) -> str | None:
         """Build a true observed labor raw value from parsed source fields only."""
         labor_class_raw = str(record.labor_class_raw or "").strip()
@@ -342,30 +286,3 @@ class ReviewViewModel(QObject):
         if not labor_class_raw:
             return None
         return f"{union_code}/{labor_class_raw}" if union_code else labor_class_raw
-
-    def _apply_slot_backed_updates(self, allowed_updates: dict[str, object]) -> None:
-        """Resolve stable slot ids for edited labor and equipment selections."""
-        try:
-            loader = ConfigLoader()
-        except Exception:
-            return
-
-        if "recap_labor_classification" in allowed_updates:
-            label = str(allowed_updates.get("recap_labor_classification") or "").strip()
-            if not label:
-                allowed_updates["recap_labor_slot_id"] = None
-            else:
-                slot = loader.get_labor_slot_lookup().get(label.casefold())
-                allowed_updates["recap_labor_slot_id"] = (
-                    str(slot.get("slot_id") or "").strip() if isinstance(slot, dict) else None
-                ) or None
-
-        if "equipment_category" in allowed_updates:
-            label = str(allowed_updates.get("equipment_category") or "").strip()
-            if not label:
-                allowed_updates["recap_equipment_slot_id"] = None
-            else:
-                slot = loader.get_equipment_slot_lookup().get(label.casefold())
-                allowed_updates["recap_equipment_slot_id"] = (
-                    str(slot.get("slot_id") or "").strip() if isinstance(slot, dict) else None
-                ) or None
