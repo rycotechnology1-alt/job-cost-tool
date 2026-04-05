@@ -1,3 +1,11 @@
+### [2026-04-05] Browser review keeps edit controls visible by making the records pane the scrollable workspace
+- **What changed:** Adjusted the combined browser review workspace so the main records panel has a bounded scroll region with sticky table headers, while the right-side edit/status panel stays available during long-report review instead of forcing the operator to page-scroll back to the top to make changes.
+- **Why:** Pilot feedback showed that long reports made the current workspace awkward to use because the edit controls stopped being conveniently accessible once the operator had scrolled deep into the records list.
+- **Area:** Web delivery
+- **Portability impact:** Neutral to slightly increased
+- **Risks introduced:** Low risk; this is a layout-only review UX change and does not alter backend behavior, lineage, export rules, or browser-side workflow logic.
+- **Follow-up needed:** If operators later want even faster navigation, a future slice could add row filtering or keyboard navigation, but the current accessibility issue for long reports is addressed without broadening scope.
+
 ### [2026-04-05] Browser review now opens into one combined workspace with row-driven editing and one-click workbook download
 - **What changed:** Reworked the phase-1 browser UI so trusted-profile selection plus file choice open directly into a single review workspace, merged the old processing-run and review-session panels into one main records table with a sticky right-side control area, moved noisy ids into secondary system details, replaced manual `record_key` entry with direct row selection, exposed clearer raw/source context in the browser review surface, and collapsed export into one user-facing download action. Added thin backend support for source-document filename exposure and source-derived export filenames so downloaded workbooks align with the reviewed report when practical.
 - **Why:** Pilot notes showed that the accepted workflow was functionally correct but still felt like operating backend infrastructure instead of reviewing records, especially around too many clicks, missing row context, manual record-key editing, and confusing export language.
