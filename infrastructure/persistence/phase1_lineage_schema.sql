@@ -1,6 +1,6 @@
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE organizations (
+CREATE TABLE IF NOT EXISTS organizations (
     organization_id TEXT PRIMARY KEY,
     slug TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
@@ -8,7 +8,7 @@ CREATE TABLE organizations (
     created_at TEXT NOT NULL
 );
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     email TEXT NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE users (
     FOREIGN KEY (organization_id) REFERENCES organizations (organization_id)
 );
 
-CREATE TABLE trusted_profiles (
+CREATE TABLE IF NOT EXISTS trusted_profiles (
     trusted_profile_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     profile_name TEXT NOT NULL,
@@ -36,7 +36,7 @@ CREATE TABLE trusted_profiles (
     FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
 );
 
-CREATE TABLE template_artifacts (
+CREATE TABLE IF NOT EXISTS template_artifacts (
     template_artifact_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     content_hash TEXT NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE template_artifacts (
     FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
 );
 
-CREATE TABLE profile_snapshots (
+CREATE TABLE IF NOT EXISTS profile_snapshots (
     profile_snapshot_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     trusted_profile_id TEXT,
@@ -67,7 +67,7 @@ CREATE TABLE profile_snapshots (
     FOREIGN KEY (template_artifact_id) REFERENCES template_artifacts (template_artifact_id)
 );
 
-CREATE TABLE source_documents (
+CREATE TABLE IF NOT EXISTS source_documents (
     source_document_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     original_filename TEXT NOT NULL,
@@ -82,7 +82,7 @@ CREATE TABLE source_documents (
     FOREIGN KEY (uploaded_by_user_id) REFERENCES users (user_id)
 );
 
-CREATE TABLE processing_runs (
+CREATE TABLE IF NOT EXISTS processing_runs (
     processing_run_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     source_document_id TEXT NOT NULL,
@@ -100,7 +100,7 @@ CREATE TABLE processing_runs (
     FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
 );
 
-CREATE TABLE run_records (
+CREATE TABLE IF NOT EXISTS run_records (
     run_record_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     processing_run_id TEXT NOT NULL,
@@ -116,7 +116,7 @@ CREATE TABLE run_records (
     FOREIGN KEY (processing_run_id) REFERENCES processing_runs (processing_run_id)
 );
 
-CREATE TABLE review_sessions (
+CREATE TABLE IF NOT EXISTS review_sessions (
     review_session_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     processing_run_id TEXT NOT NULL,
@@ -130,7 +130,7 @@ CREATE TABLE review_sessions (
     FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
 );
 
-CREATE TABLE reviewed_record_edits (
+CREATE TABLE IF NOT EXISTS reviewed_record_edits (
     reviewed_record_edit_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     processing_run_id TEXT NOT NULL,
@@ -148,7 +148,7 @@ CREATE TABLE reviewed_record_edits (
     FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
 );
 
-CREATE TABLE export_artifacts (
+CREATE TABLE IF NOT EXISTS export_artifacts (
     export_artifact_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     processing_run_id TEXT NOT NULL,
@@ -167,11 +167,11 @@ CREATE TABLE export_artifacts (
     FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
 );
 
-CREATE INDEX ix_trusted_profiles_org ON trusted_profiles (organization_id);
-CREATE INDEX ix_template_artifacts_org ON template_artifacts (organization_id);
-CREATE INDEX ix_profile_snapshots_org ON profile_snapshots (organization_id);
-CREATE INDEX ix_source_documents_org ON source_documents (organization_id);
-CREATE INDEX ix_processing_runs_org_created_at ON processing_runs (organization_id, created_at);
-CREATE INDEX ix_run_records_run ON run_records (processing_run_id, record_index);
-CREATE INDEX ix_reviewed_record_edits_session_revision ON reviewed_record_edits (review_session_id, session_revision);
-CREATE INDEX ix_export_artifacts_session_revision ON export_artifacts (review_session_id, session_revision);
+CREATE INDEX IF NOT EXISTS ix_trusted_profiles_org ON trusted_profiles (organization_id);
+CREATE INDEX IF NOT EXISTS ix_template_artifacts_org ON template_artifacts (organization_id);
+CREATE INDEX IF NOT EXISTS ix_profile_snapshots_org ON profile_snapshots (organization_id);
+CREATE INDEX IF NOT EXISTS ix_source_documents_org ON source_documents (organization_id);
+CREATE INDEX IF NOT EXISTS ix_processing_runs_org_created_at ON processing_runs (organization_id, created_at);
+CREATE INDEX IF NOT EXISTS ix_run_records_run ON run_records (processing_run_id, record_index);
+CREATE INDEX IF NOT EXISTS ix_reviewed_record_edits_session_revision ON reviewed_record_edits (review_session_id, session_revision);
+CREATE INDEX IF NOT EXISTS ix_export_artifacts_session_revision ON export_artifacts (review_session_id, session_revision);

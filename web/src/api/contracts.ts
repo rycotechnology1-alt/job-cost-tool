@@ -25,6 +25,7 @@ export interface HistoricalExportStatusResponse {
 export interface ProcessingRunResponse {
   processing_run_id: string;
   source_document_id: string;
+  source_document_filename: string;
   profile_snapshot_id: string;
   trusted_profile_id: string | null;
   trusted_profile_name: string | null;

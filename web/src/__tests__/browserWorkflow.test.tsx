@@ -36,13 +36,19 @@ const uploadPayload = {
 const runPayload = {
   processing_run_id: "processing-run-1",
   source_document_id: "source-1",
+  source_document_filename: "report.pdf",
   profile_snapshot_id: "profile-snapshot-1",
   trusted_profile_id: "trusted-profile-1",
-  trusted_profile_name: "default",
+  trusted_profile_name: "alternate",
   status: "completed",
   aggregate_blockers: [],
-  record_count: 1,
+  record_count: 2,
   created_at: "2026-04-05T12:00:00Z",
+  historical_export_status: {
+    status_code: "reproducible",
+    is_reproducible: true,
+    detail: "Historical exports are reproducible from captured template artifact lineage.",
+  },
 };
 
 const runDetailPayload = {
@@ -63,6 +69,21 @@ const runDetailPayload = {
       source_line_text: "Material source",
       created_at: "2026-04-05T12:00:00Z",
     },
+    {
+      run_record_id: "run-record-2",
+      record_key: "record-1",
+      record_index: 1,
+      canonical_record: {
+        record_type: "material",
+        record_type_normalized: "material",
+        phase_code: "50.3",
+        vendor_name_normalized: "Concrete Vendor",
+        cost: 240,
+      },
+      source_page: 2,
+      source_line_text: "Concrete delivery invoice",
+      created_at: "2026-04-05T12:00:00Z",
+    },
   ],
 };
 
@@ -72,6 +93,11 @@ const reviewSessionRevision0 = {
   current_revision: 0,
   session_revision: 0,
   blocking_issues: [],
+  historical_export_status: {
+    status_code: "reproducible",
+    is_reproducible: true,
+    detail: "Historical exports are reproducible from captured template artifact lineage.",
+  },
   records: [
     {
       record_type: "material",
@@ -105,6 +131,38 @@ const reviewSessionRevision0 = {
       equipment_mapping_key: null,
       is_omitted: false,
     },
+    {
+      record_type: "material",
+      phase_code: "50.3",
+      cost: 240,
+      hours: null,
+      hour_type: null,
+      union_code: null,
+      labor_class_normalized: null,
+      vendor_name: "Concrete Vendor",
+      equipment_description: null,
+      equipment_category: null,
+      confidence: 0.82,
+      raw_description: "Concrete delivery",
+      labor_class_raw: null,
+      job_number: "JOB-100",
+      job_name: "Sample Project",
+      transaction_type: "AP",
+      phase_name_raw: null,
+      employee_id: null,
+      employee_name: null,
+      vendor_id_raw: "V-200",
+      source_page: 2,
+      source_line_text: "Concrete delivery invoice",
+      warnings: ["Vendor name should be confirmed"],
+      record_type_normalized: "material",
+      recap_labor_slot_id: null,
+      recap_labor_classification: null,
+      recap_equipment_slot_id: null,
+      vendor_name_normalized: "Concrete Vendor",
+      equipment_mapping_key: null,
+      is_omitted: false,
+    },
   ],
 };
 
@@ -113,8 +171,9 @@ const reviewSessionRevision1 = {
   current_revision: 1,
   session_revision: 1,
   records: [
+    reviewSessionRevision0.records[0],
     {
-      ...reviewSessionRevision0.records[0],
+      ...reviewSessionRevision0.records[1],
       vendor_name_normalized: "Vendor Edited",
     },
   ],
@@ -190,7 +249,7 @@ describe("App", () => {
           status: 200,
           headers: {
             "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "Content-Disposition": 'attachment; filename="recap-export.xlsx"',
+            "Content-Disposition": 'attachment; filename="report-recap-rev-1.xlsx"',
           },
         });
       }
@@ -204,66 +263,73 @@ describe("App", () => {
     URL.revokeObjectURL = originalRevokeObjectUrl;
   });
 
-  it("runs the minimal browser workflow against the accepted API surface", async () => {
+  it("opens the review workspace in one flow and lets row selection drive the edit panel", async () => {
     const user = userEvent.setup();
     render(<App />);
 
     expect(await screen.findByText("Trusted profiles loaded.")).toBeInTheDocument();
-    expect(screen.getByText("Default trusted profile")).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText(/trusted profile/i), "alternate");
-    expect(screen.getByText("Alternate trusted profile")).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "alternate");
+    await user.upload(screen.getByLabelText(/^source report pdf$/i), new File(["sample"], "report.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
 
-    const fileInput = screen.getByLabelText(/source report pdf/i);
-    await user.upload(fileInput, new File(["sample pdf bytes"], "report.pdf", { type: "application/pdf" }));
-    await user.click(screen.getByRole("button", { name: /upload report/i }));
+    expect(await screen.findByRole("heading", { name: "report.pdf" })).toBeInTheDocument();
+    expect(screen.getByText("No current blockers.")).toBeInTheDocument();
+    const concreteRow = screen.getByText("Concrete delivery").closest("tr");
+    expect(concreteRow).not.toBeNull();
+    expect(concreteRow).toHaveTextContent("Concrete Vendor");
+    await user.click(concreteRow!);
 
-    expect(await screen.findByText("upload-1")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Concrete Vendor")).toBeInTheDocument();
+    expect(screen.getByText("Concrete delivery invoice")).toBeInTheDocument();
+    expect(screen.getAllByText(/Page 2/i)[0]).toBeInTheDocument();
+    expect(screen.getByText("Vendor name should be confirmed")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /start processing run/i }));
+    await user.clear(screen.getByLabelText(/vendor/i));
+    await user.type(screen.getByLabelText(/vendor/i), "Vendor Edited");
+    await user.click(screen.getByRole("button", { name: /apply review change/i }));
 
-    expect(await screen.findByText("processing-run-1")).toBeInTheDocument();
-    expect(screen.getByText("record-0")).toBeInTheDocument();
-    expect(screen.getAllByText("No aggregate blockers.")[0]).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("Vendor Edited")).toBeInTheDocument();
+    expect(screen.getByText(/advanced the session to revision 1/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /open review session/i }));
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    const editRequest = fetchCalls.find(([url]) => url === "/api/runs/processing-run-1/review-session/edits");
+    const runRequest = fetchCalls.find(([url]) => url === "/api/runs");
 
-    expect(await screen.findByText("review-session-1")).toBeInTheDocument();
-    expect(screen.getByText("No blocking issues.")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("0")).toBeInTheDocument();
+    expect(runRequest).toBeDefined();
+    expect(editRequest).toBeDefined();
+    expect(JSON.parse(String(runRequest?.[1]?.body)).trusted_profile_name).toBe("alternate");
+    expect(JSON.parse(String(editRequest?.[1]?.body)).edits[0].record_key).toBe("record-1");
+  });
 
-    await user.type(screen.getByLabelText(/vendor name/i), "Vendor Edited");
-    await user.click(screen.getByRole("button", { name: /submit edit batch/i }));
+  it("exports and downloads the current review revision in one click", async () => {
+    const user = userEvent.setup();
+    render(<App />);
 
-    expect(await screen.findByDisplayValue("1")).toBeInTheDocument();
-    expect(screen.getByText("Vendor Edited")).toBeInTheDocument();
+    await screen.findByText("Trusted profiles loaded.");
+    await user.upload(screen.getByLabelText(/^source report pdf$/i), new File(["sample"], "report.pdf", { type: "application/pdf" }));
+    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
 
-    await user.click(screen.getByRole("button", { name: /request export/i }));
+    const concreteRow = screen.getByText("Concrete delivery").closest("tr");
+    expect(concreteRow).not.toBeNull();
+    await user.click(concreteRow!);
+    await user.clear(screen.getByLabelText(/vendor/i));
+    await user.type(screen.getByLabelText(/vendor/i), "Vendor Edited");
+    await user.click(screen.getByRole("button", { name: /apply review change/i }));
 
-    expect(await screen.findByText("export-artifact-1")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /download artifact/i }));
+    await user.click(screen.getByRole("button", { name: /export and download workbook/i }));
 
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/exports/export-artifact-1/download", undefined);
     });
 
+    expect(await screen.findByText("report-recap-rev-1.xlsx")).toBeInTheDocument();
+
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
-    const editRequest = fetchCalls.find(([url]) => url === "/api/runs/processing-run-1/review-session/edits");
     const exportRequest = fetchCalls.find(([url]) => url === "/api/runs/processing-run-1/exports");
-
-    expect(editRequest).toBeDefined();
     expect(exportRequest).toBeDefined();
-
-    const editPayload = JSON.parse(String(editRequest?.[1]?.body));
-    const exportPayload = JSON.parse(String(exportRequest?.[1]?.body));
-    const runRequest = fetchCalls.find(([url]) => url === "/api/runs");
-
-    expect(runRequest).toBeDefined();
-    expect(JSON.parse(String(runRequest?.[1]?.body)).trusted_profile_name).toBe("alternate");
-    expect(editPayload.edits[0].record_key).toBe("record-0");
-    expect(editPayload.edits[0].changed_fields.vendor_name_normalized).toBe("Vendor Edited");
-    expect(exportPayload.session_revision).toBe(1);
+    expect(JSON.parse(String(exportRequest?.[1]?.body)).session_revision).toBe(1);
     expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:download-url");
   });

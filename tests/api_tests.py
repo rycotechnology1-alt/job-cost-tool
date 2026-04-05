@@ -106,8 +106,10 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertEqual(second_run_detail.status_code, 200)
         self.assertEqual(first_payload["record_count"], 1)
         self.assertEqual(first_payload["aggregate_blockers"], [])
+        self.assertEqual(first_payload["source_document_filename"], "report.pdf")
         self.assertTrue(first_payload["historical_export_status"]["is_reproducible"])
         self.assertEqual(first_run_detail.json()["run_records"][0]["record_key"], "record-0")
+        self.assertEqual(first_run_detail.json()["source_document_filename"], "report.pdf")
         self.assertEqual(second_run_detail.json()["run_records"][0]["record_key"], "record-0")
         self.assertNotEqual(first_payload["processing_run_id"], second_payload["processing_run_id"])
 
@@ -203,6 +205,7 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertTrue(export_payload["template_artifact_id"])
         self.assertEqual(worksheet["G27"].value, "Vendor Rev 1")
         self.assertNotEqual(worksheet["G27"].value, "Vendor Rev 2")
+        self.assertIn('filename="report-recap-rev-1.xlsx"', download_response.headers["content-disposition"])
 
     def test_legacy_runs_are_reported_non_reproducible_and_exact_export_fails_closed(self) -> None:
         processing_run_id = self._create_processing_run_via_api()

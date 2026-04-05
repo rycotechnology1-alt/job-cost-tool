@@ -224,6 +224,7 @@ class ReviewSessionServiceTests(unittest.TestCase):
 
         self.assertTrue(export_result.export_artifact.storage_ref.startswith("exports/"))
         self.assertEqual(export_result.stored_artifact.storage_ref, export_result.export_artifact.storage_ref)
+        self.assertEqual(export_result.stored_artifact.original_filename, "sample_report-recap-rev-0.xlsx")
         self.assertEqual(resolved_payload.file_path, export_result.output_path)
         self.assertEqual(worksheet["G27"].value, "Vendor A")
 

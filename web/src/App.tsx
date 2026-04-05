@@ -13,42 +13,69 @@ import {
 import type {
   ExportArtifactResponse,
   ProcessingRunDetailResponse,
-  ProcessingRunResponse,
   ReviewEditFields,
   ReviewSessionResponse,
   SourceUploadResponse,
   TrustedProfileResponse,
 } from "./api/contracts";
-import { ExportPanel } from "./components/ExportPanel";
-import { ReviewSessionPanel, type ReviewEditFormValue } from "./components/ReviewSessionPanel";
-import { RunRecordsPanel } from "./components/RunRecordsPanel";
+import { ReviewWorkspace, type ReviewEditFormValue, type WorkspaceRow } from "./components/ReviewWorkspace";
 import { UploadRunPanel } from "./components/UploadRunPanel";
 
 const emptyEditForm: ReviewEditFormValue = {
-  recordKey: "",
   vendorNameNormalized: "",
   recapLaborClassification: "",
   equipmentCategory: "",
   omissionChoice: "unchanged",
 };
 
+function buildWorkspaceRows(
+  runDetail: ProcessingRunDetailResponse | null,
+  reviewSession: ReviewSessionResponse | null,
+): WorkspaceRow[] {
+  if (!runDetail || !reviewSession) {
+    return [];
+  }
+  return reviewSession.records.map((record, index) => {
+    const runRecord = runDetail.run_records[index];
+    return {
+      recordKey: runRecord?.record_key ?? `row-${index}`,
+      recordIndex: runRecord?.record_index ?? index,
+      sourcePage: runRecord?.source_page ?? record.source_page,
+      sourceLineText: runRecord?.source_line_text ?? record.source_line_text,
+      canonicalRecord: runRecord?.canonical_record ?? {},
+      record,
+    };
+  });
+}
+
+function buildEditFormFromRow(row: WorkspaceRow): ReviewEditFormValue {
+  return {
+    vendorNameNormalized: row.record.vendor_name_normalized ?? row.record.vendor_name ?? "",
+    recapLaborClassification: row.record.recap_labor_classification ?? "",
+    equipmentCategory: row.record.equipment_category ?? "",
+    omissionChoice: "unchanged",
+  };
+}
+
 export default function App() {
   const [trustedProfiles, setTrustedProfiles] = useState<TrustedProfileResponse[]>([]);
   const [selectedTrustedProfileName, setSelectedTrustedProfileName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [upload, setUpload] = useState<SourceUploadResponse | null>(null);
-  const [runSummary, setRunSummary] = useState<ProcessingRunResponse | null>(null);
   const [runDetail, setRunDetail] = useState<ProcessingRunDetailResponse | null>(null);
   const [reviewSession, setReviewSession] = useState<ReviewSessionResponse | null>(null);
-  const [exportArtifact, setExportArtifact] = useState<ExportArtifactResponse | null>(null);
+  const [selectedRecordKey, setSelectedRecordKey] = useState("");
   const [editForm, setEditForm] = useState<ReviewEditFormValue>(emptyEditForm);
-  const [requestedRevision, setRequestedRevision] = useState("0");
+  const [exportArtifact, setExportArtifact] = useState<ExportArtifactResponse | null>(null);
+  const [lastDownloadedFilename, setLastDownloadedFilename] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
-  const [statusMessage, setStatusMessage] = useState("Waiting for a source report.");
+  const [statusMessage, setStatusMessage] = useState("Choose a trusted profile and a PDF to start reviewing.");
 
   const selectedTrustedProfile =
     trustedProfiles.find((profile) => profile.profile_name === selectedTrustedProfileName) ?? null;
+  const rows = buildWorkspaceRows(runDetail, reviewSession);
+  const selectedRow = rows.find((row) => row.recordKey === selectedRecordKey) ?? rows[0] ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -87,24 +114,6 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    const nextRecordKey = runDetail?.run_records[0]?.record_key ?? "";
-    setEditForm((current) =>
-      current.recordKey
-        ? current
-        : {
-            ...current,
-            recordKey: nextRecordKey,
-          },
-    );
-  }, [runDetail]);
-
-  useEffect(() => {
-    if (reviewSession) {
-      setRequestedRevision(String(reviewSession.current_revision));
-    }
-  }, [reviewSession]);
-
   async function runAction(actionLabel: string, action: () => Promise<void>) {
     setBusyAction(actionLabel);
     setErrorMessage("");
@@ -117,139 +126,108 @@ export default function App() {
     }
   }
 
-  function resetWorkflowDownstream() {
-    setRunSummary(null);
-    setRunDetail(null);
-    setReviewSession(null);
-    setExportArtifact(null);
-    setEditForm(emptyEditForm);
-    setRequestedRevision("0");
+  function selectRow(nextRows: WorkspaceRow[], recordKey: string | null) {
+    const preferred = recordKey ? nextRows.find((row) => row.recordKey === recordKey) : nextRows[0] ?? null;
+    const row = preferred ?? nextRows[0] ?? null;
+    setSelectedRecordKey(row?.recordKey ?? "");
+    setEditForm(row ? buildEditFormFromRow(row) : emptyEditForm);
   }
 
-  async function handleUpload() {
-    await runAction("Uploading report...", async () => {
-      if (!selectedFile) {
-        throw new Error("Choose a report PDF before uploading.");
+  async function handleLaunchReviewWorkspace() {
+    await runAction("Opening review workspace...", async () => {
+      if (!selectedTrustedProfileName.trim()) {
+        throw new Error("Choose a trusted profile before opening the review workspace.");
       }
-      const nextUpload = await uploadSourceDocument(selectedFile);
-      setUpload(nextUpload);
-      resetWorkflowDownstream();
-      setStatusMessage(`Uploaded ${nextUpload.original_filename}.`);
-    });
-  }
 
-  async function handleStartRun() {
-    await runAction("Starting processing run...", async () => {
-      if (!upload) {
-        throw new Error("Upload a report before starting a processing run.");
+      const uploadToUse =
+        selectedFile !== null
+          ? await uploadSourceDocument(selectedFile)
+          : upload;
+      if (!uploadToUse) {
+        throw new Error("Choose a report PDF before opening the review workspace.");
       }
-      const profileName = selectedTrustedProfileName.trim();
-      if (!profileName) {
-        throw new Error("Choose a trusted profile before starting a processing run.");
-      }
-      const createdRun = await createProcessingRun(upload.upload_id, profileName);
-      const runState = await fetchProcessingRun(createdRun.processing_run_id);
-      setRunSummary(createdRun);
-      setRunDetail(runState);
-      setReviewSession(null);
+
+      const createdRun = await createProcessingRun(uploadToUse.upload_id, selectedTrustedProfileName.trim());
+      const nextRunDetail = await fetchProcessingRun(createdRun.processing_run_id);
+      const nextReviewSession = await openReviewSession(createdRun.processing_run_id);
+      const nextRows = buildWorkspaceRows(nextRunDetail, nextReviewSession);
+
+      setUpload(uploadToUse);
+      setRunDetail(nextRunDetail);
+      setReviewSession(nextReviewSession);
       setExportArtifact(null);
-      setEditForm({
-        ...emptyEditForm,
-        recordKey: runState.run_records[0]?.record_key ?? "",
-      });
-      setStatusMessage(`Created processing run ${createdRun.processing_run_id}.`);
+      setLastDownloadedFilename("");
+      selectRow(nextRows, nextRows[0]?.recordKey ?? null);
+      setStatusMessage(
+        `Loaded ${nextReviewSession.records.length} review records from ${nextRunDetail.source_document_filename}.`,
+      );
     });
   }
 
-  async function handleOpenReviewSession() {
-    await runAction("Opening review session...", async () => {
-      if (!runDetail) {
-        throw new Error("Create a processing run before opening the review session.");
-      }
-      const session = await openReviewSession(runDetail.processing_run_id);
-      setReviewSession(session);
-      setExportArtifact(null);
-      setStatusMessage(`Opened review session ${session.review_session_id} at revision ${session.current_revision}.`);
-    });
-  }
-
-  function buildChangedFields(): ReviewEditFields {
+  function buildChangedFields(row: WorkspaceRow): ReviewEditFields {
     const changedFields: ReviewEditFields = {};
     const vendorName = editForm.vendorNameNormalized.trim();
     const laborClass = editForm.recapLaborClassification.trim();
     const equipmentCategory = editForm.equipmentCategory.trim();
+    const currentVendor = (row.record.vendor_name_normalized ?? row.record.vendor_name ?? "").trim();
+    const currentLabor = (row.record.recap_labor_classification ?? "").trim();
+    const currentEquipment = (row.record.equipment_category ?? "").trim();
 
-    if (vendorName) {
+    if (vendorName && vendorName !== currentVendor) {
       changedFields.vendor_name_normalized = vendorName;
     }
-    if (laborClass) {
+    if (laborClass && laborClass !== currentLabor) {
       changedFields.recap_labor_classification = laborClass;
     }
-    if (equipmentCategory) {
+    if (equipmentCategory && equipmentCategory !== currentEquipment) {
       changedFields.equipment_category = equipmentCategory;
     }
-    if (editForm.omissionChoice === "omit") {
+    if (editForm.omissionChoice === "omit" && !row.record.is_omitted) {
       changedFields.is_omitted = true;
     }
-    if (editForm.omissionChoice === "include") {
+    if (editForm.omissionChoice === "include" && row.record.is_omitted) {
       changedFields.is_omitted = false;
     }
     return changedFields;
   }
 
   async function handleApplyEditBatch() {
-    await runAction("Submitting edit batch...", async () => {
-      if (!runDetail) {
-        throw new Error("Create a processing run before submitting edits.");
-      }
-      if (!editForm.recordKey) {
-        throw new Error("Choose a record_key before submitting an edit batch.");
+    await runAction("Applying review change...", async () => {
+      if (!runDetail || !reviewSession || !selectedRow) {
+        throw new Error("Open the review workspace and choose a row before applying a change.");
       }
 
-      const changedFields = buildChangedFields();
+      const changedFields = buildChangedFields(selectedRow);
       if (Object.keys(changedFields).length === 0) {
-        throw new Error("Choose at least one field change before submitting an edit batch.");
+        throw new Error("Change at least one field or omission state before applying a review change.");
       }
 
-      const session = await appendReviewEdits(runDetail.processing_run_id, [
+      const nextReviewSession = await appendReviewEdits(runDetail.processing_run_id, [
         {
-          record_key: editForm.recordKey,
+          record_key: selectedRow.recordKey,
           changed_fields: changedFields,
         },
       ]);
-      setReviewSession(session);
+      const nextRows = buildWorkspaceRows(runDetail, nextReviewSession);
+      setReviewSession(nextReviewSession);
       setExportArtifact(null);
-      setRequestedRevision(String(session.current_revision));
-      setEditForm({
-        ...emptyEditForm,
-        recordKey: editForm.recordKey,
-      });
-      setStatusMessage(`Appended review edits and advanced the session to revision ${session.current_revision}.`);
+      setLastDownloadedFilename("");
+      selectRow(nextRows, selectedRow.recordKey);
+      setStatusMessage(`Applied a review change and advanced the session to revision ${nextReviewSession.current_revision}.`);
     });
   }
 
-  async function handleRequestExport() {
-    await runAction("Requesting export...", async () => {
-      if (!runDetail) {
-        throw new Error("Create a processing run before requesting an export.");
+  async function handleExportAndDownload() {
+    await runAction("Exporting workbook...", async () => {
+      if (!runDetail || !reviewSession) {
+        throw new Error("Open the review workspace before exporting a workbook.");
       }
-      const sessionRevision = Number.parseInt(requestedRevision, 10);
-      if (Number.isNaN(sessionRevision) || sessionRevision < 0) {
-        throw new Error("session_revision must be a whole number greater than or equal to 0.");
-      }
-      const artifact = await createExportArtifact(runDetail.processing_run_id, sessionRevision);
+
+      const artifact = await createExportArtifact(runDetail.processing_run_id, reviewSession.current_revision);
+      const filename = await downloadExportArtifact(artifact.download_url);
       setExportArtifact(artifact);
-      setStatusMessage(`Created export artifact ${artifact.export_artifact_id} from revision ${artifact.session_revision}.`);
-    });
-  }
-
-  async function handleDownloadArtifact() {
-    await runAction("Downloading export artifact...", async () => {
-      if (!exportArtifact) {
-        throw new Error("Request an export artifact before downloading.");
-      }
-      const filename = await downloadExportArtifact(exportArtifact.download_url);
-      setStatusMessage(`Downloaded ${filename}.`);
+      setLastDownloadedFilename(filename);
+      setStatusMessage(`Downloaded ${filename} from review revision ${artifact.session_revision}.`);
     });
   }
 
@@ -257,19 +235,19 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="hero">
+      <header className="hero compact-hero">
         <div>
-          <p className="eyebrow">Phase 1 Browser Workflow</p>
-          <h1>Job Cost Tool</h1>
+          <p className="eyebrow">Phase 1 Pilot Review</p>
+          <h1>Job Cost Review Workspace</h1>
           <p className="hero-copy">
-            This browser shell stays intentionally thin. The backend remains the source of truth for immutable runs,
-            append-only review revisions, and exact-revision exports.
+            The browser stays thin. Processing, review lineage, and exact-revision export still come from the accepted
+            backend services.
           </p>
         </div>
         <div className="status-card" aria-live="polite">
           <strong>{busyAction ?? "Workflow status"}</strong>
           <p>{busy ? busyAction : statusMessage}</p>
-          {runSummary ? <p className="muted">Latest run: {runSummary.processing_run_id}</p> : null}
+          {runDetail ? <p className="muted">Reviewing {runDetail.source_document_filename}</p> : null}
         </div>
       </header>
 
@@ -279,39 +257,36 @@ export default function App() {
         </div>
       ) : null}
 
-      <div className="workflow-grid">
-        <UploadRunPanel
-          trustedProfiles={trustedProfiles}
-          selectedTrustedProfileName={selectedTrustedProfileName}
-          selectedTrustedProfile={selectedTrustedProfile}
-          selectedFileName={selectedFile?.name ?? ""}
-          upload={upload}
-          busy={busy}
-          onTrustedProfileNameChange={setSelectedTrustedProfileName}
-          onFileSelected={setSelectedFile}
-          onUpload={handleUpload}
-          onStartRun={handleStartRun}
-        />
-        <RunRecordsPanel runDetail={runDetail} />
-        <ReviewSessionPanel
-          runDetail={runDetail}
-          reviewSession={reviewSession}
-          editForm={editForm}
-          busy={busy}
-          onOpenReviewSession={handleOpenReviewSession}
-          onEditFormChange={setEditForm}
-          onApplyEditBatch={handleApplyEditBatch}
-        />
-        <ExportPanel
-          reviewSession={reviewSession}
-          exportArtifact={exportArtifact}
-          requestedRevision={requestedRevision}
-          busy={busy}
-          onRequestedRevisionChange={setRequestedRevision}
-          onRequestExport={handleRequestExport}
-          onDownloadArtifact={handleDownloadArtifact}
-        />
-      </div>
+      <UploadRunPanel
+        trustedProfiles={trustedProfiles}
+        selectedTrustedProfileName={selectedTrustedProfileName}
+        selectedTrustedProfile={selectedTrustedProfile}
+        selectedFileName={selectedFile?.name ?? ""}
+        upload={upload}
+        busy={busy}
+        onTrustedProfileNameChange={setSelectedTrustedProfileName}
+        onFileSelected={setSelectedFile}
+        onLaunchReviewWorkspace={handleLaunchReviewWorkspace}
+      />
+
+      <ReviewWorkspace
+        runDetail={runDetail}
+        reviewSession={reviewSession}
+        rows={rows}
+        selectedRow={selectedRow}
+        editForm={editForm}
+        exportArtifact={exportArtifact}
+        lastDownloadedFilename={lastDownloadedFilename}
+        busy={busy}
+        onSelectRow={(recordKey) => {
+          const row = rows.find((item) => item.recordKey === recordKey) ?? null;
+          setSelectedRecordKey(recordKey);
+          setEditForm(row ? buildEditFormFromRow(row) : emptyEditForm);
+        }}
+        onEditFormChange={setEditForm}
+        onApplyEditBatch={handleApplyEditBatch}
+        onExportAndDownload={handleExportAndDownload}
+      />
     </main>
   );
 }

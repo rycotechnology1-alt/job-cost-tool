@@ -34,6 +34,7 @@ def to_processing_run_response(result: ProcessingRunResult) -> ProcessingRunResp
     return ProcessingRunResponse(
         processing_run_id=result.processing_run.processing_run_id,
         source_document_id=result.source_document.source_document_id,
+        source_document_filename=result.source_document.original_filename,
         profile_snapshot_id=result.profile_snapshot.profile_snapshot_id,
         trusted_profile_id=result.trusted_profile.trusted_profile_id,
         trusted_profile_name=result.trusted_profile.profile_name,
@@ -54,6 +55,7 @@ def to_processing_run_detail_response(state: ProcessingRunState) -> ProcessingRu
     return ProcessingRunDetailResponse(
         processing_run_id=state.processing_run.processing_run_id,
         source_document_id=state.source_document.source_document_id,
+        source_document_filename=state.source_document.original_filename,
         profile_snapshot_id=state.profile_snapshot.profile_snapshot_id,
         trusted_profile_id=state.trusted_profile.trusted_profile_id if state.trusted_profile else None,
         trusted_profile_name=state.trusted_profile.profile_name if state.trusted_profile else None,

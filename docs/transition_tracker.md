@@ -1,3 +1,19 @@
+### [2026-04-05] Browser review now opens into one combined workspace with row-driven editing and one-click workbook download
+- **What changed:** Reworked the phase-1 browser UI so trusted-profile selection plus file choice open directly into a single review workspace, merged the old processing-run and review-session panels into one main records table with a sticky right-side control area, moved noisy ids into secondary system details, replaced manual `record_key` entry with direct row selection, exposed clearer raw/source context in the browser review surface, and collapsed export into one user-facing download action. Added thin backend support for source-document filename exposure and source-derived export filenames so downloaded workbooks align with the reviewed report when practical.
+- **Why:** Pilot notes showed that the accepted workflow was functionally correct but still felt like operating backend infrastructure instead of reviewing records, especially around too many clicks, missing row context, manual record-key editing, and confusing export language.
+- **Area:** Web delivery / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that the browser now depends on a slightly richer run/review presentation contract, though the backend remains the source of truth and no lineage, export, or review rules changed.
+- **Follow-up needed:** Later browser polish can still improve grouped/family-oriented review presentation and richer keyboard ergonomics, but deferred row collapsing/summary grouping remains intentionally out of scope for this slice.
+
+### [2026-04-05] Local SQLite bootstrap is now idempotent across repeated API/database opens
+- **What changed:** Made the phase-1 SQLite schema script idempotent with `IF NOT EXISTS` on tables and indexes, and added a regression that opens the same on-disk lineage database twice to confirm startup does not fail or duplicate seeded data.
+- **Why:** The new local FastAPI/ASGI startup path can reopen the same lineage database repeatedly during development and pilot operations, so schema bootstrap needed to be safe on an already-initialized database instead of crashing on existing tables.
+- **Area:** Persistence/API prep / Tests
+- **Portability impact:** Neutral to slightly increased
+- **Risks introduced:** Low risk; this does not broaden product behavior or lineage rules, it only makes local phase-1 schema bootstrap repeatable.
+- **Follow-up needed:** If the schema evolves later, keep bootstrap idempotent and introduce explicit migrations only when versioned schema changes become necessary.
+
 ### [2026-04-05] Phase-1 operational hardening now uses explicit runtime storage, legacy-run export status, and small startup settings seams
 - **What changed:** Added a small runtime storage contract for uploads and export artifacts, routed API export persistence/download through that seam instead of assuming raw file paths, encoded legacy pre-template-artifact runs as explicitly `legacy_non_reproducible` for exact historical export, added a small `ApiSettings` seam plus default ASGI entrypoint for cleaner FastAPI startup, and moved browser API/backend defaults behind a tiny runtime-config helper. Added regressions for storage round-tripping, legacy-run fail-closed export handling, and runtime default resolution.
 - **Why:** The readiness review identified three narrow pre-pilot hardening seams that mattered more than new workflow features: remove the hard-coded file-path assumption around artifact delivery, stop treating pre-artifact historical runs as implicitly reproducible, and make local API/browser startup less brittle without broadening the platform.

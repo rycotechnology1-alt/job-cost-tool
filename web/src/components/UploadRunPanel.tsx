@@ -1,4 +1,4 @@
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, DragEvent } from "react";
 
 import type { SourceUploadResponse, TrustedProfileResponse } from "../api/contracts";
 
@@ -11,8 +11,7 @@ interface UploadRunPanelProps {
   busy: boolean;
   onTrustedProfileNameChange: (value: string) => void;
   onFileSelected: (file: File | null) => void;
-  onUpload: () => Promise<void> | void;
-  onStartRun: () => Promise<void> | void;
+  onLaunchReviewWorkspace: () => Promise<void> | void;
 }
 
 export function UploadRunPanel({
@@ -24,20 +23,24 @@ export function UploadRunPanel({
   busy,
   onTrustedProfileNameChange,
   onFileSelected,
-  onUpload,
-  onStartRun,
+  onLaunchReviewWorkspace,
 }: UploadRunPanelProps) {
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     onFileSelected(event.target.files?.[0] ?? null);
   }
 
+  function handleDrop(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    onFileSelected(event.dataTransfer.files?.[0] ?? null);
+  }
+
   return (
-    <section className="panel">
+    <section className="setup-panel">
       <div className="panel-heading">
-        <h2>1. Upload And Run</h2>
-        <p>Upload one report, choose one read-only trusted profile, then start one immutable processing run.</p>
+        <h2>Open Review Workspace</h2>
+        <p>Choose one trusted profile, drop or browse for one PDF, then go straight into review.</p>
       </div>
-      <div className="form-grid">
+      <div className="setup-grid">
         <label className="field">
           <span>Trusted profile</span>
           <select
@@ -54,73 +57,55 @@ export function UploadRunPanel({
             ))}
           </select>
         </label>
-        <label className="field">
-          <span>Source report PDF</span>
-          <input type="file" accept=".pdf,application/pdf" onChange={handleFileChange} disabled={busy} />
-        </label>
-      </div>
-      <div className="actions">
-        <button type="button" onClick={onUpload} disabled={busy}>
-          Upload report
-        </button>
-        <button
-          type="button"
-          className="secondary"
-          onClick={onStartRun}
-          disabled={busy || !upload || !selectedTrustedProfile}
+
+        <label
+          className="dropzone"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={handleDrop}
         >
-          Start processing run
-        </button>
-      </div>
-      <div className="summary-card">
-        <strong>Selected trusted profile</strong>
-        {selectedTrustedProfile ? (
-          <dl className="summary-list">
-            <div>
-              <dt>Name</dt>
-              <dd>{selectedTrustedProfile.display_name}</dd>
-            </div>
+          <span className="dropzone-label">Source report PDF</span>
+          <strong>{selectedFileName || upload?.original_filename || "Drop a PDF here or browse"}</strong>
+          <small>
+            {selectedFileName || upload
+              ? "The current selection will be uploaded and opened in the review workspace."
+              : "Choose a single job-cost PDF to process with the selected trusted profile."}
+          </small>
+          <input
+            aria-label="Source report PDF"
+            type="file"
+            accept=".pdf,application/pdf"
+            onChange={handleFileChange}
+            disabled={busy}
+          />
+        </label>
+
+        <div className="setup-summary">
+          <strong>{selectedTrustedProfile?.display_name ?? "No trusted profile selected"}</strong>
+          <p>{selectedTrustedProfile?.description || "Select one validated trusted profile for this pilot review."}</p>
+          <dl className="summary-list compact">
             <div>
               <dt>Profile key</dt>
-              <dd>{selectedTrustedProfile.profile_name}</dd>
-            </div>
-            <div>
-              <dt>Version</dt>
-              <dd>{selectedTrustedProfile.version_label ?? "—"}</dd>
+              <dd>{selectedTrustedProfile?.profile_name ?? "-"}</dd>
             </div>
             <div>
               <dt>Template</dt>
-              <dd>{selectedTrustedProfile.template_filename ?? "—"}</dd>
+              <dd>{selectedTrustedProfile?.template_filename ?? "-"}</dd>
             </div>
-            <div>
-              <dt>Description</dt>
-              <dd>{selectedTrustedProfile.description || "No description."}</dd>
-            </div>
-          </dl>
-        ) : (
-          <p>No trusted profile is available for selection.</p>
-        )}
+              <div>
+                <dt>Last file</dt>
+                <dd>{upload?.original_filename ?? selectedFileName ?? "-"}</dd>
+              </div>
+            </dl>
+          </div>
       </div>
-      <div className="summary-card">
-        <strong>Current upload</strong>
-        {upload ? (
-          <dl className="summary-list">
-            <div>
-              <dt>Upload id</dt>
-              <dd>{upload.upload_id}</dd>
-            </div>
-            <div>
-              <dt>Filename</dt>
-              <dd>{upload.original_filename}</dd>
-            </div>
-            <div>
-              <dt>Bytes</dt>
-              <dd>{upload.file_size_bytes}</dd>
-            </div>
-          </dl>
-        ) : (
-          <p>{selectedFileName ? `Ready to upload ${selectedFileName}.` : "No report uploaded yet."}</p>
-        )}
+      <div className="actions">
+        <button
+          type="button"
+          onClick={onLaunchReviewWorkspace}
+          disabled={busy || !selectedTrustedProfile || !(selectedFileName || upload)}
+        >
+          Open review workspace
+        </button>
       </div>
     </section>
   );

@@ -20,6 +20,7 @@ from core.models.lineage import (
     ProfileSnapshot,
     ReviewSession,
     RunRecord,
+    SourceDocument,
     TemplateArtifact,
     TrustedProfile,
 )
@@ -43,6 +44,7 @@ class ReviewSessionState:
 
     processing_run: ProcessingRun
     profile_snapshot: ProfileSnapshot
+    source_document: SourceDocument
     trusted_profile: TrustedProfile | None
     review_session: ReviewSession
     run_records: list[RunRecord]
@@ -136,6 +138,7 @@ class ReviewSessionService:
         return ReviewSessionState(
             processing_run=context.processing_run,
             profile_snapshot=context.profile_snapshot,
+            source_document=context.source_document,
             trusted_profile=context.trusted_profile,
             review_session=context.review_session,
             run_records=context.run_records,
@@ -278,6 +281,7 @@ class ReviewSessionService:
         trusted_profile = None
         if processing_run.trusted_profile_id:
             trusted_profile = self._lineage_store.get_trusted_profile(processing_run.trusted_profile_id)
+        source_document = self._lineage_store.get_source_document(processing_run.source_document_id)
 
         if create_session:
             review_session = self._lineage_store.get_or_create_review_session(
@@ -296,6 +300,7 @@ class ReviewSessionService:
         return _RunContext(
             processing_run=processing_run,
             profile_snapshot=profile_snapshot,
+            source_document=source_document,
             trusted_profile=trusted_profile,
             review_session=review_session,
             run_records=run_records,
@@ -399,10 +404,21 @@ class ReviewSessionService:
             return self._artifact_store.save_export_artifact(
                 processing_run_id=review_session_state.processing_run.processing_run_id,
                 session_revision=review_session_state.session_revision,
-                original_filename=temp_output_path.name,
+                original_filename=self._build_export_filename(
+                    review_session_state.source_document.original_filename,
+                    review_session_state.session_revision,
+                ),
                 content_bytes=temp_output_path.read_bytes(),
                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
+
+    def _build_export_filename(self, source_filename: str, session_revision: int) -> str:
+        """Derive a user-facing workbook filename from the source report when practical."""
+        source_name = Path(str(source_filename or "").strip()).name
+        source_stem = Path(source_name).stem.strip()
+        if not source_stem:
+            source_stem = "recap-export"
+        return f"{source_stem}-recap-rev-{session_revision}.xlsx"
 
     def _get_behavioral_bundle(self, profile_snapshot: ProfileSnapshot) -> dict[str, object]:
         """Return the behaviorally relevant config payload captured in one snapshot."""
@@ -434,6 +450,7 @@ class _RunContext:
 
     processing_run: ProcessingRun
     profile_snapshot: ProfileSnapshot
+    source_document: SourceDocument
     trusted_profile: TrustedProfile | None
     review_session: ReviewSession
     run_records: list[RunRecord]

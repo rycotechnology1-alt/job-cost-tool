@@ -21,6 +21,7 @@ class ProcessingRunResponse(ApiModel):
 
     processing_run_id: str
     source_document_id: str
+    source_document_filename: str
     profile_snapshot_id: str
     trusted_profile_id: str | None = None
     trusted_profile_name: str | None = None
