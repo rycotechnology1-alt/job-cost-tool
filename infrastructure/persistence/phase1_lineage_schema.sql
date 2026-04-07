@@ -29,10 +29,92 @@ CREATE TABLE IF NOT EXISTS trusted_profiles (
     bundle_ref TEXT,
     description TEXT NOT NULL DEFAULT '',
     version_label TEXT,
+    current_published_version_id TEXT,
     created_by_user_id TEXT,
     created_at TEXT NOT NULL,
     UNIQUE (organization_id, profile_name),
     FOREIGN KEY (organization_id) REFERENCES organizations (organization_id),
+    FOREIGN KEY (created_by_user_id) REFERENCES users (user_id),
+    FOREIGN KEY (current_published_version_id) REFERENCES trusted_profile_versions (trusted_profile_version_id)
+);
+
+CREATE TABLE IF NOT EXISTS trusted_profile_versions (
+    trusted_profile_version_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    trusted_profile_id TEXT NOT NULL,
+    version_number INTEGER NOT NULL CHECK (version_number > 0),
+    base_trusted_profile_version_id TEXT,
+    bundle_json TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    template_artifact_id TEXT,
+    template_artifact_ref TEXT,
+    template_file_hash TEXT,
+    source_kind TEXT NOT NULL DEFAULT 'published',
+    created_by_user_id TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (trusted_profile_id, version_number),
+    UNIQUE (organization_id, trusted_profile_id, content_hash),
+    FOREIGN KEY (organization_id) REFERENCES organizations (organization_id),
+    FOREIGN KEY (trusted_profile_id) REFERENCES trusted_profiles (trusted_profile_id),
+    FOREIGN KEY (base_trusted_profile_version_id) REFERENCES trusted_profile_versions (trusted_profile_version_id),
+    FOREIGN KEY (template_artifact_id) REFERENCES template_artifacts (template_artifact_id),
+    FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
+);
+
+CREATE TABLE IF NOT EXISTS trusted_profile_drafts (
+    trusted_profile_draft_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    trusted_profile_id TEXT NOT NULL,
+    base_trusted_profile_version_id TEXT,
+    bundle_json TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    template_artifact_id TEXT,
+    template_artifact_ref TEXT,
+    template_file_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status = 'open'),
+    created_by_user_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (trusted_profile_id),
+    FOREIGN KEY (organization_id) REFERENCES organizations (organization_id),
+    FOREIGN KEY (trusted_profile_id) REFERENCES trusted_profiles (trusted_profile_id),
+    FOREIGN KEY (base_trusted_profile_version_id) REFERENCES trusted_profile_versions (trusted_profile_version_id),
+    FOREIGN KEY (template_artifact_id) REFERENCES template_artifacts (template_artifact_id),
+    FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
+);
+
+CREATE TABLE IF NOT EXISTS trusted_profile_observations (
+    trusted_profile_observation_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    trusted_profile_id TEXT NOT NULL,
+    observation_domain TEXT NOT NULL CHECK (observation_domain IN ('labor_mapping', 'equipment_mapping')),
+    canonical_raw_key TEXT NOT NULL,
+    raw_display_value TEXT NOT NULL,
+    first_seen_processing_run_id TEXT,
+    last_seen_processing_run_id TEXT,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    draft_applied_at TEXT,
+    is_resolved INTEGER NOT NULL DEFAULT 0 CHECK (is_resolved IN (0, 1)),
+    resolved_at TEXT,
+    UNIQUE (trusted_profile_id, observation_domain, canonical_raw_key),
+    FOREIGN KEY (organization_id) REFERENCES organizations (organization_id),
+    FOREIGN KEY (trusted_profile_id) REFERENCES trusted_profiles (trusted_profile_id),
+    FOREIGN KEY (first_seen_processing_run_id) REFERENCES processing_runs (processing_run_id),
+    FOREIGN KEY (last_seen_processing_run_id) REFERENCES processing_runs (processing_run_id)
+);
+
+CREATE TABLE IF NOT EXISTS trusted_profile_sync_exports (
+    trusted_profile_sync_export_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    trusted_profile_version_id TEXT NOT NULL,
+    artifact_storage_ref TEXT NOT NULL,
+    artifact_file_hash TEXT,
+    manifest_json TEXT,
+    created_by_user_id TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (organization_id) REFERENCES organizations (organization_id),
+    FOREIGN KEY (trusted_profile_version_id) REFERENCES trusted_profile_versions (trusted_profile_version_id),
     FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
 );
 
@@ -54,6 +136,7 @@ CREATE TABLE IF NOT EXISTS profile_snapshots (
     profile_snapshot_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     trusted_profile_id TEXT,
+    trusted_profile_version_id TEXT,
     template_artifact_id TEXT,
     content_hash TEXT NOT NULL,
     bundle_json TEXT NOT NULL,
@@ -64,6 +147,7 @@ CREATE TABLE IF NOT EXISTS profile_snapshots (
     UNIQUE (organization_id, content_hash),
     FOREIGN KEY (organization_id) REFERENCES organizations (organization_id),
     FOREIGN KEY (trusted_profile_id) REFERENCES trusted_profiles (trusted_profile_id),
+    FOREIGN KEY (trusted_profile_version_id) REFERENCES trusted_profile_versions (trusted_profile_version_id),
     FOREIGN KEY (template_artifact_id) REFERENCES template_artifacts (template_artifact_id)
 );
 
@@ -88,6 +172,7 @@ CREATE TABLE IF NOT EXISTS processing_runs (
     source_document_id TEXT NOT NULL,
     profile_snapshot_id TEXT NOT NULL,
     trusted_profile_id TEXT,
+    trusted_profile_version_id TEXT,
     status TEXT NOT NULL,
     engine_version TEXT NOT NULL,
     aggregate_blockers_json TEXT NOT NULL DEFAULT '[]',
@@ -97,6 +182,7 @@ CREATE TABLE IF NOT EXISTS processing_runs (
     FOREIGN KEY (source_document_id) REFERENCES source_documents (source_document_id),
     FOREIGN KEY (profile_snapshot_id) REFERENCES profile_snapshots (profile_snapshot_id),
     FOREIGN KEY (trusted_profile_id) REFERENCES trusted_profiles (trusted_profile_id),
+    FOREIGN KEY (trusted_profile_version_id) REFERENCES trusted_profile_versions (trusted_profile_version_id),
     FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
 );
 
@@ -168,6 +254,11 @@ CREATE TABLE IF NOT EXISTS export_artifacts (
 );
 
 CREATE INDEX IF NOT EXISTS ix_trusted_profiles_org ON trusted_profiles (organization_id);
+CREATE INDEX IF NOT EXISTS ix_trusted_profile_versions_profile_version ON trusted_profile_versions (trusted_profile_id, version_number);
+CREATE INDEX IF NOT EXISTS ix_trusted_profile_versions_org_profile ON trusted_profile_versions (organization_id, trusted_profile_id);
+CREATE INDEX IF NOT EXISTS ix_trusted_profile_drafts_profile ON trusted_profile_drafts (trusted_profile_id);
+CREATE INDEX IF NOT EXISTS ix_trusted_profile_observations_profile_domain ON trusted_profile_observations (trusted_profile_id, observation_domain);
+CREATE INDEX IF NOT EXISTS ix_trusted_profile_sync_exports_version ON trusted_profile_sync_exports (trusted_profile_version_id);
 CREATE INDEX IF NOT EXISTS ix_template_artifacts_org ON template_artifacts (organization_id);
 CREATE INDEX IF NOT EXISTS ix_profile_snapshots_org ON profile_snapshots (organization_id);
 CREATE INDEX IF NOT EXISTS ix_source_documents_org ON source_documents (organization_id);

@@ -1,7 +1,16 @@
 import type {
+  ClassificationSlotRow,
+  DefaultOmitRuleRow,
+  DraftEditorStateResponse,
+  EquipmentMappingRow,
+  EquipmentRateRow,
   ExportArtifactResponse,
+  LaborMappingRow,
+  LaborRateRow,
   ProcessingRunDetailResponse,
   ProcessingRunResponse,
+  ProfileSyncExportResponse,
+  PublishedProfileDetailResponse,
   ReviewEditDelta,
   ReviewSessionResponse,
   SourceUploadResponse,
@@ -43,9 +52,9 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-function buildJsonRequest(body: unknown): RequestInit {
+function buildJsonRequest(body: unknown, method = "POST"): RequestInit {
   return {
-    method: "POST",
+    method,
     headers: {
       "Content-Type": "application/json",
     },
@@ -70,6 +79,97 @@ export async function uploadSourceDocument(file: File): Promise<SourceUploadResp
 
 export async function fetchTrustedProfiles(): Promise<TrustedProfileResponse[]> {
   return apiJson<TrustedProfileResponse[]>("/api/trusted-profiles");
+}
+
+export async function fetchProfileDetail(
+  trustedProfileId: string,
+): Promise<PublishedProfileDetailResponse> {
+  return apiJson<PublishedProfileDetailResponse>(`/api/profiles/${trustedProfileId}`);
+}
+
+export async function createOrOpenProfileDraft(
+  trustedProfileId: string,
+): Promise<DraftEditorStateResponse> {
+  return apiJson<DraftEditorStateResponse>(
+    `/api/profiles/${trustedProfileId}/draft`,
+    buildJsonRequest({}),
+  );
+}
+
+export async function fetchProfileDraft(
+  trustedProfileDraftId: string,
+): Promise<DraftEditorStateResponse> {
+  return apiJson<DraftEditorStateResponse>(`/api/profile-drafts/${trustedProfileDraftId}`);
+}
+
+export async function updateDraftDefaultOmit(
+  trustedProfileDraftId: string,
+  defaultOmitRules: DefaultOmitRuleRow[],
+): Promise<DraftEditorStateResponse> {
+  return apiJson<DraftEditorStateResponse>(
+    `/api/profile-drafts/${trustedProfileDraftId}/default-omit`,
+    buildJsonRequest({ default_omit_rules: defaultOmitRules }, "PATCH"),
+  );
+}
+
+export async function updateDraftLaborMappings(
+  trustedProfileDraftId: string,
+  laborMappings: LaborMappingRow[],
+): Promise<DraftEditorStateResponse> {
+  return apiJson<DraftEditorStateResponse>(
+    `/api/profile-drafts/${trustedProfileDraftId}/labor-mappings`,
+    buildJsonRequest({ labor_mappings: laborMappings }, "PATCH"),
+  );
+}
+
+export async function updateDraftEquipmentMappings(
+  trustedProfileDraftId: string,
+  equipmentMappings: EquipmentMappingRow[],
+): Promise<DraftEditorStateResponse> {
+  return apiJson<DraftEditorStateResponse>(
+    `/api/profile-drafts/${trustedProfileDraftId}/equipment-mappings`,
+    buildJsonRequest({ equipment_mappings: equipmentMappings }, "PATCH"),
+  );
+}
+
+export async function updateDraftClassifications(
+  trustedProfileDraftId: string,
+  laborSlots: ClassificationSlotRow[],
+  equipmentSlots: ClassificationSlotRow[],
+): Promise<DraftEditorStateResponse> {
+  return apiJson<DraftEditorStateResponse>(
+    `/api/profile-drafts/${trustedProfileDraftId}/classifications`,
+    buildJsonRequest({ labor_slots: laborSlots, equipment_slots: equipmentSlots }, "PATCH"),
+  );
+}
+
+export async function updateDraftRates(
+  trustedProfileDraftId: string,
+  laborRates: LaborRateRow[],
+  equipmentRates: EquipmentRateRow[],
+): Promise<DraftEditorStateResponse> {
+  return apiJson<DraftEditorStateResponse>(
+    `/api/profile-drafts/${trustedProfileDraftId}/rates`,
+    buildJsonRequest({ labor_rates: laborRates, equipment_rates: equipmentRates }, "PATCH"),
+  );
+}
+
+export async function publishProfileDraft(
+  trustedProfileDraftId: string,
+): Promise<PublishedProfileDetailResponse> {
+  return apiJson<PublishedProfileDetailResponse>(
+    `/api/profile-drafts/${trustedProfileDraftId}/publish`,
+    buildJsonRequest({}),
+  );
+}
+
+export async function createProfileSyncExport(
+  trustedProfileVersionId: string,
+): Promise<ProfileSyncExportResponse> {
+  return apiJson<ProfileSyncExportResponse>(
+    `/api/profile-versions/${trustedProfileVersionId}/desktop-sync-export`,
+    buildJsonRequest({}),
+  );
 }
 
 export async function createProcessingRun(
@@ -113,7 +213,7 @@ export async function createExportArtifact(
   );
 }
 
-export async function downloadExportArtifact(downloadUrl: string): Promise<string> {
+export async function downloadArtifact(downloadUrl: string): Promise<string> {
   const response = await apiRequest(downloadUrl);
   const blob = await response.blob();
   const filename = parseDownloadFilename(response);
@@ -126,4 +226,8 @@ export async function downloadExportArtifact(downloadUrl: string): Promise<strin
   link.remove();
   window.URL.revokeObjectURL(objectUrl);
   return filename;
+}
+
+export async function downloadExportArtifact(downloadUrl: string): Promise<string> {
+  return downloadArtifact(downloadUrl);
 }

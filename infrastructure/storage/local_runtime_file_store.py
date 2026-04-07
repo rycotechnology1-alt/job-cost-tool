@@ -158,6 +158,71 @@ class LocalRuntimeFileStore(RuntimeStorage):
             file_path=file_path,
         )
 
+    def save_profile_sync_export(
+        self,
+        *,
+        trusted_profile_version_id: str,
+        original_filename: str,
+        content_bytes: bytes,
+        content_type: str | None = None,
+    ) -> StoredArtifact:
+        """Persist one generated desktop-sync archive and return its stable runtime reference."""
+        filename = self._normalize_filename(original_filename) or "trusted-profile-sync.zip"
+        if not content_bytes:
+            raise ValueError("Profile sync export content_bytes must not be empty.")
+
+        sanitized_version_id = self._sanitize_processing_run_id(trusted_profile_version_id)
+        artifact_id = uuid4().hex
+        export_dir = (self._export_root / sanitized_version_id / artifact_id).resolve()
+        export_dir.mkdir(parents=True, exist_ok=False)
+        file_path = (export_dir / filename).resolve()
+        file_path.write_bytes(content_bytes)
+
+        storage_ref = f"profile-sync-exports/{sanitized_version_id}/{artifact_id}/{filename}"
+        metadata = {
+            "trusted_profile_version_id": str(trusted_profile_version_id),
+            "original_filename": filename,
+            "content_type": str(content_type or "application/zip"),
+            "file_size_bytes": len(content_bytes),
+            "storage_ref": storage_ref,
+            "filename": filename,
+        }
+        (export_dir / "metadata.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return StoredArtifact(
+            storage_ref=storage_ref,
+            original_filename=filename,
+            content_type=str(metadata["content_type"]),
+            file_size_bytes=len(content_bytes),
+            file_path=file_path,
+        )
+
+    def get_profile_sync_export(self, storage_ref: str) -> StoredArtifact:
+        """Resolve one previously stored desktop-sync archive by storage reference."""
+        export_dir = self._resolve_storage_ref_dir(
+            root=self._export_root,
+            storage_ref=storage_ref,
+            expected_prefix="profile-sync-exports/",
+        )
+        metadata_path = export_dir / "metadata.json"
+        if not metadata_path.is_file():
+            raise FileNotFoundError(f"Profile sync export '{storage_ref}' was not found.")
+
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        file_path = (export_dir / str(metadata["filename"])).resolve()
+        if not file_path.is_file():
+            raise FileNotFoundError(f"Profile sync export payload is missing for '{storage_ref}'.")
+
+        return StoredArtifact(
+            storage_ref=str(metadata["storage_ref"]),
+            original_filename=str(metadata["original_filename"]),
+            content_type=str(metadata["content_type"]),
+            file_size_bytes=int(metadata["file_size_bytes"]),
+            file_path=file_path,
+        )
+
     def _sanitize_processing_run_id(self, processing_run_id: str) -> str:
         """Return a safe local directory name for one processing run id."""
         sanitized_run_id = str(processing_run_id).replace(":", "-").replace("/", "-").strip()

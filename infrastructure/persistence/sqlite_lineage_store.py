@@ -10,14 +10,18 @@ from pathlib import Path
 from core.models.lineage import (
     ExportArtifact,
     Organization,
-    ReviewSession,
-    ReviewedRecordEdit,
     ProcessingRun,
     ProfileSnapshot,
+    ReviewSession,
+    ReviewedRecordEdit,
+    RunRecord,
     SourceDocument,
     TemplateArtifact,
     TrustedProfile,
-    RunRecord,
+    TrustedProfileDraft,
+    TrustedProfileObservation,
+    TrustedProfileSyncExport,
+    TrustedProfileVersion,
 )
 from services.lineage_service import canonicalize_json
 
@@ -85,9 +89,10 @@ class SqliteLineageStore:
                     bundle_ref,
                     description,
                     version_label,
+                    current_published_version_id,
                     created_by_user_id,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trusted_profile.trusted_profile_id,
@@ -98,6 +103,7 @@ class SqliteLineageStore:
                     trusted_profile.bundle_ref,
                     trusted_profile.description,
                     trusted_profile.version_label,
+                    trusted_profile.current_published_version_id,
                     trusted_profile.created_by_user_id,
                     _dt(trusted_profile.created_at),
                 ),
@@ -107,7 +113,51 @@ class SqliteLineageStore:
                 "SELECT * FROM trusted_profiles WHERE trusted_profile_id = ?",
                 (trusted_profile.trusted_profile_id,),
             ).fetchone()
+        else:
+            self._connection.execute(
+                """
+                UPDATE trusted_profiles
+                SET display_name = ?,
+                    source_kind = ?,
+                    bundle_ref = ?,
+                    description = ?,
+                    version_label = ?,
+                    current_published_version_id = COALESCE(?, current_published_version_id)
+                WHERE trusted_profile_id = ?
+                """,
+                (
+                    trusted_profile.display_name,
+                    trusted_profile.source_kind,
+                    trusted_profile.bundle_ref,
+                    trusted_profile.description,
+                    trusted_profile.version_label,
+                    trusted_profile.current_published_version_id,
+                    row["trusted_profile_id"],
+                ),
+            )
+            self._connection.commit()
+            row = self._connection.execute(
+                "SELECT * FROM trusted_profiles WHERE trusted_profile_id = ?",
+                (row["trusted_profile_id"],),
+            ).fetchone()
         return _trusted_profile_from_row(row)
+
+    def set_current_published_version(
+        self,
+        trusted_profile_id: str,
+        trusted_profile_version_id: str,
+    ) -> TrustedProfile:
+        """Point one logical trusted profile at its current published version."""
+        self._connection.execute(
+            """
+            UPDATE trusted_profiles
+            SET current_published_version_id = ?
+            WHERE trusted_profile_id = ?
+            """,
+            (trusted_profile_version_id, trusted_profile_id),
+        )
+        self._connection.commit()
+        return self.get_trusted_profile(trusted_profile_id)
 
     def get_trusted_profile(self, trusted_profile_id: str) -> TrustedProfile:
         """Fetch one persisted trusted profile."""
@@ -118,6 +168,33 @@ class SqliteLineageStore:
         if row is None:
             raise KeyError(f"TrustedProfile '{trusted_profile_id}' was not found.")
         return _trusted_profile_from_row(row)
+
+    def get_trusted_profile_by_name(
+        self,
+        *,
+        organization_id: str,
+        profile_name: str,
+    ) -> TrustedProfile:
+        """Fetch one persisted trusted profile by organization/profile name."""
+        row = self._connection.execute(
+            "SELECT * FROM trusted_profiles WHERE organization_id = ? AND profile_name = ?",
+            (organization_id, profile_name),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"TrustedProfile '{profile_name}' was not found in organization '{organization_id}'.")
+        return _trusted_profile_from_row(row)
+
+    def list_trusted_profiles(self, organization_id: str) -> list[TrustedProfile]:
+        """List persisted logical trusted profiles for one organization."""
+        rows = self._connection.execute(
+            """
+            SELECT * FROM trusted_profiles
+            WHERE organization_id = ?
+            ORDER BY profile_name ASC, trusted_profile_id ASC
+            """,
+            (organization_id,),
+        ).fetchall()
+        return [_trusted_profile_from_row(row) for row in rows]
 
     def get_or_create_template_artifact(
         self,
@@ -170,6 +247,116 @@ class SqliteLineageStore:
             raise KeyError(f"TemplateArtifact '{template_artifact_id}' was not found.")
         return _template_artifact_from_row(row)
 
+    def get_or_create_trusted_profile_version(
+        self,
+        trusted_profile_version: TrustedProfileVersion,
+    ) -> TrustedProfileVersion:
+        """Create or reuse one immutable published trusted-profile version by content hash."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM trusted_profile_versions
+            WHERE organization_id = ? AND trusted_profile_id = ? AND content_hash = ?
+            """,
+            (
+                trusted_profile_version.organization_id,
+                trusted_profile_version.trusted_profile_id,
+                trusted_profile_version.content_hash,
+            ),
+        ).fetchone()
+        if row is None:
+            self._connection.execute(
+                """
+                INSERT INTO trusted_profile_versions (
+                    trusted_profile_version_id,
+                    organization_id,
+                    trusted_profile_id,
+                    version_number,
+                    base_trusted_profile_version_id,
+                    bundle_json,
+                    content_hash,
+                    template_artifact_id,
+                    template_artifact_ref,
+                    template_file_hash,
+                    source_kind,
+                    created_by_user_id,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trusted_profile_version.trusted_profile_version_id,
+                    trusted_profile_version.organization_id,
+                    trusted_profile_version.trusted_profile_id,
+                    trusted_profile_version.version_number,
+                    trusted_profile_version.base_trusted_profile_version_id,
+                    trusted_profile_version.canonical_bundle_json,
+                    trusted_profile_version.content_hash,
+                    trusted_profile_version.template_artifact_id,
+                    trusted_profile_version.template_artifact_ref,
+                    trusted_profile_version.template_file_hash,
+                    trusted_profile_version.source_kind,
+                    trusted_profile_version.created_by_user_id,
+                    _dt(trusted_profile_version.created_at),
+                ),
+            )
+            self._connection.commit()
+            row = self._connection.execute(
+                "SELECT * FROM trusted_profile_versions WHERE trusted_profile_version_id = ?",
+                (trusted_profile_version.trusted_profile_version_id,),
+            ).fetchone()
+        return _trusted_profile_version_from_row(row)
+
+    def get_trusted_profile_version(self, trusted_profile_version_id: str) -> TrustedProfileVersion:
+        """Fetch one immutable published trusted-profile version."""
+        row = self._connection.execute(
+            "SELECT * FROM trusted_profile_versions WHERE trusted_profile_version_id = ?",
+            (trusted_profile_version_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"TrustedProfileVersion '{trusted_profile_version_id}' was not found.")
+        return _trusted_profile_version_from_row(row)
+
+    def get_current_trusted_profile_version(self, trusted_profile_id: str) -> TrustedProfileVersion:
+        """Fetch the current published version for one logical trusted profile."""
+        row = self._connection.execute(
+            """
+            SELECT version.*
+            FROM trusted_profiles profile
+            JOIN trusted_profile_versions version
+              ON version.trusted_profile_version_id = profile.current_published_version_id
+            WHERE profile.trusted_profile_id = ?
+            """,
+            (trusted_profile_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(
+                f"TrustedProfile '{trusted_profile_id}' does not have a current published version."
+            )
+        return _trusted_profile_version_from_row(row)
+
+    def list_trusted_profile_versions(self, trusted_profile_id: str) -> list[TrustedProfileVersion]:
+        """List immutable published versions for one logical trusted profile."""
+        rows = self._connection.execute(
+            """
+            SELECT * FROM trusted_profile_versions
+            WHERE trusted_profile_id = ?
+            ORDER BY version_number ASC, created_at ASC
+            """,
+            (trusted_profile_id,),
+        ).fetchall()
+        return [_trusted_profile_version_from_row(row) for row in rows]
+
+    def get_next_trusted_profile_version_number(self, trusted_profile_id: str) -> int:
+        """Return the next sequential version number for one logical trusted profile."""
+        row = self._connection.execute(
+            """
+            SELECT COALESCE(MAX(version_number), 0) AS max_version_number
+            FROM trusted_profile_versions
+            WHERE trusted_profile_id = ?
+            """,
+            (trusted_profile_id,),
+        ).fetchone()
+        return int(row["max_version_number"] or 0) + 1
+
     def get_or_create_profile_snapshot(
         self,
         snapshot: ProfileSnapshot,
@@ -186,6 +373,7 @@ class SqliteLineageStore:
                     profile_snapshot_id,
                     organization_id,
                     trusted_profile_id,
+                    trusted_profile_version_id,
                     template_artifact_id,
                     content_hash,
                     bundle_json,
@@ -193,12 +381,13 @@ class SqliteLineageStore:
                     template_artifact_ref,
                     template_file_hash,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     snapshot.profile_snapshot_id,
                     snapshot.organization_id,
                     snapshot.trusted_profile_id,
+                    snapshot.trusted_profile_version_id,
                     snapshot.template_artifact_id,
                     snapshot.content_hash,
                     snapshot.canonical_bundle_json,
@@ -224,6 +413,300 @@ class SqliteLineageStore:
         if row is None:
             raise KeyError(f"ProfileSnapshot '{profile_snapshot_id}' was not found.")
         return _profile_snapshot_from_row(row)
+
+    def get_open_trusted_profile_draft(self, trusted_profile_id: str) -> TrustedProfileDraft:
+        """Fetch the single open draft for one logical trusted profile."""
+        row = self._connection.execute(
+            "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_id = ?",
+            (trusted_profile_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"TrustedProfileDraft for '{trusted_profile_id}' was not found.")
+        return _trusted_profile_draft_from_row(row)
+
+    def get_trusted_profile_draft(self, trusted_profile_draft_id: str) -> TrustedProfileDraft:
+        """Fetch one trusted-profile draft by id."""
+        row = self._connection.execute(
+            "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_draft_id = ?",
+            (trusted_profile_draft_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"TrustedProfileDraft '{trusted_profile_draft_id}' was not found.")
+        return _trusted_profile_draft_from_row(row)
+
+    def get_or_create_trusted_profile_draft(
+        self,
+        draft: TrustedProfileDraft,
+    ) -> TrustedProfileDraft:
+        """Create or reuse the single open draft for one logical trusted profile."""
+        row = self._connection.execute(
+            "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_id = ?",
+            (draft.trusted_profile_id,),
+        ).fetchone()
+        if row is None:
+            self._connection.execute(
+                """
+                INSERT INTO trusted_profile_drafts (
+                    trusted_profile_draft_id,
+                    organization_id,
+                    trusted_profile_id,
+                    base_trusted_profile_version_id,
+                    bundle_json,
+                    content_hash,
+                    template_artifact_id,
+                    template_artifact_ref,
+                    template_file_hash,
+                    status,
+                    created_by_user_id,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    draft.trusted_profile_draft_id,
+                    draft.organization_id,
+                    draft.trusted_profile_id,
+                    draft.base_trusted_profile_version_id,
+                    draft.canonical_bundle_json,
+                    draft.content_hash,
+                    draft.template_artifact_id,
+                    draft.template_artifact_ref,
+                    draft.template_file_hash,
+                    draft.status,
+                    draft.created_by_user_id,
+                    _dt(draft.created_at),
+                    _dt(draft.updated_at),
+                ),
+            )
+            self._connection.commit()
+            row = self._connection.execute(
+                "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_draft_id = ?",
+                (draft.trusted_profile_draft_id,),
+            ).fetchone()
+        return _trusted_profile_draft_from_row(row)
+
+    def save_trusted_profile_draft(
+        self,
+        draft: TrustedProfileDraft,
+    ) -> TrustedProfileDraft:
+        """Persist the current mutable state for one trusted-profile draft."""
+        self._connection.execute(
+            """
+            UPDATE trusted_profile_drafts
+            SET bundle_json = ?,
+                content_hash = ?,
+                template_artifact_id = ?,
+                template_artifact_ref = ?,
+                template_file_hash = ?,
+                status = ?,
+                updated_at = ?
+            WHERE trusted_profile_draft_id = ?
+            """,
+            (
+                draft.canonical_bundle_json,
+                draft.content_hash,
+                draft.template_artifact_id,
+                draft.template_artifact_ref,
+                draft.template_file_hash,
+                draft.status,
+                _dt(draft.updated_at),
+                draft.trusted_profile_draft_id,
+            ),
+        )
+        self._connection.commit()
+        return self.get_trusted_profile_draft(draft.trusted_profile_draft_id)
+
+    def delete_trusted_profile_draft(self, trusted_profile_draft_id: str) -> None:
+        """Delete one trusted-profile draft once it is no longer the open working copy."""
+        self._connection.execute(
+            "DELETE FROM trusted_profile_drafts WHERE trusted_profile_draft_id = ?",
+            (trusted_profile_draft_id,),
+        )
+        self._connection.commit()
+
+    def upsert_trusted_profile_observation(
+        self,
+        observation: TrustedProfileObservation,
+    ) -> TrustedProfileObservation:
+        """Insert or update one observed unmapped raw value for a trusted profile."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM trusted_profile_observations
+            WHERE trusted_profile_id = ? AND observation_domain = ? AND canonical_raw_key = ?
+            """,
+            (
+                observation.trusted_profile_id,
+                observation.observation_domain,
+                observation.canonical_raw_key,
+            ),
+        ).fetchone()
+        if row is None:
+            self._connection.execute(
+                """
+                INSERT INTO trusted_profile_observations (
+                    trusted_profile_observation_id,
+                    organization_id,
+                    trusted_profile_id,
+                    observation_domain,
+                    canonical_raw_key,
+                    raw_display_value,
+                    first_seen_processing_run_id,
+                    last_seen_processing_run_id,
+                    first_seen_at,
+                    last_seen_at,
+                    draft_applied_at,
+                    is_resolved,
+                    resolved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation.trusted_profile_observation_id,
+                    observation.organization_id,
+                    observation.trusted_profile_id,
+                    observation.observation_domain,
+                    observation.canonical_raw_key,
+                    observation.raw_display_value,
+                    observation.first_seen_processing_run_id,
+                    observation.last_seen_processing_run_id,
+                    _dt(observation.first_seen_at),
+                    _dt(observation.last_seen_at),
+                    _dt(observation.draft_applied_at) if observation.draft_applied_at else None,
+                    int(observation.is_resolved),
+                    _dt(observation.resolved_at) if observation.resolved_at else None,
+                ),
+            )
+            self._connection.commit()
+            row = self._connection.execute(
+                "SELECT * FROM trusted_profile_observations WHERE trusted_profile_observation_id = ?",
+                (observation.trusted_profile_observation_id,),
+            ).fetchone()
+        else:
+            self._connection.execute(
+                """
+                UPDATE trusted_profile_observations
+                SET raw_display_value = CASE
+                        WHEN TRIM(COALESCE(raw_display_value, '')) = '' THEN ?
+                        ELSE raw_display_value
+                    END,
+                    last_seen_processing_run_id = COALESCE(?, last_seen_processing_run_id),
+                    last_seen_at = ?,
+                    draft_applied_at = COALESCE(?, draft_applied_at),
+                    is_resolved = ?,
+                    resolved_at = COALESCE(?, resolved_at)
+                WHERE trusted_profile_observation_id = ?
+                """,
+                (
+                    observation.raw_display_value,
+                    observation.last_seen_processing_run_id,
+                    _dt(observation.last_seen_at),
+                    _dt(observation.draft_applied_at) if observation.draft_applied_at else None,
+                    int(observation.is_resolved),
+                    _dt(observation.resolved_at) if observation.resolved_at else None,
+                    row["trusted_profile_observation_id"],
+                ),
+            )
+            self._connection.commit()
+            row = self._connection.execute(
+                "SELECT * FROM trusted_profile_observations WHERE trusted_profile_observation_id = ?",
+                (row["trusted_profile_observation_id"],),
+            ).fetchone()
+        return _trusted_profile_observation_from_row(row)
+
+    def get_trusted_profile_observation(
+        self,
+        trusted_profile_id: str,
+        observation_domain: str,
+        canonical_raw_key: str,
+    ) -> TrustedProfileObservation:
+        """Fetch one observed unmapped raw value by trusted profile, domain, and key."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM trusted_profile_observations
+            WHERE trusted_profile_id = ? AND observation_domain = ? AND canonical_raw_key = ?
+            """,
+            (trusted_profile_id, observation_domain, canonical_raw_key),
+        ).fetchone()
+        if row is None:
+            raise KeyError(
+                f"TrustedProfileObservation '{trusted_profile_id}:{observation_domain}:{canonical_raw_key}' "
+                "was not found."
+            )
+        return _trusted_profile_observation_from_row(row)
+
+    def list_trusted_profile_observations(
+        self,
+        trusted_profile_id: str,
+        *,
+        observation_domain: str | None = None,
+        unresolved_only: bool = False,
+        unmerged_only: bool = False,
+    ) -> list[TrustedProfileObservation]:
+        """List observed unmapped values for one logical trusted profile with optional filters."""
+        query = """
+            SELECT * FROM trusted_profile_observations
+            WHERE trusted_profile_id = ?
+        """
+        parameters: list[object] = [trusted_profile_id]
+        if observation_domain:
+            query += " AND observation_domain = ?"
+            parameters.append(observation_domain)
+        if unresolved_only:
+            query += " AND is_resolved = 0"
+        if unmerged_only:
+            query += " AND draft_applied_at IS NULL"
+        query += " ORDER BY observation_domain ASC, canonical_raw_key ASC"
+        rows = self._connection.execute(query, tuple(parameters)).fetchall()
+        return [_trusted_profile_observation_from_row(row) for row in rows]
+
+    def create_trusted_profile_sync_export(
+        self,
+        sync_export: TrustedProfileSyncExport,
+    ) -> TrustedProfileSyncExport:
+        """Persist one trusted-profile sync-export audit record."""
+        self._connection.execute(
+            """
+            INSERT INTO trusted_profile_sync_exports (
+                trusted_profile_sync_export_id,
+                organization_id,
+                trusted_profile_version_id,
+                artifact_storage_ref,
+                artifact_file_hash,
+                manifest_json,
+                created_by_user_id,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                sync_export.trusted_profile_sync_export_id,
+                sync_export.organization_id,
+                sync_export.trusted_profile_version_id,
+                sync_export.artifact_storage_ref,
+                sync_export.artifact_file_hash,
+                sync_export.manifest_json,
+                sync_export.created_by_user_id,
+                _dt(sync_export.created_at),
+            ),
+        )
+        self._connection.commit()
+        return self.get_trusted_profile_sync_export(sync_export.trusted_profile_sync_export_id)
+
+    def get_trusted_profile_sync_export(
+        self,
+        trusted_profile_sync_export_id: str,
+    ) -> TrustedProfileSyncExport:
+        """Fetch one trusted-profile sync-export audit record."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM trusted_profile_sync_exports
+            WHERE trusted_profile_sync_export_id = ?
+            """,
+            (trusted_profile_sync_export_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(
+                f"TrustedProfileSyncExport '{trusted_profile_sync_export_id}' was not found."
+            )
+        return _trusted_profile_sync_export_from_row(row)
 
     def get_or_create_source_document(
         self,
@@ -288,12 +771,13 @@ class SqliteLineageStore:
                 source_document_id,
                 profile_snapshot_id,
                 trusted_profile_id,
+                trusted_profile_version_id,
                 status,
                 engine_version,
                 aggregate_blockers_json,
                 created_by_user_id,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 processing_run.processing_run_id,
@@ -301,6 +785,7 @@ class SqliteLineageStore:
                 processing_run.source_document_id,
                 processing_run.profile_snapshot_id,
                 processing_run.trusted_profile_id,
+                processing_run.trusted_profile_version_id,
                 processing_run.status,
                 processing_run.engine_version,
                 json.dumps(list(processing_run.aggregate_blockers)),
@@ -560,7 +1045,32 @@ class SqliteLineageStore:
         """Create the phase-1 persistence schema when the store starts."""
         schema_path = Path(__file__).with_name("phase1_lineage_schema.sql")
         self._connection.executescript(schema_path.read_text(encoding="utf-8"))
+        self._ensure_column(
+            "trusted_profiles",
+            "current_published_version_id",
+            "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
+        )
+        self._ensure_column(
+            "profile_snapshots",
+            "trusted_profile_version_id",
+            "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
+        )
+        self._ensure_column(
+            "processing_runs",
+            "trusted_profile_version_id",
+            "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
+        )
         self._connection.commit()
+
+    def _ensure_column(self, table_name: str, column_name: str, column_sql: str) -> None:
+        """Add a missing column to an existing table for additive schema evolution."""
+        existing_columns = {
+            row["name"]
+            for row in self._connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+        if column_name in existing_columns:
+            return
+        self._connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
 
 
 def _dt(value: datetime) -> str:
@@ -593,6 +1103,78 @@ def _trusted_profile_from_row(row: sqlite3.Row) -> TrustedProfile:
         bundle_ref=row["bundle_ref"],
         description=row["description"],
         version_label=row["version_label"],
+        current_published_version_id=row["current_published_version_id"],
+        created_by_user_id=row["created_by_user_id"],
+        created_at=_parse_dt(row["created_at"]),
+    )
+
+
+def _trusted_profile_version_from_row(row: sqlite3.Row) -> TrustedProfileVersion:
+    bundle_json = row["bundle_json"]
+    return TrustedProfileVersion(
+        trusted_profile_version_id=row["trusted_profile_version_id"],
+        organization_id=row["organization_id"],
+        trusted_profile_id=row["trusted_profile_id"],
+        version_number=int(row["version_number"]),
+        bundle_payload=json.loads(bundle_json),
+        canonical_bundle_json=bundle_json,
+        content_hash=row["content_hash"],
+        base_trusted_profile_version_id=row["base_trusted_profile_version_id"],
+        template_artifact_id=row["template_artifact_id"],
+        template_artifact_ref=row["template_artifact_ref"],
+        template_file_hash=row["template_file_hash"],
+        source_kind=row["source_kind"],
+        created_by_user_id=row["created_by_user_id"],
+        created_at=_parse_dt(row["created_at"]),
+    )
+
+
+def _trusted_profile_draft_from_row(row: sqlite3.Row) -> TrustedProfileDraft:
+    bundle_json = row["bundle_json"]
+    return TrustedProfileDraft(
+        trusted_profile_draft_id=row["trusted_profile_draft_id"],
+        organization_id=row["organization_id"],
+        trusted_profile_id=row["trusted_profile_id"],
+        bundle_payload=json.loads(bundle_json),
+        canonical_bundle_json=bundle_json,
+        content_hash=row["content_hash"],
+        base_trusted_profile_version_id=row["base_trusted_profile_version_id"],
+        template_artifact_id=row["template_artifact_id"],
+        template_artifact_ref=row["template_artifact_ref"],
+        template_file_hash=row["template_file_hash"],
+        status=row["status"],
+        created_by_user_id=row["created_by_user_id"],
+        created_at=_parse_dt(row["created_at"]),
+        updated_at=_parse_dt(row["updated_at"]),
+    )
+
+
+def _trusted_profile_observation_from_row(row: sqlite3.Row) -> TrustedProfileObservation:
+    return TrustedProfileObservation(
+        trusted_profile_observation_id=row["trusted_profile_observation_id"],
+        organization_id=row["organization_id"],
+        trusted_profile_id=row["trusted_profile_id"],
+        observation_domain=row["observation_domain"],
+        canonical_raw_key=row["canonical_raw_key"],
+        raw_display_value=row["raw_display_value"],
+        first_seen_processing_run_id=row["first_seen_processing_run_id"],
+        last_seen_processing_run_id=row["last_seen_processing_run_id"],
+        first_seen_at=_parse_dt(row["first_seen_at"]),
+        last_seen_at=_parse_dt(row["last_seen_at"]),
+        draft_applied_at=_parse_dt(row["draft_applied_at"]) if row["draft_applied_at"] else None,
+        is_resolved=bool(row["is_resolved"]),
+        resolved_at=_parse_dt(row["resolved_at"]) if row["resolved_at"] else None,
+    )
+
+
+def _trusted_profile_sync_export_from_row(row: sqlite3.Row) -> TrustedProfileSyncExport:
+    return TrustedProfileSyncExport(
+        trusted_profile_sync_export_id=row["trusted_profile_sync_export_id"],
+        organization_id=row["organization_id"],
+        trusted_profile_version_id=row["trusted_profile_version_id"],
+        artifact_storage_ref=row["artifact_storage_ref"],
+        artifact_file_hash=row["artifact_file_hash"],
+        manifest_json=row["manifest_json"],
         created_by_user_id=row["created_by_user_id"],
         created_at=_parse_dt(row["created_at"]),
     )
@@ -604,6 +1186,7 @@ def _profile_snapshot_from_row(row: sqlite3.Row) -> ProfileSnapshot:
         profile_snapshot_id=row["profile_snapshot_id"],
         organization_id=row["organization_id"],
         trusted_profile_id=row["trusted_profile_id"],
+        trusted_profile_version_id=row["trusted_profile_version_id"],
         template_artifact_id=row["template_artifact_id"],
         content_hash=row["content_hash"],
         bundle_payload=json.loads(bundle_json),
@@ -630,13 +1213,14 @@ def _source_document_from_row(row: sqlite3.Row) -> SourceDocument:
 
 
 def _processing_run_from_row(row: sqlite3.Row) -> ProcessingRun:
-    return ProcessingRun(
-        processing_run_id=row["processing_run_id"],
-        organization_id=row["organization_id"],
-        source_document_id=row["source_document_id"],
-        profile_snapshot_id=row["profile_snapshot_id"],
-        trusted_profile_id=row["trusted_profile_id"],
-        status=row["status"],
+        return ProcessingRun(
+            processing_run_id=row["processing_run_id"],
+            organization_id=row["organization_id"],
+            source_document_id=row["source_document_id"],
+            profile_snapshot_id=row["profile_snapshot_id"],
+            trusted_profile_id=row["trusted_profile_id"],
+            trusted_profile_version_id=row["trusted_profile_version_id"],
+            status=row["status"],
         engine_version=row["engine_version"],
         aggregate_blockers=tuple(json.loads(row["aggregate_blockers_json"])),
         created_by_user_id=row["created_by_user_id"],

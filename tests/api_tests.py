@@ -6,6 +6,7 @@ import io
 import json
 import shutil
 import unittest
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -16,6 +17,7 @@ from openpyxl import Workbook, load_workbook
 from api import create_app
 from core.config import ConfigLoader, ProfileManager
 from core.models import MATERIAL, Record
+from core.models.lineage import TrustedProfile
 from infrastructure.persistence import SqliteLineageStore
 
 
@@ -241,6 +243,221 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertEqual(export_response.status_code, 409)
         self.assertIn("predates template-artifact capture", export_response.json()["detail"])
 
+    def test_profile_authoring_endpoints_open_edit_and_publish_draft(self) -> None:
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "equipment_mapping.json",
+            {
+                "raw_mappings": {"pickup truck": "Pick-up Truck"},
+                "saved_mappings": [
+                    {
+                        "raw_description": "pickup truck",
+                        "target_category": "Pick-up Truck",
+                    }
+                ],
+            },
+        )
+
+        detail_response = self.client.get("/api/profiles/trusted-profile:org-default:default")
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.json()["current_published_version"]["version_number"], 1)
+        self.assertIn("phase_mapping", detail_response.json()["deferred_domains"])
+
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_payload = draft_response.json()
+        draft_id = draft_payload["trusted_profile_draft_id"]
+        self.assertEqual(
+            draft_payload["equipment_mappings"][0],
+            {
+                "raw_description": "PICKUP TRUCK",
+                "raw_pattern": "PICKUP TRUCK",
+                "target_category": "Pick-up Truck",
+                "is_observed": False,
+            },
+        )
+
+        labor_mapping_response = self.client.patch(
+            f"/api/profile-drafts/{draft_id}/labor-mappings",
+            json={
+                "labor_mappings": [
+                    {
+                        "raw_value": "103/J",
+                        "target_classification": "103 Journeyman",
+                        "notes": "Mapped in web authoring",
+                    }
+                ]
+            },
+        )
+        self.assertEqual(labor_mapping_response.status_code, 200)
+        self.assertEqual(
+            labor_mapping_response.json()["labor_mappings"][0]["notes"],
+            "Mapped in web authoring",
+        )
+
+        equipment_mapping_response = self.client.patch(
+            f"/api/profile-drafts/{draft_id}/equipment-mappings",
+            json={
+                "equipment_mappings": [
+                    {
+                        "raw_description": "pickup truck",
+                        "raw_pattern": "PICKUP TRUCK",
+                        "target_category": "Pick-up Truck",
+                    }
+                ]
+            },
+        )
+        self.assertEqual(equipment_mapping_response.status_code, 200)
+        self.assertEqual(
+            equipment_mapping_response.json()["equipment_mappings"][0],
+            {
+                "raw_description": "PICKUP TRUCK",
+                "raw_pattern": "PICKUP TRUCK",
+                "target_category": "Pick-up Truck",
+                "is_observed": False,
+            },
+        )
+
+        publish_response = self.client.post(f"/api/profile-drafts/{draft_id}/publish")
+        self.assertEqual(publish_response.status_code, 200)
+        publish_payload = publish_response.json()
+        self.assertEqual(publish_payload["current_published_version"]["version_number"], 2)
+        self.assertIsNone(publish_payload["open_draft_id"])
+
+        draft_detail_response = self.client.get(f"/api/profile-drafts/{draft_id}")
+        self.assertEqual(draft_detail_response.status_code, 404)
+
+    def test_profile_detail_repairs_default_profile_missing_current_published_version(self) -> None:
+        organization = self.lineage_store.ensure_organization(
+            organization_id="org-default",
+            slug="default-org",
+            display_name="Default Organization",
+            created_at=self.created_at,
+            is_seeded=True,
+        )
+        self.lineage_store.get_or_create_trusted_profile(
+            TrustedProfile(
+                trusted_profile_id="trusted-profile:org-default:default",
+                organization_id=organization.organization_id,
+                profile_name="default",
+                display_name="Default Profile",
+                source_kind="seeded",
+                bundle_ref=str(TEST_ROOT / "profiles" / "default"),
+                description="Default API test profile",
+                version_label="1.0",
+                created_at=self.created_at,
+            )
+        )
+
+        response = self.client.get("/api/profiles/trusted-profile:org-default:default")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["current_published_version"]["version_number"], 1)
+        repaired_profile = self.lineage_store.get_trusted_profile("trusted-profile:org-default:default")
+        persisted_versions = self.lineage_store.list_trusted_profile_versions(
+            repaired_profile.trusted_profile_id
+        )
+        self.assertEqual(len(persisted_versions), 1)
+        self.assertEqual(
+            repaired_profile.current_published_version_id,
+            persisted_versions[0].trusted_profile_version_id,
+        )
+
+    def test_processing_run_observation_capture_exposes_observed_blank_row_in_draft_state(self) -> None:
+        upload_response = self.client.post(
+            "/api/source-documents/uploads",
+            files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        upload_payload = upload_response.json()
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[self._make_unmapped_labor_record(raw_description="Labor line", union_code="104", labor_class_raw="EO")],
+        ):
+            run_response = self.client.post(
+                "/api/runs",
+                json={
+                    "upload_id": upload_payload["upload_id"],
+                    "trusted_profile_name": "default",
+                },
+            )
+
+        self.assertEqual(run_response.status_code, 201)
+        profile_detail = self.client.get("/api/profiles/trusted-profile:org-default:default")
+        self.assertEqual(profile_detail.status_code, 200)
+        draft_id = profile_detail.json()["open_draft_id"]
+        self.assertTrue(draft_id)
+
+        draft_response = self.client.get(f"/api/profile-drafts/{draft_id}")
+        self.assertEqual(draft_response.status_code, 200)
+        self.assertIn(
+            {
+                "raw_value": "104/EO",
+                "target_classification": "",
+                "notes": "",
+                "is_observed": True,
+            },
+            draft_response.json()["labor_mappings"],
+        )
+
+    def test_profile_sync_export_creation_and_download_use_published_version_only(self) -> None:
+        detail_response = self.client.get("/api/profiles/trusted-profile:org-default:default")
+        self.assertEqual(detail_response.status_code, 200)
+        version_id = detail_response.json()["current_published_version"]["trusted_profile_version_id"]
+
+        export_response = self.client.post(
+            f"/api/profile-versions/{version_id}/desktop-sync-export"
+        )
+        self.assertEqual(export_response.status_code, 201)
+        export_payload = export_response.json()
+
+        download_response = self.client.get(export_payload["download_url"])
+        self.assertEqual(download_response.status_code, 200)
+        self.assertIn('filename="default__v1.zip"', download_response.headers["content-disposition"])
+
+        with zipfile.ZipFile(io.BytesIO(download_response.content)) as archive:
+            manifest = json.loads(archive.read("default__v1/manifest.json").decode("utf-8"))
+            profile_json = json.loads(archive.read("default__v1/profile.json").decode("utf-8"))
+            template_bytes = archive.read("default__v1/recap_template.xlsx")
+
+        self.assertEqual(export_payload["version_number"], 1)
+        self.assertEqual(manifest["trusted_profile_version_id"], version_id)
+        self.assertEqual(manifest["profile_name"], "default")
+        self.assertEqual(profile_json["template_filename"], "recap_template.xlsx")
+        self.assertTrue(template_bytes)
+
+    def test_profile_sync_export_rejects_draft_ids_and_missing_template_artifacts(self) -> None:
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_id = draft_response.json()["trusted_profile_draft_id"]
+
+        wrong_source_response = self.client.post(
+            f"/api/profile-versions/{draft_id}/desktop-sync-export"
+        )
+        self.assertEqual(wrong_source_response.status_code, 404)
+
+        detail_response = self.client.get("/api/profiles/trusted-profile:org-default:default")
+        version_id = detail_response.json()["current_published_version"]["trusted_profile_version_id"]
+        self.lineage_store._connection.execute(
+            """
+            UPDATE trusted_profile_versions
+            SET template_artifact_id = NULL
+            WHERE trusted_profile_version_id = ?
+            """,
+            (version_id,),
+        )
+        self.lineage_store._connection.commit()
+
+        missing_template_response = self.client.post(
+            f"/api/profile-versions/{version_id}/desktop-sync-export"
+        )
+        self.assertEqual(missing_template_response.status_code, 404)
+        self.assertIn("does not include a template artifact", missing_template_response.json()["detail"])
+
+    def test_profile_sync_export_download_returns_not_found_for_unknown_artifact(self) -> None:
+        response = self.client.get("/api/profile-sync-exports/does-not-exist/download")
+        self.assertEqual(response.status_code, 404)
+
     def _create_processing_run_via_api(self) -> str:
         upload_response = self.client.post(
             "/api/source-documents/uploads",
@@ -406,6 +623,34 @@ class Phase1ApiTests(unittest.TestCase):
             record_type_normalized=MATERIAL,
             recap_labor_classification=None,
             vendor_name_normalized=vendor_name_normalized,
+        )
+
+    def _make_unmapped_labor_record(
+        self,
+        *,
+        raw_description: str,
+        union_code: str,
+        labor_class_raw: str,
+    ) -> Record:
+        return Record(
+            record_type="labor",
+            phase_code="20",
+            raw_description=raw_description,
+            cost=100.0,
+            hours=8.0,
+            hour_type="ST",
+            union_code=union_code,
+            labor_class_raw=labor_class_raw,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=["Labor raw value is not mapped."],
+            source_page=1,
+            source_line_text="Labor source",
+            record_type_normalized="labor",
+            recap_labor_classification=None,
         )
 
     def _write_json(self, path: Path, payload: object) -> None:

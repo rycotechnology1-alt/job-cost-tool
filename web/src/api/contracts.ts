@@ -116,3 +116,107 @@ export interface ExportArtifactResponse {
   created_at: string;
   download_url: string;
 }
+
+export interface ProfileVersionSummaryResponse {
+  trusted_profile_version_id: string;
+  version_number: number;
+  content_hash: string;
+  template_artifact_ref: string | null;
+  template_file_hash: string | null;
+  template_filename: string | null;
+}
+
+export interface DeferredDomainsResponse {
+  vendor_normalization: Record<string, unknown>;
+  phase_mapping: Record<string, unknown>;
+  input_model: Record<string, unknown>;
+  recap_template_map: Record<string, unknown>;
+}
+
+export interface DefaultOmitRuleRow {
+  phase_code: string;
+  phase_name: string;
+}
+
+export interface PhaseOptionRow {
+  phase_code: string;
+  phase_name: string;
+}
+
+export interface LaborMappingRow {
+  raw_value: string;
+  target_classification: string;
+  notes: string;
+  is_observed: boolean;
+}
+
+export interface EquipmentMappingRow {
+  raw_description: string;
+  raw_pattern?: string | null;
+  target_category: string;
+  is_observed: boolean;
+}
+
+export interface ClassificationSlotRow {
+  slot_id: string;
+  label: string;
+  active: boolean;
+}
+
+export interface LaborRateRow {
+  classification: string;
+  standard_rate: string;
+  overtime_rate: string;
+  double_time_rate: string;
+}
+
+export interface EquipmentRateRow {
+  category: string;
+  rate: string;
+}
+
+export interface PublishedProfileDetailResponse {
+  trusted_profile_id: string;
+  profile_name: string;
+  display_name: string;
+  description: string;
+  version_label: string | null;
+  current_published_version: ProfileVersionSummaryResponse;
+  open_draft_id: string | null;
+  deferred_domains: DeferredDomainsResponse;
+}
+
+export interface ProfileSyncExportResponse {
+  trusted_profile_sync_export_id: string;
+  trusted_profile_version_id: string;
+  trusted_profile_id: string;
+  profile_name: string;
+  display_name: string;
+  version_number: number;
+  archive_filename: string;
+  artifact_file_hash: string | null;
+  created_at: string;
+  download_url: string;
+}
+
+export interface DraftEditorStateResponse {
+  trusted_profile_draft_id: string;
+  trusted_profile_id: string;
+  profile_name: string;
+  display_name: string;
+  description: string;
+  version_label: string | null;
+  current_published_version: ProfileVersionSummaryResponse;
+  base_trusted_profile_version_id: string | null;
+  draft_content_hash: string;
+  default_omit_rules: DefaultOmitRuleRow[];
+  default_omit_phase_options: PhaseOptionRow[];
+  labor_mappings: LaborMappingRow[];
+  equipment_mappings: EquipmentMappingRow[];
+  labor_slots: ClassificationSlotRow[];
+  equipment_slots: ClassificationSlotRow[];
+  labor_rates: LaborRateRow[];
+  equipment_rates: EquipmentRateRow[];
+  deferred_domains: DeferredDomainsResponse;
+  validation_errors: string[];
+}

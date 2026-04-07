@@ -9,25 +9,27 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.viewmodels.review_view_model import ReviewViewModel
-from app.viewmodels.settings_view_model import (
-    SettingsViewModel,
-    _active_labels_from_slots,
-    _build_equipment_mapping_rows,
-    _build_labor_mapping_rows,
-    _build_slot_label_rename_map,
-    _dedupe_casefold_preserving_order,
-    _rename_equipment_mapping_config_targets,
-    _rename_labor_mapping_config_targets,
-    _rename_rates_config_targets,
-    _rename_recap_template_map_targets,
-    _validate_equipment_classification_references,
-    _validate_labor_classification_references,
-    _validate_slot_rows,
+from app.viewmodels.settings_view_model import SettingsViewModel
+from core.config import ConfigLoader, ProfileManager
+from core.models.record import LABOR, MATERIAL, Record
+from services.profile_bundle_helpers import (
+    active_labels_from_slots,
+    build_equipment_mapping_rows,
+    build_labor_mapping_rows,
+    build_slot_label_rename_map,
+    dedupe_casefold_preserving_order,
+    rename_equipment_mapping_config_targets,
+    rename_labor_mapping_config_targets,
+    rename_rates_config_targets,
+    rename_recap_template_map_targets,
+    validate_equipment_classification_references,
+    validate_labor_classification_references,
+    validate_slot_rows,
+)
+from services.settings_workflow_service import (
     persist_observed_equipment_raw_values,
     persist_observed_labor_raw_values,
 )
-from core.config import ConfigLoader, ProfileManager
-from core.models.record import LABOR, MATERIAL, Record
 
 
 TEST_ROOT = Path("tests/_profile_tmp")
@@ -469,14 +471,14 @@ class ProfileConfigTests(unittest.TestCase):
 
     def test_labor_classification_validation_rejects_referenced_mapping_or_rate(self) -> None:
         with self.assertRaisesRegex(ValueError, "still referenced by labor mapping"):
-            _validate_labor_classification_references(
+            validate_labor_classification_references(
                 rows=[{"raw_value": "GF", "target_classification": "103 Foreman"}],
                 rate_rows=[],
                 valid_classifications=["103 Journeyman"],
             )
 
         with self.assertRaisesRegex(ValueError, "still referenced by configured labor rates"):
-            _validate_labor_classification_references(
+            validate_labor_classification_references(
                 rows=[],
                 rate_rows=[
                     {
@@ -491,21 +493,21 @@ class ProfileConfigTests(unittest.TestCase):
 
     def test_equipment_classification_validation_rejects_referenced_mapping_or_rate(self) -> None:
         with self.assertRaisesRegex(ValueError, "still referenced by equipment mapping"):
-            _validate_equipment_classification_references(
+            validate_equipment_classification_references(
                 rows=[{"raw_pattern": "bucket truck", "target_category": "Bucket Truck"}],
                 rate_rows=[],
                 valid_classifications=["Utility Van"],
             )
 
         with self.assertRaisesRegex(ValueError, "still referenced by configured equipment rates"):
-            _validate_equipment_classification_references(
+            validate_equipment_classification_references(
                 rows=[],
                 rate_rows=[{"category": "Bucket Truck", "rate": "125"}],
                 valid_classifications=["Utility Van"],
             )
 
     def test_slot_based_classification_rename_map_updates_profile_references(self) -> None:
-        labor_rename_map = _build_slot_label_rename_map(
+        labor_rename_map = build_slot_label_rename_map(
             previous_slots=[
                 {"slot_id": "labor_1", "label": "Old Journeyman", "active": True},
                 {"slot_id": "labor_2", "label": "Foreman", "active": True},
@@ -515,7 +517,7 @@ class ProfileConfigTests(unittest.TestCase):
                 {"slot_id": "labor_2", "label": "Foreman", "active": True},
             ],
         )
-        equipment_rename_map = _build_slot_label_rename_map(
+        equipment_rename_map = build_slot_label_rename_map(
             previous_slots=[
                 {"slot_id": "equipment_1", "label": "Old Truck", "active": True},
                 {"slot_id": "equipment_2", "label": "Van", "active": True},
@@ -526,7 +528,7 @@ class ProfileConfigTests(unittest.TestCase):
             ],
         )
 
-        updated_labor_mapping = _rename_labor_mapping_config_targets(
+        updated_labor_mapping = rename_labor_mapping_config_targets(
             {
                 "raw_mappings": {"103/J": "Old Journeyman"},
                 "saved_mappings": [
@@ -536,14 +538,14 @@ class ProfileConfigTests(unittest.TestCase):
             },
             labor_rename_map,
         )
-        updated_equipment_mapping = _rename_equipment_mapping_config_targets(
+        updated_equipment_mapping = rename_equipment_mapping_config_targets(
             {
                 "raw_mappings": {"TRUCK": "Old Truck"},
                 "saved_mappings": [{"raw_description": "TRUCK", "target_category": "Old Truck"}],
             },
             equipment_rename_map,
         )
-        updated_rates = _rename_rates_config_targets(
+        updated_rates = rename_rates_config_targets(
             {
                 "labor_rates": {"Old Journeyman": {"standard_rate": 100}},
                 "equipment_rates": {"Old Truck": {"rate": 25}},
@@ -551,7 +553,7 @@ class ProfileConfigTests(unittest.TestCase):
             labor_rename_map,
             equipment_rename_map,
         )
-        updated_recap_map = _rename_recap_template_map_targets(
+        updated_recap_map = rename_recap_template_map_targets(
             {
                 "labor_rows": {"Old Journeyman": {"st_hours": "B12"}},
                 "equipment_rows": {"Old Truck": {"hours_qty": "B27"}},
@@ -577,12 +579,12 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertIn("New Truck", updated_recap_map["equipment_rows"])
 
     def test_build_labor_mapping_rows_returns_empty_when_no_raw_first_data_exists(self) -> None:
-        rows = _build_labor_mapping_rows({})
+        rows = build_labor_mapping_rows({})
 
         self.assertEqual(rows, [])
 
     def test_build_labor_mapping_rows_prefers_explicit_saved_mappings(self) -> None:
-        rows = _build_labor_mapping_rows(
+        rows = build_labor_mapping_rows(
             {
                 "raw_mappings": {"103/F": "103 Foreman"},
                 "saved_mappings": [
@@ -594,7 +596,7 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(rows, [{"raw_value": "103/F", "target_classification": "Big Boy", "notes": "keep me"}])
 
     def test_build_labor_mapping_rows_merges_observed_raw_values_without_inflating_raw_first_rows(self) -> None:
-        rows = _build_labor_mapping_rows(
+        rows = build_labor_mapping_rows(
             {
                 "raw_mappings": {
                     "103/F": "Foreman",
@@ -606,14 +608,14 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                {"raw_value": "104/J", "target_classification": "", "notes": ""},
-                {"raw_value": "J", "target_classification": "", "notes": ""},
+                {"raw_value": "104/J", "target_classification": "", "notes": "", "is_observed": True},
+                {"raw_value": "J", "target_classification": "", "notes": "", "is_observed": True},
                 {"raw_value": "103/F", "target_classification": "Foreman", "notes": ""},
             ],
         )
 
     def test_build_labor_mapping_rows_uses_raw_mappings_when_saved_rows_are_absent(self) -> None:
-        rows = _build_labor_mapping_rows(
+        rows = build_labor_mapping_rows(
             {
                 "raw_mappings": {
                     "103/F": "103 Foreman",
@@ -632,7 +634,7 @@ class ProfileConfigTests(unittest.TestCase):
 
 
     def test_build_equipment_mapping_rows_prefers_explicit_saved_mappings(self) -> None:
-        rows = _build_equipment_mapping_rows(
+        rows = build_equipment_mapping_rows(
             {
                 "raw_mappings": {"CRANE TRUCK": "Pick-up Truck"},
                 "saved_mappings": [
@@ -647,7 +649,7 @@ class ProfileConfigTests(unittest.TestCase):
         )
 
     def test_build_equipment_mapping_rows_appends_observed_unmapped_descriptions(self) -> None:
-        rows = _build_equipment_mapping_rows(
+        rows = build_equipment_mapping_rows(
             {
                 "saved_mappings": [
                     {"raw_description": "CRANE TRUCK", "target_category": "Pick-up Truck"},
@@ -659,13 +661,18 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                {"raw_description": "FREIGHTLINER BUCKET/MH", "raw_pattern": "FREIGHTLINER BUCKET/MH", "target_category": ""},
+                {
+                    "raw_description": "FREIGHTLINER BUCKET/MH",
+                    "raw_pattern": "FREIGHTLINER BUCKET/MH",
+                    "target_category": "",
+                    "is_observed": True,
+                },
                 {"raw_description": "CRANE TRUCK", "raw_pattern": "CRANE TRUCK", "target_category": "Pick-up Truck"},
             ],
         )
 
     def test_build_equipment_mapping_rows_uses_raw_mappings_when_saved_rows_are_absent(self) -> None:
-        rows = _build_equipment_mapping_rows(
+        rows = build_equipment_mapping_rows(
             {
                 "raw_mappings": {
                     "FORD TRANSIT VAN": "Pick-up Truck",
@@ -905,7 +912,7 @@ class ProfileConfigTests(unittest.TestCase):
             updated["saved_mappings"],
             [
                 {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep me"},
-                {"raw_value": "104/J", "target_classification": "", "notes": ""},
+                {"raw_value": "104/J", "target_classification": "", "notes": "", "is_observed": True},
             ],
         )
 
@@ -988,7 +995,7 @@ class ProfileConfigTests(unittest.TestCase):
             updated["saved_mappings"],
             [
                 {"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
-                {"raw_description": "CRANE TRUCK", "target_category": ""},
+                {"raw_description": "CRANE TRUCK", "target_category": "", "is_observed": True},
             ],
         )
 
@@ -1025,8 +1032,18 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(
             view_model.equipment_mapping_rows,
             [
-                {"raw_description": "FREIGHTLINER BUCKET/MH", "raw_pattern": "FREIGHTLINER BUCKET/MH", "target_category": ""},
-                {"raw_description": "FREIGHTLINER DIGGER DERRICK", "raw_pattern": "FREIGHTLINER DIGGER DERRICK", "target_category": ""},
+                {
+                    "raw_description": "FREIGHTLINER BUCKET/MH",
+                    "raw_pattern": "FREIGHTLINER BUCKET/MH",
+                    "target_category": "",
+                    "is_observed": True,
+                },
+                {
+                    "raw_description": "FREIGHTLINER DIGGER DERRICK",
+                    "raw_pattern": "FREIGHTLINER DIGGER DERRICK",
+                    "target_category": "",
+                    "is_observed": True,
+                },
             ],
         )
 
@@ -1050,7 +1067,12 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(
             view_model.equipment_mapping_rows,
             [
-                {"raw_description": "FREIGHTLINER BUCKET/MH", "raw_pattern": "FREIGHTLINER BUCKET/MH", "target_category": ""},
+                {
+                    "raw_description": "FREIGHTLINER BUCKET/MH",
+                    "raw_pattern": "FREIGHTLINER BUCKET/MH",
+                    "target_category": "",
+                    "is_observed": True,
+                },
             ],
         )
 
@@ -1343,7 +1365,7 @@ class ProfileConfigTests(unittest.TestCase):
 
     def test_dedupe_casefold_preserving_order_keeps_first_observed_value(self) -> None:
         self.assertEqual(
-            _dedupe_casefold_preserving_order(["103/F", "103/f", " J ", "J", ""]),
+            dedupe_casefold_preserving_order(["103/F", "103/f", " J ", "J", ""]),
             ["103/F", "J"],
         )
 
@@ -1353,7 +1375,7 @@ class ProfileConfigTests(unittest.TestCase):
             {"slot_id": "labor_2", "label": "Old B", "active": True},
         ]
         with self.assertRaisesRegex(ValueError, "Duplicate active labor classification"):
-            _validate_slot_rows(
+            validate_slot_rows(
                 [
                     {"slot_id": "labor_1", "label": "Big Boy", "active": True},
                     {"slot_id": "labor_2", "label": "Big Boy", "active": True},
@@ -1367,7 +1389,7 @@ class ProfileConfigTests(unittest.TestCase):
             {"slot_id": "labor_1", "label": "Old A", "active": True},
             {"slot_id": "labor_2", "label": "Old B", "active": True},
         ]
-        updated_slots = _validate_slot_rows(
+        updated_slots = validate_slot_rows(
             [
                 {"slot_id": "labor_1", "label": "New A", "active": True},
                 {"slot_id": "labor_2", "label": "", "active": False},
@@ -1376,8 +1398,8 @@ class ProfileConfigTests(unittest.TestCase):
             slot_label="Labor",
         )
 
-        self.assertEqual(_active_labels_from_slots(updated_slots), ["New A"])
-        self.assertEqual(_build_slot_label_rename_map(previous_slots, updated_slots), {"Old A": "New A"})
+        self.assertEqual(active_labels_from_slots(updated_slots), ["New A"])
+        self.assertEqual(build_slot_label_rename_map(previous_slots, updated_slots), {"Old A": "New A"})
 
     def _build_manager(self) -> ProfileManager:
         return ProfileManager(

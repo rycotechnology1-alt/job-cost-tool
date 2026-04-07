@@ -6,12 +6,27 @@ from dataclasses import asdict
 
 from api.schemas.common import HistoricalExportStatusResponse, ReviewRecordResponse, RunRecordResponse
 from api.schemas.exports import ExportArtifactResponse
+from api.schemas.profile_authoring import (
+    ClassificationSlotRow,
+    DefaultOmitRuleRow,
+    DeferredDomainsResponse,
+    DraftEditorStateResponse,
+    EquipmentMappingRow,
+    EquipmentRateRow,
+    LaborMappingRow,
+    LaborRateRow,
+    PhaseOptionRow,
+    ProfileSyncExportResponse,
+    ProfileVersionSummaryResponse,
+    PublishedProfileDetailResponse,
+)
 from api.schemas.runs import ProcessingRunDetailResponse, ProcessingRunResponse
 from api.schemas.review_sessions import ReviewSessionResponse
 from api.schemas.trusted_profiles import TrustedProfileResponse
 from api.schemas.uploads import SourceUploadResponse
 from infrastructure.storage import StoredUpload
 from services.lineage_service import build_historical_export_status
+from services.profile_authoring_service import DraftEditorState, ProfileSyncExportResult, PublishedProfileDetail
 from services.processing_run_service import ProcessingRunResult, ProcessingRunState
 from services.review_session_service import ReviewSessionExportResult, ReviewSessionState
 from services.trusted_profile_service import TrustedProfileSummary
@@ -126,4 +141,83 @@ def to_trusted_profile_response(profile: TrustedProfileSummary) -> TrustedProfil
         version_label=profile.version_label,
         template_filename=profile.template_filename,
         is_active_profile=profile.is_active_profile,
+    )
+
+
+def to_published_profile_detail_response(detail: PublishedProfileDetail) -> PublishedProfileDetailResponse:
+    """Build the API response for one read-only published profile detail view."""
+    return PublishedProfileDetailResponse(
+        trusted_profile_id=detail.trusted_profile_id,
+        profile_name=detail.profile_name,
+        display_name=detail.display_name,
+        description=detail.description,
+        version_label=detail.version_label,
+        current_published_version=ProfileVersionSummaryResponse(
+            trusted_profile_version_id=detail.current_published_version_id,
+            version_number=detail.current_published_version_number,
+            content_hash=detail.current_published_content_hash,
+            template_artifact_ref=detail.template_artifact_ref,
+            template_file_hash=detail.template_file_hash,
+            template_filename=detail.template_filename,
+        ),
+        open_draft_id=detail.open_draft_id,
+        deferred_domains=_to_deferred_domains_response(detail.deferred_domains),
+    )
+
+
+def to_draft_editor_state_response(state: DraftEditorState) -> DraftEditorStateResponse:
+    """Build the API response for one trusted-profile draft editor state."""
+    return DraftEditorStateResponse(
+        trusted_profile_draft_id=state.trusted_profile_draft_id,
+        trusted_profile_id=state.trusted_profile_id,
+        profile_name=state.profile_name,
+        display_name=state.display_name,
+        description=state.description,
+        version_label=state.version_label,
+        current_published_version=ProfileVersionSummaryResponse(
+            trusted_profile_version_id=state.current_published_version_id,
+            version_number=state.current_published_version_number,
+            content_hash=state.current_published_content_hash,
+            template_artifact_ref=state.template_artifact_ref,
+            template_file_hash=state.template_file_hash,
+            template_filename=state.template_filename,
+        ),
+        base_trusted_profile_version_id=state.base_trusted_profile_version_id,
+        draft_content_hash=state.draft_content_hash,
+        default_omit_rules=[DefaultOmitRuleRow(**row) for row in state.default_omit_rules],
+        default_omit_phase_options=[PhaseOptionRow(**row) for row in state.default_omit_phase_options],
+        labor_mappings=[LaborMappingRow(**row) for row in state.labor_mappings],
+        equipment_mappings=[EquipmentMappingRow(**row) for row in state.equipment_mappings],
+        labor_slots=[ClassificationSlotRow(**row) for row in state.labor_slots],
+        equipment_slots=[ClassificationSlotRow(**row) for row in state.equipment_slots],
+        labor_rates=[LaborRateRow(**row) for row in state.labor_rates],
+        equipment_rates=[EquipmentRateRow(**row) for row in state.equipment_rates],
+        deferred_domains=_to_deferred_domains_response(state.deferred_domains),
+        validation_errors=list(state.validation_errors),
+    )
+
+
+def to_profile_sync_export_response(result: ProfileSyncExportResult) -> ProfileSyncExportResponse:
+    """Build the API response returned after one desktop-sync export is created."""
+    return ProfileSyncExportResponse(
+        trusted_profile_sync_export_id=result.trusted_profile_sync_export_id,
+        trusted_profile_version_id=result.trusted_profile_version_id,
+        trusted_profile_id=result.trusted_profile_id,
+        profile_name=result.profile_name,
+        display_name=result.display_name,
+        version_number=result.version_number,
+        archive_filename=result.archive_filename,
+        artifact_file_hash=result.artifact_file_hash,
+        created_at=result.created_at,
+        download_url=f"/api/profile-sync-exports/{result.trusted_profile_sync_export_id}/download",
+    )
+
+
+def _to_deferred_domains_response(payload: dict) -> DeferredDomainsResponse:
+    """Build the read-only deferred-domain payload."""
+    return DeferredDomainsResponse(
+        vendor_normalization=dict(payload.get("vendor_normalization", {})),
+        phase_mapping=dict(payload.get("phase_mapping", {})),
+        input_model=dict(payload.get("input_model", {})),
+        recap_template_map=dict(payload.get("recap_template_map", {})),
     )

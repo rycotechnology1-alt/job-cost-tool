@@ -159,7 +159,7 @@ class SettingsWorkflowServiceTests(unittest.TestCase):
             )
 
         self.assertIn(
-            {"raw_value": "103/F", "target_classification": "", "notes": ""},
+            {"raw_value": "103/F", "target_classification": "", "notes": "", "is_observed": True},
             service.labor_mapping_rows,
         )
         self.assertEqual(
@@ -169,6 +169,7 @@ class SettingsWorkflowServiceTests(unittest.TestCase):
                     "raw_description": "FREIGHTLINER BUCKET/MH",
                     "raw_pattern": "FREIGHTLINER BUCKET/MH",
                     "target_category": "",
+                    "is_observed": True,
                 }
             ],
         )

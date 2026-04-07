@@ -1,3 +1,59 @@
+### [2026-04-07] Profile authoring now tolerates additive equipment mapping row fields during draft read/save
+- **What changed:** Expanded the Phase 2A equipment-mapping API row contract so backend authoring responses and patch requests accept the additive `raw_pattern` field already emitted by the shared equipment-mapping helper seam. Added API regression coverage proving draft creation and equipment-mapping save succeed when the current published version contains equipment rows that serialize with both `raw_description` and `raw_pattern`.
+- **Why:** The Stage 6 profile settings workspace was failing to open a draft for the default trusted profile in dev because response serialization rejected `raw_pattern` as an extra field even though the persisted published bundle itself was valid.
+- **Area:** Persistence/API prep / Web delivery / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk; this is a narrow compatibility fix at the backend authoring contract boundary and does not widen deferred-domain scope or change published-version processing behavior.
+- **Follow-up needed:** Keep future authoring contracts aligned with the shared helper rows instead of letting response models drift into a stricter shape than the backend editing seam actually uses.
+
+### [2026-04-07] Trusted-profile bootstrap now repairs missing current-version linkage for existing local profiles
+- **What changed:** Tightened `TrustedProfileAuthoringRepository` so published-version lookup repairs incomplete bootstrap state for an already-persisted logical trusted profile when `current_published_version_id` is null or points at a missing version. The repair path reuses the existing idempotent filesystem bootstrap logic, relinks the logical profile to an equivalent persisted published version when possible, and added repository/API/processing regressions for the default profile detail path.
+- **Why:** Older local dev databases could contain `trusted_profiles` rows created before the published-version bootstrap finished, which made the Stage 6 settings workspace fail with “does not have a current published version” even though the filesystem profile still existed and could be materialized safely.
+- **Area:** Application services / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that repository reads now trigger a narrow repair bootstrap for incomplete local state, though the repair remains idempotent, published-version-only, and does not reintroduce live filesystem fallback for normal web processing.
+- **Follow-up needed:** Keep future startup/bootstrap changes focused on making persisted trusted-profile state complete earlier, but do not weaken the rule that web runtime behavior must come from persisted published versions once linked.
+
+### [2026-04-07] Phase 2A now supports manual desktop-sync archives from immutable published trusted profile versions
+- **What changed:** Added published-version-only desktop-sync export creation and download for trusted profiles. `ProfileAuthoringService` now materializes a desktop-compatible bundle archive from the exact persisted published payload plus the exact persisted template artifact, adds a deterministic `manifest.json`, persists a `TrustedProfileSyncExport` audit record, and exposes thin API routes for archive creation and retrieval. Extended the runtime file store with a dedicated profile-sync artifact path, hardened published-version materialization to fail when template identity/artifact lineage is missing or inconsistent, and added a small published-summary button in the Stage 6 browser settings workspace to request and download the manual sync archive.
+- **Why:** Stage 7 of Phase 2A required a safe manual bridge back to the desktop fallback without reintroducing live filesystem profiles as the web source of truth and without making drafts exportable.
+- **Area:** Application services / Persistence/API prep / Web delivery / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that operators may assume desktop sync is automatic now that the browser can generate the archive, though the workflow still remains explicitly manual and published-version only.
+- **Follow-up needed:** Phase 2B should stay focused on deferred settings domains; do not broaden this sync path into automatic desktop push or draft-based export without an explicit product decision.
+
+### [2026-04-06] Phase 2A now has a browser profile settings workspace for the approved settings slice
+- **What changed:** Added a browser-side profile settings workspace in the existing web shell with a clean review-vs-settings switch, published-profile inspection, open/create single-draft flow, backend-driven editors for default omit rules, labor mappings, equipment mappings, labor/equipment classifications, and rates, plus read-only deferred-domain inspection and publish. The UI now surfaces Stage 5 observed mapping placeholders explicitly with an `Observed` badge and does not block publish when those rows remain blank. Added browser integration tests for draft open/create, observed-row rendering, deferred-domain read-only display, domain save calls, publish success refresh, and publish failure messaging.
+- **Why:** Stage 6 of Phase 2A required the first browser settings workspace so operators can maintain the approved profile settings domains in web while keeping backend validation, immutable publish behavior, and published-version processing discipline intact.
+- **Area:** Web delivery / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that the browser settings workspace now depends on the newer profile authoring API contracts, though the frontend stays thin and deferred domains remain intentionally non-writable.
+- **Follow-up needed:** Stage 7 should focus on manual desktop-sync export and hardening only; it should not introduce a second observation-management flow or make deferred domains editable.
+
+### [2026-04-06] Stage 5 now captures unmapped labor/equipment observations server-side and merges them into bounded drafts only
+- **What changed:** Added server-side observation capture in `ProcessingRunService` after immutable run persistence, extended the trusted-profile authoring repository/store with observation lookup/filter helpers, and taught `ProfileAuthoringService` to upsert observed unmapped labor/equipment values, create/open a draft on demand, merge exactly one blank observed mapping row into that draft, and mark observations resolved once a published version now contains the mapping. Also preserved the new `is_observed` marker through bundle helpers, config reload, and existing draft/profile read APIs.
+- **Why:** Phase 2A Stage 5 requires profile mappings to keep growing from newly seen unmapped values without mutating published versions or current-run snapshots, so operators are not forced to manually discover every raw labor/equipment variant up front.
+- **Area:** Application services / Persistence/API prep / Core config semantics / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that unresolved placeholder rows can now intentionally survive in published versions if users publish them before mapping, though repeated ingestion will not duplicate them and web processing still stays pinned to immutable published versions.
+- **Follow-up needed:** Stage 6 should surface observed draft rows clearly in the browser settings UI and avoid adding any second observation workflow outside the authoring service/repository seam.
+
+### [2026-04-06] Phase 2A backend authoring now supports read-only profile inspection, mutable drafts, helper-backed domain edits, and immutable publish
+- **What changed:** Added a new `ProfileAuthoringService` plus narrow profile/draft API routes for read-only published profile detail, create/open draft, draft read, domain-specific draft edits, and publish. Draft edits now reuse the Stage 1 `profile_bundle_helpers` seam for default omit, raw-first labor/equipment mappings, slot-based classification updates, dependent rename propagation, and rates validation. Publishing revalidates the full draft, creates or reuses an immutable published version, updates `current_published_version_id`, and removes the open draft so published versions remain the only processable web source.
+- **Why:** Stage 4 of Phase 2A needed a backend authoring foundation for the approved settings slice before any browser settings UI could be added, while preserving the Stage 3 rule that web processing must stay pinned to immutable published versions.
+- **Area:** Application services / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that the current draft-closing model deletes the open draft row on publish instead of keeping a persisted closed-draft history, though this keeps the Stage 4 implementation narrow and avoids widening the persistence model before it is needed.
+- **Follow-up needed:** Prompt 5 should add observation capture and unresolved-only draft mutation on top of the new authoring service and APIs, and can defer any richer draft history model unless users actually need it.
+
+### [2026-04-06] Web processing now resolves trusted profiles from persisted published versions instead of live filesystem bundles
+- **What changed:** Switched `services/processing_run_service.py` so the web/API processing path resolves the selected logical trusted profile through `current_published_version_id`, materializes the persisted published bundle from `services/trusted_profile_authoring_repository.py`, uses that bundle for parse/normalize/default-omit/validate work, and snapshots the exact published version that was actually used. Tightened the repository so filesystem bootstrap seeds missing persisted profiles but no longer silently refreshes already-persisted web runtime versions on each processing call. Added regressions proving web processing stays on the persisted published version even if the underlying profile directory later changes.
+- **Why:** Phase 2A needs immutable published versions to become the real web processing source before later browser draft/edit work can be added safely; the prior Stage 2 state only recorded published-version linkage while still reading live profile directories at runtime.
+- **Area:** Application services / Persistence/API prep / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that manual filesystem edits are now intentionally ignored by the web/API path until a later explicit publish/bootstrap action changes the persisted current version, which is the intended reproducibility boundary.
+- **Follow-up needed:** Prompt 4 should add draft authoring/edit endpoints on top of the persisted published-version seam and must keep drafts non-processable.
+
 ### [2026-04-05] Browser review keeps edit controls visible by making the records pane the scrollable workspace
 - **What changed:** Adjusted the combined browser review workspace so the main records panel has a bounded scroll region with sticky table headers, while the right-side edit/status panel stays available during long-report review instead of forcing the operator to page-scroll back to the top to make changes.
 - **Why:** Pilot feedback showed that long reports made the current workspace awkward to use because the edit controls stopped being conveniently accessible once the operator had scrolled deep into the records list.
@@ -457,6 +513,34 @@ Use this section for features or decisions that should not be overbuilt in the d
 # 6) Architecture decisions
 Record important decisions briefly. Add newest items at the top.
 
+### [2026-04-06] Phase 2A profile settings now author through one backend draft/publish service over persisted published versions
+- **Decision:** Added `services/profile_authoring_service.py` as the Phase 2A authoring seam for read-only published profile inspection, single-draft lifecycle, helper-backed draft edits, whole-draft validation, and publish-to-new-version behavior. The backend/API surface stays limited to the approved domains: default omit, labor mappings, equipment mappings, labor slots, equipment slots, and rates. Deferred domains remain read-only.
+- **Reason:** With web processing already pinned to immutable published versions, the next safe step is to add backend authoring semantics and narrow APIs without leaking bundle logic into routes or widening into browser UI, observation capture, or broader admin work.
+- **Impact on desktop MVP:** Desktop behavior remains unchanged; `SettingsWorkflowService` continues as the filesystem-backed desktop adapter and does not depend on persisted drafts for normal operation.
+- **Impact on future web product:** Improves portability by making persisted drafts the single mutable authoring surface, keeping published versions immutable and processable, and concentrating settings semantics inside the shared helper seam plus one backend authoring service.
+- **Follow-up:** Prompt 5 should add server-side observation capture and unresolved-only draft mutation on top of this service/repository seam, without making drafts processable or broadening deferred domains.
+
+### [2026-04-06] Phase 2A web processing now resolves trusted profiles only from persisted published versions, while desktop stays filesystem-backed
+- **Decision:** Switched `ProcessingRunService` to resolve the selected logical trusted profile through `services/trusted_profile_authoring_repository.py`, require a persisted `current_published_version_id`, materialize that immutable published bundle for processing, and snapshot/link the exact published version actually used. The desktop settings/runtime path remains filesystem-backed through `ProfileManager` and `SettingsWorkflowService`.
+- **Reason:** Phase 2A profile authoring cannot safely move to the browser until web processing is anchored to immutable published versions instead of live profile directories, but the production desktop fallback still needs to keep using the existing filesystem bundle model.
+- **Impact on desktop MVP:** Desktop behavior is unchanged; desktop profile loading and settings editing still use the on-disk profile directories directly.
+- **Impact on future web product:** Improves portability and lineage discipline by making persisted published versions the single processing source of truth for the web/API path, preventing silent drift when filesystem profiles change after bootstrap.
+- **Follow-up:** Prompt 4 should build draft-edit authoring on top of the persisted published-version seam, and should not reintroduce filesystem fallback or direct profile-directory mutation into the web processing path.
+
+### [2026-04-06] Phase 2A settings persistence now uses explicit logical-profile, published-version, draft, observation, and sync-export records beside the existing run lineage
+- **Decision:** Added additive phase-2A persistence types and SQLite schema support for `trusted_profile_versions`, `trusted_profile_drafts`, `trusted_profile_observations`, and `trusted_profile_sync_exports`, plus `current_published_version_id` on logical trusted profiles and nullable published-version linkage on snapshots/runs. The new repository/bootstrap seam lives in `services/trusted_profile_authoring_repository.py`.
+- **Reason:** Later web profile-authoring work needs a persisted settings model before any runtime switch to published-version resolution, but this prompt stays conservative by laying the storage/repository/bootstrap foundation first and leaving current processing resolution behavior unchanged.
+- **Impact on desktop MVP:** Desktop profile editing and selection behavior are unchanged; the desktop app still uses filesystem bundles directly.
+- **Impact on future web product:** Improves portability by making persisted published versions, open drafts, observed unmapped values, and sync-export audit records first-class, with idempotent bootstrap from existing filesystem profiles and template-aware version hashing.
+- **Follow-up:** Prompt 3 should switch web processing resolution to current published versions through the new repository/bootstrap seam, not by reading profile directories directly at runtime.
+
+### [2026-04-06] Phase 2A settings work now uses pure bundle-edit helpers below the desktop settings service
+- **Decision:** Extracted the non-Qt bundle-edit semantics from `services/settings_workflow_service.py` into a new pure helper module that operates on in-memory profile bundle payloads, while keeping `SettingsWorkflowService` as the filesystem-backed desktop adapter and compatibility surface for the current app/tests.
+- **Reason:** Phase 2A needs shared profile-authoring semantics for later persisted drafts/browser editing, but this first prompt stays inside the approved migration slice by improving the service boundary only and preserving current desktop behavior exactly.
+- **Impact on desktop MVP:** Desktop settings behavior is unchanged; the desktop service still loads and writes the same profile files and remains the production fallback.
+- **Impact on future web product:** Improves portability by establishing a backend-safe settings semantics layer that no longer assumes Qt state or direct filesystem mutation.
+- **Follow-up:** Prompt 2 can build on the extracted helper layer for persisted profile versions/drafts, but should keep later-stage persistence/API/browser concerns out of this Stage 1 seam itself.
+
 ### [2026-04-05] Phase-1 parity is now enforced through a semantic acceptance harness that compares desktop and accepted web paths
 - **Decision:** Added a parity-harness layer under `tests/` that treats the current desktop/core workflow as the reference path, drives the web path through the accepted FastAPI API flow, compares record/order/blocker/edit/export semantics instead of UI state or raw XLSX bytes, and anchors that comparison to a reusable acceptance corpus structure.
 - **Reason:** `prd.md` step 8 requires a signoff gate that fails on meaningful business-result drift while ignoring generated ids, timestamps, storage keys, and workbook container noise; `AGENTS.md` also keeps desktop as the fallback until that corpus passes.
@@ -566,6 +650,30 @@ Record important decisions briefly. Add newest items at the top.
 ---
 
 # 7) Recent meaningful changes
+
+### [2026-04-06] Phase 2A Prompt 2 added persisted trusted-profile versions, drafts, observations, sync-export records, and idempotent filesystem bootstrap
+- **What changed:** Extended the lineage models and SQLite schema with phase-2A trusted-profile authoring records, added store support for published versions/drafts/observations/sync exports plus current published-version pointers, introduced `services/trusted_profile_authoring_repository.py` for logical-profile lookup and idempotent filesystem bootstrap, and added repository/bootstrap tests plus small additive run-lineage assertions.
+- **Why:** Phase 2A needs persisted authoring state before later prompts can resolve runs from published versions, open drafts, capture observations, or audit manual desktop-sync exports safely.
+- **Area:** Persistence/API prep / Application services / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that the current runtime still resolves trusted profiles from filesystem bundles, so persistence and runtime are intentionally in a transitional dual-source state until Prompt 3 switches resolution over to the published-version path.
+- **Follow-up needed:** Prompt 3 should route processing resolution through the current published version in persistence while preserving the existing immutable snapshot/run behavior.
+
+### [2026-04-06] Phase 2A Prompt 1 cleanup removed the desktop-service helper re-export bridge
+- **What changed:** Tightened the Stage 1 settings extraction by making `services/profile_bundle_helpers.py` the explicit public seam for in-memory bundle-edit semantics, updating the desktop service and tests to import that helper module directly where appropriate, and removing the broad helper re-export/duplicate helper residue from `services/settings_workflow_service.py`.
+- **Why:** Prompt 1 established the right extraction seam, but the temporary compatibility bridge left the desktop service looking like the helper API surface, which would have been the wrong dependency for later profile-authoring work.
+- **Area:** Application services / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk; this is a boundary cleanup only, and the required desktop/settings regression suites stayed green.
+- **Follow-up needed:** Prompt 2 should build directly on `services/profile_bundle_helpers.py` for future profile-authoring logic rather than depending on desktop-service internals.
+
+### [2026-04-06] Phase 2A Prompt 1 extracted reusable profile bundle-edit helpers under the desktop settings workflow
+- **What changed:** Added `services/profile_bundle_helpers.py` as a pure helper layer for default-omit rules, raw-first labor/equipment mapping persistence, slot-rename propagation, rate validation, and observed unmapped placeholder merging; rewired `services/settings_workflow_service.py` to delegate to those helpers while staying the filesystem-backed desktop adapter; and added focused helper regressions alongside the existing settings/profile suites.
+- **Why:** Phase 2A needs shared in-memory bundle editing semantics before any persisted profile versions, drafts, or browser settings work can safely build on the current desktop behavior.
+- **Area:** Application services / Tests
+- **Portability impact:** Increased
+- **Risks introduced:** Low risk that `SettingsWorkflowService` still carries a temporary helper re-export bridge for compatibility during the transition, though the bundle-edit behavior itself now lives outside the desktop-specific service.
+- **Follow-up needed:** Prompt 2 should reuse the extracted helpers for later profile-authoring persistence work and can clean up compatibility re-exports if that can be done without breaking the current desktop/test surface.
 
 ### [2026-04-05] A semantic desktop-versus-web parity harness now exists with the first reusable acceptance-corpus case
 - **What changed:** Added a parity harness under `tests/parity_harness/` plus a stable corpus layout under `tests/parity_corpus/`, including a representative material-vendor-resolution case with a source-report fixture, trusted-profile bundle seed, scripted review edits keyed by `record_key`, expected review semantics, and expected workbook-cell/style semantics. The harness now runs the desktop reference path through the core/services layer, the web path through the accepted FastAPI API, and fails on mismatched records, blockers, correction outcomes, or semantic workbook results.

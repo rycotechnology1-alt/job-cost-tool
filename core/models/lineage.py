@@ -45,6 +45,80 @@ class TrustedProfile:
     bundle_ref: str | None = None
     description: str = ""
     version_label: str | None = None
+    current_published_version_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedProfileVersion:
+    """Immutable published trusted-profile bundle version for future processing."""
+
+    trusted_profile_version_id: str
+    organization_id: str
+    trusted_profile_id: str
+    version_number: int
+    bundle_payload: dict[str, Any]
+    canonical_bundle_json: str
+    content_hash: str
+    created_at: datetime
+    template_artifact_id: str | None = None
+    template_artifact_ref: str | None = None
+    template_file_hash: str | None = None
+    source_kind: str = "published"
+    base_trusted_profile_version_id: str | None = None
+    created_by_user_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedProfileDraft:
+    """Mutable open draft copied from one published trusted-profile version."""
+
+    trusted_profile_draft_id: str
+    organization_id: str
+    trusted_profile_id: str
+    bundle_payload: dict[str, Any]
+    canonical_bundle_json: str
+    content_hash: str
+    created_at: datetime
+    updated_at: datetime
+    base_trusted_profile_version_id: str | None = None
+    template_artifact_id: str | None = None
+    template_artifact_ref: str | None = None
+    template_file_hash: str | None = None
+    status: str = "open"
+    created_by_user_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedProfileObservation:
+    """Observed unmapped raw value tied to one trusted profile and settings domain."""
+
+    trusted_profile_observation_id: str
+    organization_id: str
+    trusted_profile_id: str
+    observation_domain: str
+    canonical_raw_key: str
+    raw_display_value: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    first_seen_processing_run_id: str | None = None
+    last_seen_processing_run_id: str | None = None
+    draft_applied_at: datetime | None = None
+    is_resolved: bool = False
+    resolved_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedProfileSyncExport:
+    """Audit record for a manual desktop-sync artifact derived from one version."""
+
+    trusted_profile_sync_export_id: str
+    organization_id: str
+    trusted_profile_version_id: str
+    artifact_storage_ref: str
+    created_at: datetime
+    artifact_file_hash: str | None = None
+    manifest_json: str | None = None
+    created_by_user_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +133,7 @@ class ProfileSnapshot:
     engine_version: str
     created_at: datetime
     trusted_profile_id: str | None = None
+    trusted_profile_version_id: str | None = None
     template_artifact_id: str | None = None
     template_artifact_ref: str | None = None
     template_file_hash: str | None = None
@@ -115,6 +190,7 @@ class ProcessingRun:
     aggregate_blockers: tuple[str, ...]
     created_at: datetime
     trusted_profile_id: str | None = None
+    trusted_profile_version_id: str | None = None
     created_by_user_id: str | None = None
 
 

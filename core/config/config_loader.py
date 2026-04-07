@@ -500,13 +500,14 @@ class ConfigLoader:
             if normalized_raw in seen_raw_values:
                 continue
             seen_raw_values.add(normalized_raw)
-            normalized_saved_rows.append(
-                {
-                    "raw_value": canonical_raw_key,
-                    "target_classification": str(row.get("target_classification", "")).strip(),
-                    "notes": str(row.get("notes", "")).strip(),
-                }
-            )
+            normalized_row = {
+                "raw_value": canonical_raw_key,
+                "target_classification": str(row.get("target_classification", "")).strip(),
+                "notes": str(row.get("notes", "")).strip(),
+            }
+            if bool(row.get("is_observed")) and not normalized_row["target_classification"]:
+                normalized_row["is_observed"] = True
+            normalized_saved_rows.append(normalized_row)
 
         if not normalized_saved_rows and normalized_raw_mappings:
             normalized_saved_rows = [
@@ -557,12 +558,13 @@ class ConfigLoader:
             if normalized_raw in seen_raw_descriptions:
                 continue
             seen_raw_descriptions.add(normalized_raw)
-            normalized_saved_rows.append(
-                {
-                    "raw_description": canonical_raw_description,
-                    "target_category": str(row.get("target_category", "")).strip(),
-                }
-            )
+            normalized_row = {
+                "raw_description": canonical_raw_description,
+                "target_category": str(row.get("target_category", "")).strip(),
+            }
+            if bool(row.get("is_observed")) and not normalized_row["target_category"]:
+                normalized_row["is_observed"] = True
+            normalized_saved_rows.append(normalized_row)
 
         if not normalized_raw_mappings and normalized_saved_rows:
             normalized_raw_mappings = {

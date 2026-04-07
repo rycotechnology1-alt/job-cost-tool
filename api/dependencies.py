@@ -11,8 +11,10 @@ from fastapi import Request
 from core.config import ProfileManager
 from infrastructure.persistence import SqliteLineageStore
 from infrastructure.storage import LocalRuntimeFileStore, RuntimeStorage
+from services.profile_authoring_service import ProfileAuthoringService
 from services.processing_run_service import ProcessingRunService
 from services.review_session_service import ReviewSessionService
+from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
 from services.trusted_profile_service import TrustedProfileService
 
 
@@ -25,6 +27,7 @@ class ApiRuntime:
     processing_run_service: ProcessingRunService
     review_session_service: ReviewSessionService
     trusted_profile_service: TrustedProfileService
+    profile_authoring_service: ProfileAuthoringService
 
 
 def build_runtime(
@@ -43,6 +46,11 @@ def build_runtime(
         Path(database_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
     persisted_store = lineage_store or SqliteLineageStore(database_path)
     persisted_profile_manager = profile_manager or ProfileManager()
+    trusted_profile_authoring_repository = TrustedProfileAuthoringRepository(
+        lineage_store=persisted_store,
+        profile_manager=persisted_profile_manager,
+        now_provider=now_provider,
+    )
     file_store = LocalRuntimeFileStore(
         upload_root=upload_root,
         export_root=export_root,
@@ -63,6 +71,12 @@ def build_runtime(
         ),
         trusted_profile_service=TrustedProfileService(
             profile_manager=persisted_profile_manager,
+        ),
+        profile_authoring_service=ProfileAuthoringService(
+            repository=trusted_profile_authoring_repository,
+            profile_manager=persisted_profile_manager,
+            artifact_store=file_store,
+            now_provider=now_provider,
         ),
     )
     return runtime, owns_lineage_store

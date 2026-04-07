@@ -1,0 +1,215 @@
+"""Trusted-profile authoring routes for the Phase 2A backend slice."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, status
+from fastapi.responses import FileResponse
+
+from api.dependencies import ApiRuntime, get_runtime
+from api.errors import to_http_exception
+from api.schemas.profile_authoring import (
+    ClassificationsPatchRequest,
+    DefaultOmitPatchRequest,
+    DraftEditorStateResponse,
+    EquipmentMappingsPatchRequest,
+    LaborMappingsPatchRequest,
+    ProfileSyncExportResponse,
+    PublishedProfileDetailResponse,
+    RatesPatchRequest,
+)
+from api.serializers import (
+    to_draft_editor_state_response,
+    to_profile_sync_export_response,
+    to_published_profile_detail_response,
+)
+
+
+profiles_router = APIRouter(prefix="/api/profiles", tags=["profiles"])
+profile_versions_router = APIRouter(prefix="/api/profile-versions", tags=["profile-versions"])
+profile_drafts_router = APIRouter(prefix="/api/profile-drafts", tags=["profile-drafts"])
+profile_sync_exports_router = APIRouter(prefix="/api/profile-sync-exports", tags=["profile-sync-exports"])
+
+
+@profiles_router.get("/{trusted_profile_id}", response_model=PublishedProfileDetailResponse)
+def get_profile_detail(
+    trusted_profile_id: str,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> PublishedProfileDetailResponse:
+    """Return read-only published profile detail for one logical trusted profile."""
+    try:
+        detail = runtime.profile_authoring_service.get_profile_detail(trusted_profile_id)
+        return to_published_profile_detail_response(detail)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profiles_router.post(
+    "/{trusted_profile_id}/draft",
+    response_model=DraftEditorStateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_or_open_profile_draft(
+    trusted_profile_id: str,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> DraftEditorStateResponse:
+    """Create or return the single mutable draft for one logical trusted profile."""
+    try:
+        state = runtime.profile_authoring_service.create_or_open_draft(trusted_profile_id)
+        return to_draft_editor_state_response(state)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_drafts_router.get("/{trusted_profile_draft_id}", response_model=DraftEditorStateResponse)
+def get_profile_draft(
+    trusted_profile_draft_id: str,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> DraftEditorStateResponse:
+    """Return full editor state for one trusted-profile draft."""
+    try:
+        state = runtime.profile_authoring_service.get_draft_state(trusted_profile_draft_id)
+        return to_draft_editor_state_response(state)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_drafts_router.patch("/{trusted_profile_draft_id}/default-omit", response_model=DraftEditorStateResponse)
+def patch_default_omit(
+    trusted_profile_draft_id: str,
+    request: DefaultOmitPatchRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> DraftEditorStateResponse:
+    """Replace draft default-omit rules."""
+    try:
+        state = runtime.profile_authoring_service.update_default_omit_rules(
+            trusted_profile_draft_id,
+            [row.model_dump() for row in request.default_omit_rules],
+        )
+        return to_draft_editor_state_response(state)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_drafts_router.patch("/{trusted_profile_draft_id}/labor-mappings", response_model=DraftEditorStateResponse)
+def patch_labor_mappings(
+    trusted_profile_draft_id: str,
+    request: LaborMappingsPatchRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> DraftEditorStateResponse:
+    """Replace draft labor mappings."""
+    try:
+        state = runtime.profile_authoring_service.update_labor_mappings(
+            trusted_profile_draft_id,
+            [row.model_dump() for row in request.labor_mappings],
+        )
+        return to_draft_editor_state_response(state)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_drafts_router.patch(
+    "/{trusted_profile_draft_id}/equipment-mappings",
+    response_model=DraftEditorStateResponse,
+)
+def patch_equipment_mappings(
+    trusted_profile_draft_id: str,
+    request: EquipmentMappingsPatchRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> DraftEditorStateResponse:
+    """Replace draft equipment mappings."""
+    try:
+        state = runtime.profile_authoring_service.update_equipment_mappings(
+            trusted_profile_draft_id,
+            [row.model_dump() for row in request.equipment_mappings],
+        )
+        return to_draft_editor_state_response(state)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_drafts_router.patch("/{trusted_profile_draft_id}/classifications", response_model=DraftEditorStateResponse)
+def patch_classifications(
+    trusted_profile_draft_id: str,
+    request: ClassificationsPatchRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> DraftEditorStateResponse:
+    """Replace draft labor/equipment slot rows."""
+    try:
+        state = runtime.profile_authoring_service.update_classifications(
+            trusted_profile_draft_id,
+            labor_slots=[row.model_dump() for row in request.labor_slots],
+            equipment_slots=[row.model_dump() for row in request.equipment_slots],
+        )
+        return to_draft_editor_state_response(state)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_drafts_router.patch("/{trusted_profile_draft_id}/rates", response_model=DraftEditorStateResponse)
+def patch_rates(
+    trusted_profile_draft_id: str,
+    request: RatesPatchRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> DraftEditorStateResponse:
+    """Replace draft labor/equipment rates."""
+    try:
+        state = runtime.profile_authoring_service.update_rates(
+            trusted_profile_draft_id,
+            labor_rows=[row.model_dump() for row in request.labor_rates],
+            equipment_rows=[row.model_dump() for row in request.equipment_rates],
+        )
+        return to_draft_editor_state_response(state)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_drafts_router.post(
+    "/{trusted_profile_draft_id}/publish",
+    response_model=PublishedProfileDetailResponse,
+)
+def publish_profile_draft(
+    trusted_profile_draft_id: str,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> PublishedProfileDetailResponse:
+    """Validate and publish one trusted-profile draft."""
+    try:
+        detail = runtime.profile_authoring_service.publish_draft(trusted_profile_draft_id)
+        return to_published_profile_detail_response(detail)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_versions_router.post(
+    "/{trusted_profile_version_id}/desktop-sync-export",
+    response_model=ProfileSyncExportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_profile_sync_export(
+    trusted_profile_version_id: str,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> ProfileSyncExportResponse:
+    """Build one manual desktop-sync archive from one immutable published trusted-profile version."""
+    try:
+        result = runtime.profile_authoring_service.create_desktop_sync_export(trusted_profile_version_id)
+        return to_profile_sync_export_response(result)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_sync_exports_router.get("/{trusted_profile_sync_export_id}/download")
+def download_profile_sync_export(
+    trusted_profile_sync_export_id: str,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> FileResponse:
+    """Download one previously generated desktop-sync archive."""
+    try:
+        artifact_payload = runtime.profile_authoring_service.resolve_desktop_sync_export_payload(
+            trusted_profile_sync_export_id
+        )
+        return FileResponse(
+            path=artifact_payload.file_path,
+            filename=artifact_payload.original_filename,
+            media_type=artifact_payload.content_type,
+        )
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc

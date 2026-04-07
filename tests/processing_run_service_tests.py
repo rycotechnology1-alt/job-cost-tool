@@ -82,6 +82,11 @@ class ProcessingRunServiceTests(unittest.TestCase):
             persisted_run.trusted_profile_id,
             result.trusted_profile.trusted_profile_id,
         )
+        self.assertTrue(persisted_run.trusted_profile_version_id)
+        self.assertEqual(
+            result.profile_snapshot.trusted_profile_version_id,
+            persisted_run.trusted_profile_version_id,
+        )
         self.assertEqual(
             result.profile_snapshot.bundle_payload["behavioral_bundle"]["labor_mapping"]["raw_mappings"]["103/J"],
             "Selected Journeyman",
@@ -114,7 +119,7 @@ class ProcessingRunServiceTests(unittest.TestCase):
         self.assertEqual(default_snapshot.profile_snapshot_id, cloned_snapshot.profile_snapshot_id)
         self.assertEqual(default_snapshot.content_hash, cloned_snapshot.content_hash)
 
-    def test_behaviorally_relevant_config_change_creates_new_snapshot_and_new_run(self) -> None:
+    def test_web_processing_uses_persisted_published_version_even_if_filesystem_bundle_later_differs(self) -> None:
         service = self._build_service()
         parsed_record = self._make_labor_record(raw_description="Behavioral change line")
 
@@ -138,16 +143,104 @@ class ProcessingRunServiceTests(unittest.TestCase):
 
         first_records = self.lineage_store.list_run_records(first_result.processing_run.processing_run_id)
         second_records = self.lineage_store.list_run_records(second_result.processing_run.processing_run_id)
+        trusted_profile = self.lineage_store.get_trusted_profile(first_result.trusted_profile.trusted_profile_id)
+        persisted_versions = self.lineage_store.list_trusted_profile_versions(trusted_profile.trusted_profile_id)
 
         self.assertEqual(first_result.processing_run.trusted_profile_id, second_result.processing_run.trusted_profile_id)
-        self.assertNotEqual(first_result.profile_snapshot.profile_snapshot_id, second_result.profile_snapshot.profile_snapshot_id)
-        self.assertNotEqual(first_result.profile_snapshot.content_hash, second_result.profile_snapshot.content_hash)
+        self.assertEqual(
+            first_result.processing_run.trusted_profile_version_id,
+            second_result.processing_run.trusted_profile_version_id,
+        )
+        self.assertEqual(first_result.profile_snapshot.profile_snapshot_id, second_result.profile_snapshot.profile_snapshot_id)
+        self.assertEqual(first_result.profile_snapshot.content_hash, second_result.profile_snapshot.content_hash)
         self.assertNotEqual(first_result.processing_run.processing_run_id, second_result.processing_run.processing_run_id)
         self.assertEqual([record.record_key for record in first_records], ["record-0"])
         self.assertEqual([record.record_key for record in second_records], ["record-0"])
         self.assertEqual(first_records[0].canonical_record["raw_description"], "Behavioral change line")
         self.assertEqual(second_records[0].canonical_record["raw_description"], "Behavioral change line")
+        self.assertEqual(len(persisted_versions), 1)
         self.assertEqual(len(self.lineage_store.list_processing_runs()), 2)
+
+    def test_missing_current_published_version_is_repaired_from_filesystem_bootstrap(self) -> None:
+        service = self._build_service()
+        initial_result = service.resolve_trusted_profile_snapshot()
+        self.lineage_store._connection.execute(
+            """
+            UPDATE trusted_profiles
+            SET current_published_version_id = NULL
+            WHERE trusted_profile_id = ?
+            """,
+            ("trusted-profile:org-default:default",),
+        )
+        self.lineage_store._connection.commit()
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[self._make_labor_record(raw_description="Repaired profile labor line")],
+        ):
+            result = service.create_processing_run(self.source_document_path)
+
+        repaired_profile = self.lineage_store.get_trusted_profile("trusted-profile:org-default:default")
+        persisted_versions = self.lineage_store.list_trusted_profile_versions(repaired_profile.trusted_profile_id)
+
+        self.assertEqual(len(persisted_versions), 1)
+        self.assertEqual(
+            repaired_profile.current_published_version_id,
+            initial_result[2].trusted_profile_version_id,
+        )
+        self.assertEqual(
+            result.processing_run.trusted_profile_version_id,
+            initial_result[2].trusted_profile_version_id,
+        )
+
+    def test_processing_run_captures_unmapped_labor_observation_without_changing_run_snapshot(self) -> None:
+        service = self._build_service()
+        parsed_record = self._make_unmapped_labor_record(raw_description="Labor line", union_code="104", labor_class_raw="EO")
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[parsed_record],
+        ):
+            first_result = service.create_processing_run(self.source_document_path)
+            second_result = service.create_processing_run(self.source_document_path)
+
+        observations = self.lineage_store.list_trusted_profile_observations(first_result.trusted_profile.trusted_profile_id)
+        draft = self.lineage_store.get_open_trusted_profile_draft(first_result.trusted_profile.trusted_profile_id)
+
+        self.assertEqual(first_result.processing_run.trusted_profile_version_id, second_result.processing_run.trusted_profile_version_id)
+        self.assertEqual(first_result.profile_snapshot.profile_snapshot_id, second_result.profile_snapshot.profile_snapshot_id)
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].canonical_raw_key, "104/EO")
+        self.assertEqual(observations[0].first_seen_processing_run_id, first_result.processing_run.processing_run_id)
+        self.assertEqual(observations[0].last_seen_processing_run_id, second_result.processing_run.processing_run_id)
+        self.assertIn(
+            {"raw_value": "104/EO", "target_classification": "", "notes": "", "is_observed": True},
+            draft.bundle_payload["behavioral_bundle"]["labor_mapping"]["saved_mappings"],
+        )
+
+    def test_processing_run_captures_unmapped_equipment_observation_without_duplicating_draft_row(self) -> None:
+        service = self._build_service()
+        parsed_record = self._make_unmapped_equipment_record(raw_description="627/2025 crane truck")
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[parsed_record],
+        ):
+            service.create_processing_run(self.source_document_path)
+            service.create_processing_run(self.source_document_path)
+
+        trusted_profile = self.lineage_store.get_trusted_profile("trusted-profile:org-default:default")
+        observations = self.lineage_store.list_trusted_profile_observations(trusted_profile.trusted_profile_id)
+        draft = self.lineage_store.get_open_trusted_profile_draft(trusted_profile.trusted_profile_id)
+        saved_rows = draft.bundle_payload["behavioral_bundle"]["equipment_mapping"]["saved_mappings"]
+
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].canonical_raw_key, "CRANE TRUCK")
+        self.assertEqual(
+            len([row for row in saved_rows if row["raw_description"] == "CRANE TRUCK"]),
+            1,
+        )
+        self.assertEqual(saved_rows[0]["is_observed"], True)
 
     def _build_service(self) -> ProcessingRunService:
         return ProcessingRunService(
@@ -277,6 +370,55 @@ class ProcessingRunServiceTests(unittest.TestCase):
             source_page=1,
             source_line_text="line one",
             record_type_normalized=None,
+        )
+
+    def _make_unmapped_labor_record(
+        self,
+        *,
+        raw_description: str,
+        union_code: str,
+        labor_class_raw: str,
+    ) -> Record:
+        return Record(
+            record_type="labor",
+            phase_code="20",
+            raw_description=raw_description,
+            cost=100.0,
+            hours=8.0,
+            hour_type="ST",
+            union_code=union_code,
+            labor_class_raw=labor_class_raw,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=["Labor raw value is not mapped."],
+            source_page=1,
+            source_line_text="line one",
+            record_type_normalized="labor",
+        )
+
+    def _make_unmapped_equipment_record(self, *, raw_description: str) -> Record:
+        return Record(
+            record_type="equipment",
+            phase_code=None,
+            raw_description=raw_description,
+            cost=100.0,
+            hours=8.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=raw_description,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=["Equipment raw value is not mapped."],
+            source_page=1,
+            source_line_text="line one",
+            record_type_normalized="equipment",
+            equipment_mapping_key="CRANE TRUCK",
         )
 
     def _write_json(self, path: Path, payload: object) -> None:

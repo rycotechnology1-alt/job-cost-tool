@@ -2,22 +2,43 @@ import { useEffect, useState } from "react";
 
 import {
   appendReviewEdits,
+  createOrOpenProfileDraft,
   createExportArtifact,
+  createProfileSyncExport,
   createProcessingRun,
+  downloadArtifact,
   downloadExportArtifact,
+  fetchProfileDetail,
+  fetchProfileDraft,
   fetchTrustedProfiles,
   fetchProcessingRun,
   openReviewSession,
+  publishProfileDraft,
+  updateDraftClassifications,
+  updateDraftDefaultOmit,
+  updateDraftEquipmentMappings,
+  updateDraftLaborMappings,
+  updateDraftRates,
   uploadSourceDocument,
 } from "./api/client";
 import type {
+  ClassificationSlotRow,
+  DefaultOmitRuleRow,
+  DraftEditorStateResponse,
+  EquipmentMappingRow,
+  EquipmentRateRow,
   ExportArtifactResponse,
+  LaborMappingRow,
+  LaborRateRow,
   ProcessingRunDetailResponse,
+  ProfileSyncExportResponse,
+  PublishedProfileDetailResponse,
   ReviewEditFields,
   ReviewSessionResponse,
   SourceUploadResponse,
   TrustedProfileResponse,
 } from "./api/contracts";
+import { ProfileSettingsWorkspace } from "./components/ProfileSettingsWorkspace";
 import { ReviewWorkspace, type ReviewEditFormValue, type WorkspaceRow } from "./components/ReviewWorkspace";
 import { UploadRunPanel } from "./components/UploadRunPanel";
 
@@ -58,19 +79,26 @@ function buildEditFormFromRow(row: WorkspaceRow): ReviewEditFormValue {
 }
 
 export default function App() {
+  const [activeWorkspace, setActiveWorkspace] = useState<"review" | "settings">("review");
   const [trustedProfiles, setTrustedProfiles] = useState<TrustedProfileResponse[]>([]);
   const [selectedTrustedProfileName, setSelectedTrustedProfileName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [upload, setUpload] = useState<SourceUploadResponse | null>(null);
   const [runDetail, setRunDetail] = useState<ProcessingRunDetailResponse | null>(null);
   const [reviewSession, setReviewSession] = useState<ReviewSessionResponse | null>(null);
+  const [profileDetail, setProfileDetail] = useState<PublishedProfileDetailResponse | null>(null);
+  const [draftState, setDraftState] = useState<DraftEditorStateResponse | null>(null);
   const [selectedRecordKey, setSelectedRecordKey] = useState("");
   const [editForm, setEditForm] = useState<ReviewEditFormValue>(emptyEditForm);
   const [exportArtifact, setExportArtifact] = useState<ExportArtifactResponse | null>(null);
   const [lastDownloadedFilename, setLastDownloadedFilename] = useState("");
+  const [lastDownloadedProfileSyncFilename, setLastDownloadedProfileSyncFilename] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [statusMessage, setStatusMessage] = useState("Choose a trusted profile and a PDF to start reviewing.");
+  const [settingsStatusMessage, setSettingsStatusMessage] = useState(
+    "Inspect the published trusted profile and open the single mutable draft when you are ready to edit.",
+  );
 
   const selectedTrustedProfile =
     trustedProfiles.find((profile) => profile.profile_name === selectedTrustedProfileName) ?? null;
@@ -113,6 +141,47 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (activeWorkspace !== "settings") {
+      return;
+    }
+
+    setDraftState(null);
+    setLastDownloadedProfileSyncFilename("");
+    if (!selectedTrustedProfile) {
+      setProfileDetail(null);
+      return;
+    }
+
+    let cancelled = false;
+    setProfileDetail(null);
+    setErrorMessage("");
+    const trustedProfileId = selectedTrustedProfile.trusted_profile_id;
+
+    async function loadProfileDetail() {
+      try {
+        const detail = await fetchProfileDetail(trustedProfileId);
+        if (cancelled) {
+          return;
+        }
+        setProfileDetail(detail);
+        setSettingsStatusMessage(
+          `Inspecting published version v${detail.current_published_version.version_number} for ${detail.display_name}.`,
+        );
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setErrorMessage(error instanceof Error ? error.message : "Failed to load profile settings.");
+      }
+    }
+
+    void loadProfileDetail();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace, selectedTrustedProfile]);
 
   async function runAction(actionLabel: string, action: () => Promise<void>) {
     setBusyAction(actionLabel);
@@ -231,25 +300,175 @@ export default function App() {
     });
   }
 
+  async function handleOpenSettingsDraft() {
+    await runAction("Opening profile draft...", async () => {
+      if (!selectedTrustedProfile) {
+        throw new Error("Choose a trusted profile before opening a draft.");
+      }
+
+      const draft = profileDetail?.open_draft_id
+        ? await fetchProfileDraft(profileDetail.open_draft_id)
+        : await createOrOpenProfileDraft(selectedTrustedProfile.trusted_profile_id);
+      setDraftState(draft);
+      setProfileDetail((current) =>
+        current
+          ? {
+              ...current,
+              open_draft_id: draft.trusted_profile_draft_id,
+            }
+          : current,
+      );
+      setSettingsStatusMessage(`Draft ${draft.trusted_profile_draft_id} is ready for editing.`);
+    });
+  }
+
+  async function handleSaveDefaultOmit(rowsToSave: DefaultOmitRuleRow[]) {
+    await runAction("Saving default omit rules...", async () => {
+      if (!draftState) {
+        throw new Error("Open a draft before saving default omit rules.");
+      }
+      const nextDraft = await updateDraftDefaultOmit(draftState.trusted_profile_draft_id, rowsToSave);
+      setDraftState(nextDraft);
+      setSettingsStatusMessage("Saved default omit rules to the current draft.");
+    });
+  }
+
+  async function handleSaveLaborMappings(rowsToSave: LaborMappingRow[]) {
+    await runAction("Saving labor mappings...", async () => {
+      if (!draftState) {
+        throw new Error("Open a draft before saving labor mappings.");
+      }
+      const nextDraft = await updateDraftLaborMappings(draftState.trusted_profile_draft_id, rowsToSave);
+      setDraftState(nextDraft);
+      setSettingsStatusMessage("Saved labor mappings to the current draft.");
+    });
+  }
+
+  async function handleSaveEquipmentMappings(rowsToSave: EquipmentMappingRow[]) {
+    await runAction("Saving equipment mappings...", async () => {
+      if (!draftState) {
+        throw new Error("Open a draft before saving equipment mappings.");
+      }
+      const nextDraft = await updateDraftEquipmentMappings(draftState.trusted_profile_draft_id, rowsToSave);
+      setDraftState(nextDraft);
+      setSettingsStatusMessage("Saved equipment mappings to the current draft.");
+    });
+  }
+
+  async function handleSaveClassifications(
+    laborSlots: ClassificationSlotRow[],
+    equipmentSlots: ClassificationSlotRow[],
+  ) {
+    await runAction("Saving classifications...", async () => {
+      if (!draftState) {
+        throw new Error("Open a draft before saving classifications.");
+      }
+      const nextDraft = await updateDraftClassifications(
+        draftState.trusted_profile_draft_id,
+        laborSlots,
+        equipmentSlots,
+      );
+      setDraftState(nextDraft);
+      setSettingsStatusMessage("Saved labor and equipment classifications to the current draft.");
+    });
+  }
+
+  async function handleSaveRates(laborRates: LaborRateRow[], equipmentRates: EquipmentRateRow[]) {
+    await runAction("Saving rates...", async () => {
+      if (!draftState) {
+        throw new Error("Open a draft before saving rates.");
+      }
+      const nextDraft = await updateDraftRates(draftState.trusted_profile_draft_id, laborRates, equipmentRates);
+      setDraftState(nextDraft);
+      setSettingsStatusMessage("Saved rates to the current draft.");
+    });
+  }
+
+  async function handlePublishDraft() {
+    await runAction("Publishing profile draft...", async () => {
+      if (!draftState) {
+        throw new Error("Open a draft before publishing.");
+      }
+
+      const publishedDetail = await publishProfileDraft(draftState.trusted_profile_draft_id);
+      setProfileDetail(publishedDetail);
+      setDraftState(null);
+      setSettingsStatusMessage(
+        `Published version v${publishedDetail.current_published_version.version_number} for ${publishedDetail.display_name}.`,
+      );
+    });
+  }
+
+  async function handleCreateDesktopSyncExport() {
+    await runAction("Creating desktop sync archive...", async () => {
+      if (!profileDetail) {
+        throw new Error("Load a published trusted profile before creating a desktop sync archive.");
+      }
+
+      const syncExport: ProfileSyncExportResponse = await createProfileSyncExport(
+        profileDetail.current_published_version.trusted_profile_version_id,
+      );
+      const filename = await downloadArtifact(syncExport.download_url);
+      setLastDownloadedProfileSyncFilename(filename);
+      setSettingsStatusMessage(
+        `Downloaded ${filename} for manual desktop sync from published version v${syncExport.version_number}.`,
+      );
+    });
+  }
+
   const busy = busyAction !== null;
+  const currentWorkspaceStatusMessage = activeWorkspace === "settings" ? settingsStatusMessage : statusMessage;
+  const currentWorkspaceTitle = activeWorkspace === "settings" ? "Profile Settings Workspace" : "Job Cost Review Workspace";
+  const currentWorkspaceEyebrow = activeWorkspace === "settings" ? "Phase 2A Settings" : "Phase 1 Pilot Review";
+  const currentWorkspaceCopy =
+    activeWorkspace === "settings"
+      ? "The browser remains a thin client. Published versions, draft validation, and immutable publish flow still come from the backend authoring services."
+      : "The browser stays thin. Processing, review lineage, and exact-revision export still come from the accepted backend services.";
 
   return (
     <main className="app-shell">
       <header className="hero compact-hero">
         <div>
-          <p className="eyebrow">Phase 1 Pilot Review</p>
-          <h1>Job Cost Review Workspace</h1>
-          <p className="hero-copy">
-            The browser stays thin. Processing, review lineage, and exact-revision export still come from the accepted
-            backend services.
-          </p>
+          <p className="eyebrow">{currentWorkspaceEyebrow}</p>
+          <h1>{currentWorkspaceTitle}</h1>
+          <p className="hero-copy">{currentWorkspaceCopy}</p>
         </div>
         <div className="status-card" aria-live="polite">
           <strong>{busyAction ?? "Workflow status"}</strong>
-          <p>{busy ? busyAction : statusMessage}</p>
-          {runDetail ? <p className="muted">Reviewing {runDetail.source_document_filename}</p> : null}
+          <p>{busy ? busyAction : currentWorkspaceStatusMessage}</p>
+          {activeWorkspace === "review" && runDetail ? (
+            <p className="muted">Reviewing {runDetail.source_document_filename}</p>
+          ) : null}
+          {activeWorkspace === "settings" && selectedTrustedProfile ? (
+            <p className="muted">Editing profile {selectedTrustedProfile.display_name}</p>
+          ) : null}
         </div>
       </header>
+
+      <section className="workspace-toggle" aria-label="Workspace mode">
+        <button
+          type="button"
+          className={activeWorkspace === "review" ? "toggle-button active" : "toggle-button"}
+          onClick={() => {
+            setActiveWorkspace("review");
+            setErrorMessage("");
+          }}
+          aria-pressed={activeWorkspace === "review"}
+        >
+          Review workspace
+        </button>
+        <button
+          type="button"
+          className={activeWorkspace === "settings" ? "toggle-button active" : "toggle-button"}
+          onClick={() => {
+            setActiveWorkspace("settings");
+            setErrorMessage("");
+          }}
+          aria-pressed={activeWorkspace === "settings"}
+        >
+          Profile settings
+        </button>
+      </section>
 
       {errorMessage ? (
         <div className="banner error" role="alert">
@@ -257,36 +476,59 @@ export default function App() {
         </div>
       ) : null}
 
-      <UploadRunPanel
-        trustedProfiles={trustedProfiles}
-        selectedTrustedProfileName={selectedTrustedProfileName}
-        selectedTrustedProfile={selectedTrustedProfile}
-        selectedFileName={selectedFile?.name ?? ""}
-        upload={upload}
-        busy={busy}
-        onTrustedProfileNameChange={setSelectedTrustedProfileName}
-        onFileSelected={setSelectedFile}
-        onLaunchReviewWorkspace={handleLaunchReviewWorkspace}
-      />
+      {activeWorkspace === "review" ? (
+        <>
+          <UploadRunPanel
+            trustedProfiles={trustedProfiles}
+            selectedTrustedProfileName={selectedTrustedProfileName}
+            selectedTrustedProfile={selectedTrustedProfile}
+            selectedFileName={selectedFile?.name ?? ""}
+            upload={upload}
+            busy={busy}
+            onTrustedProfileNameChange={setSelectedTrustedProfileName}
+            onFileSelected={setSelectedFile}
+            onLaunchReviewWorkspace={handleLaunchReviewWorkspace}
+          />
 
-      <ReviewWorkspace
-        runDetail={runDetail}
-        reviewSession={reviewSession}
-        rows={rows}
-        selectedRow={selectedRow}
-        editForm={editForm}
-        exportArtifact={exportArtifact}
-        lastDownloadedFilename={lastDownloadedFilename}
-        busy={busy}
-        onSelectRow={(recordKey) => {
-          const row = rows.find((item) => item.recordKey === recordKey) ?? null;
-          setSelectedRecordKey(recordKey);
-          setEditForm(row ? buildEditFormFromRow(row) : emptyEditForm);
-        }}
-        onEditFormChange={setEditForm}
-        onApplyEditBatch={handleApplyEditBatch}
-        onExportAndDownload={handleExportAndDownload}
-      />
+          <ReviewWorkspace
+            runDetail={runDetail}
+            reviewSession={reviewSession}
+            rows={rows}
+            selectedRow={selectedRow}
+            editForm={editForm}
+            exportArtifact={exportArtifact}
+            lastDownloadedFilename={lastDownloadedFilename}
+            busy={busy}
+            onSelectRow={(recordKey) => {
+              const row = rows.find((item) => item.recordKey === recordKey) ?? null;
+              setSelectedRecordKey(recordKey);
+              setEditForm(row ? buildEditFormFromRow(row) : emptyEditForm);
+            }}
+            onEditFormChange={setEditForm}
+            onApplyEditBatch={handleApplyEditBatch}
+            onExportAndDownload={handleExportAndDownload}
+          />
+        </>
+      ) : (
+        <ProfileSettingsWorkspace
+          trustedProfiles={trustedProfiles}
+          selectedTrustedProfileName={selectedTrustedProfileName}
+          selectedTrustedProfile={selectedTrustedProfile}
+          profileDetail={profileDetail}
+          draftState={draftState}
+          busy={busy}
+          onTrustedProfileNameChange={setSelectedTrustedProfileName}
+          onOpenDraft={handleOpenSettingsDraft}
+          onSaveDefaultOmit={handleSaveDefaultOmit}
+          onSaveLaborMappings={handleSaveLaborMappings}
+          onSaveEquipmentMappings={handleSaveEquipmentMappings}
+          onSaveClassifications={handleSaveClassifications}
+          onSaveRates={handleSaveRates}
+          onPublishDraft={handlePublishDraft}
+          onCreateDesktopSyncExport={handleCreateDesktopSyncExport}
+          lastDownloadedProfileSyncFilename={lastDownloadedProfileSyncFilename}
+        />
+      )}
     </main>
   );
 }

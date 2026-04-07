@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
-from core.config import ConfigLoader, ProfileManager
+from core.config import ProfileManager
 from core.models.lineage import (
     HistoricalExportStatus,
     Organization,
@@ -19,11 +19,14 @@ from core.models.lineage import (
     RunRecord,
     SourceDocument,
     TrustedProfile,
+    TrustedProfileVersion,
 )
 from infrastructure.persistence.sqlite_lineage_store import SqliteLineageStore
-from services.lineage_service import build_profile_snapshot, build_run_records, build_template_artifact
+from services.lineage_service import build_profile_snapshot, build_run_records
 from services.lineage_service import build_historical_export_status
+from services.profile_authoring_service import ProfileAuthoringService
 from services.review_workflow_service import load_review_data
+from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,12 +60,7 @@ class _ResolvedProfileContext:
 
     organization: Organization
     trusted_profile: TrustedProfile
-    profile_metadata: dict[str, object]
-    profile_dir: Path
-    loader: ConfigLoader
-    template_path: Path
-    template_bytes: bytes
-    template_file_hash: str
+    trusted_profile_version: TrustedProfileVersion
 
 
 class ProcessingRunService:
@@ -80,6 +78,16 @@ class ProcessingRunService:
         self._profile_manager = profile_manager or ProfileManager()
         self._engine_version = str(engine_version).strip() or "dev-local"
         self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
+        self._trusted_profile_authoring_repository = TrustedProfileAuthoringRepository(
+            lineage_store=self._lineage_store,
+            profile_manager=self._profile_manager,
+            now_provider=self._now_provider,
+        )
+        self._profile_authoring_service = ProfileAuthoringService(
+            repository=self._trusted_profile_authoring_repository,
+            profile_manager=self._profile_manager,
+            now_provider=self._now_provider,
+        )
 
     def resolve_trusted_profile_snapshot(
         self,
@@ -110,11 +118,14 @@ class ProcessingRunService:
 
         profile_context = self._resolve_profile_context(profile_name)
         snapshot = self._create_or_reuse_profile_snapshot(profile_context)
-        review_result = load_review_data(
-            str(source_path),
-            config_dir=profile_context.profile_dir,
-            legacy_config_dir=self._get_legacy_config_dir(),
-        )
+        with self._trusted_profile_authoring_repository.materialize_published_version_bundle(
+            profile_context.trusted_profile_version
+        ) as materialized_profile_dir:
+            review_result = load_review_data(
+                str(source_path),
+                config_dir=materialized_profile_dir,
+                legacy_config_dir=self._get_legacy_config_dir(),
+            )
         source_document_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
         persisted_storage_ref = str(storage_ref).strip() if storage_ref else str(source_path)
 
@@ -142,6 +153,7 @@ class ProcessingRunService:
                 source_document_id=persisted_source_document.source_document_id,
                 profile_snapshot_id=snapshot.profile_snapshot_id,
                 trusted_profile_id=profile_context.trusted_profile.trusted_profile_id,
+                trusted_profile_version_id=profile_context.trusted_profile_version.trusted_profile_version_id,
                 status="completed",
                 engine_version=self._engine_version,
                 aggregate_blockers=tuple(review_result.blocking_issues),
@@ -156,6 +168,11 @@ class ProcessingRunService:
                 records=review_result.records,
                 created_at=created_at,
             )
+        )
+        self._profile_authoring_service.capture_unmapped_observations(
+            profile_context.trusted_profile.trusted_profile_id,
+            processing_run_id=processing_run.processing_run_id,
+            records=review_result.records,
         )
         return ProcessingRunResult(
             organization=profile_context.organization,
@@ -174,42 +191,13 @@ class ProcessingRunService:
 
     def _resolve_profile_context(self, profile_name: str | None) -> _ResolvedProfileContext:
         """Resolve one selected trusted profile bundle for snapshotting and processing."""
-        created_at = self._now_provider()
-        organization = self._lineage_store.ensure_organization(
-            organization_id="org-default",
-            slug="default-org",
-            display_name="Default Organization",
-            created_at=created_at,
-            is_seeded=True,
+        resolved_profile = self._trusted_profile_authoring_repository.resolve_current_published_profile(
+            profile_name
         )
-
-        profile_metadata, profile_dir, loader = self._load_profile_bundle(profile_name)
-        trusted_profile = self._lineage_store.get_or_create_trusted_profile(
-            TrustedProfile(
-                trusted_profile_id=f"trusted-profile:{organization.organization_id}:{profile_metadata['profile_name']}",
-                organization_id=organization.organization_id,
-                profile_name=str(profile_metadata["profile_name"]),
-                display_name=str(profile_metadata["display_name"]),
-                source_kind="seeded" if str(profile_metadata["profile_name"]).casefold() == "default" else "imported",
-                bundle_ref=str(profile_metadata.get("profile_dir") or ""),
-                description=str(profile_metadata.get("description") or ""),
-                version_label=str(profile_metadata.get("version") or "") or None,
-                created_at=created_at,
-            )
-        )
-
-        template_path = self._resolve_template_path(profile_dir, profile_metadata, loader)
-        template_bytes = template_path.read_bytes()
-        template_file_hash = hashlib.sha256(template_bytes).hexdigest()
         return _ResolvedProfileContext(
-            organization=organization,
-            trusted_profile=trusted_profile,
-            profile_metadata=profile_metadata,
-            profile_dir=profile_dir,
-            loader=loader,
-            template_path=template_path,
-            template_bytes=template_bytes,
-            template_file_hash=template_file_hash,
+            organization=resolved_profile.organization,
+            trusted_profile=resolved_profile.trusted_profile,
+            trusted_profile_version=resolved_profile.trusted_profile_version,
         )
 
     def _build_processing_run_state(
@@ -247,95 +235,22 @@ class ProcessingRunService:
         profile_context: _ResolvedProfileContext,
     ) -> ProfileSnapshot:
         """Create or reuse the immutable snapshot for one resolved behavioral bundle."""
-        template_artifact = self._lineage_store.get_or_create_template_artifact(
-            build_template_artifact(
-                template_artifact_id=f"template-artifact:{profile_context.organization.organization_id}:{uuid4()}",
-                organization_id=profile_context.organization.organization_id,
-                original_filename=profile_context.template_path.name,
-                content_bytes=profile_context.template_bytes,
-                created_at=self._now_provider(),
-            )
-        )
-        full_bundle_payload, behavioral_hash_payload = self._build_snapshot_payloads(
-            profile_metadata=profile_context.profile_metadata,
-            loader=profile_context.loader,
-            template_file_hash=profile_context.template_file_hash,
-        )
+        full_bundle_payload = profile_context.trusted_profile_version.bundle_payload
+        behavioral_hash_payload = dict(full_bundle_payload.get("behavioral_bundle", {}))
         snapshot = build_profile_snapshot(
             profile_snapshot_id=f"profile-snapshot:{profile_context.organization.organization_id}:{uuid4()}",
             organization_id=profile_context.organization.organization_id,
             trusted_profile_id=None,
+            trusted_profile_version_id=profile_context.trusted_profile_version.trusted_profile_version_id,
             bundle_payload=full_bundle_payload,
             hash_payload=behavioral_hash_payload,
             engine_version=self._engine_version,
             created_at=self._now_provider(),
-            template_artifact_id=template_artifact.template_artifact_id,
-            template_artifact_ref=profile_context.template_path.name,
-            template_file_hash=profile_context.template_file_hash,
+            template_artifact_id=profile_context.trusted_profile_version.template_artifact_id,
+            template_artifact_ref=profile_context.trusted_profile_version.template_artifact_ref,
+            template_file_hash=profile_context.trusted_profile_version.template_file_hash,
         )
         return self._lineage_store.get_or_create_profile_snapshot(snapshot)
-
-    def _load_profile_bundle(
-        self,
-        profile_name: str | None,
-    ) -> tuple[dict[str, object], Path, ConfigLoader]:
-        """Load profile metadata plus the config loader for one named or active profile."""
-        if profile_name:
-            profile_dir = self._profile_manager.get_profile_dir(profile_name)
-            if profile_dir is None:
-                raise FileNotFoundError(f"Profile '{profile_name}' was not found.")
-            profile_metadata = self._profile_manager.get_profile_metadata(profile_name)
-            loader = self._build_config_loader(profile_dir)
-            return profile_metadata, profile_dir, loader
-        profile_dir = self._profile_manager.get_active_profile_dir()
-        loader = self._build_config_loader(profile_dir)
-        return self._profile_manager.get_active_profile_metadata(), profile_dir, loader
-
-    def _build_snapshot_payloads(
-        self,
-        profile_metadata: dict[str, object],
-        loader: ConfigLoader,
-        template_file_hash: str,
-    ) -> tuple[dict[str, object], dict[str, object]]:
-        """Build persisted snapshot payloads plus the behavior-only hash basis."""
-        behavioral_bundle = {
-            "phase_mapping": loader.get_phase_mapping(),
-            "labor_mapping": loader.get_labor_mapping(),
-            "equipment_mapping": loader.get_equipment_mapping(),
-            "vendor_normalization": loader.get_vendor_normalization(),
-            "input_model": loader.get_input_model(),
-            "review_rules": loader.get_review_rules(),
-            "rates": loader.get_rates(),
-            "labor_slots": loader.get_labor_slots(),
-            "equipment_slots": loader.get_equipment_slots(),
-            "recap_template_map": loader.get_recap_template_map(),
-            "template": {
-                "template_file_hash": template_file_hash,
-            },
-        }
-        full_bundle = {
-            "behavioral_bundle": behavioral_bundle,
-            "traceability": {
-                "trusted_profile": {
-                    "profile_name": str(profile_metadata.get("profile_name") or ""),
-                    "display_name": str(profile_metadata.get("display_name") or ""),
-                    "description": str(profile_metadata.get("description") or ""),
-                    "version": str(profile_metadata.get("version") or ""),
-                    "template_filename": str(profile_metadata.get("template_filename") or ""),
-                },
-                "engine_version": self._engine_version,
-            },
-        }
-        return full_bundle, behavioral_bundle
-
-    def _build_config_loader(self, profile_dir: Path) -> ConfigLoader:
-        """Build a fresh loader so snapshot resolution sees the current on-disk bundle."""
-        resolved_profile_dir = profile_dir.resolve()
-        ConfigLoader._shared_cache.pop(resolved_profile_dir, None)
-        return ConfigLoader(
-            config_dir=resolved_profile_dir,
-            legacy_config_dir=self._get_legacy_config_dir(),
-        )
 
     def _get_legacy_config_dir(self) -> Path | None:
         """Reuse the configured shared-config root when a custom profile manager is supplied."""
@@ -343,30 +258,6 @@ class ProcessingRunService:
         if isinstance(legacy_config_dir, Path):
             return legacy_config_dir
         return None
-
-    def _resolve_template_path(
-        self,
-        profile_dir: Path,
-        profile_metadata: dict[str, object],
-        loader: ConfigLoader,
-    ) -> Path:
-        """Resolve the template path without relying on a global active-profile lookup."""
-        template_filename = str(profile_metadata.get("template_filename") or "").strip()
-        if template_filename:
-            template_path = (profile_dir / template_filename).resolve()
-            if template_path.is_file():
-                return template_path
-
-        recap_map = loader.get_recap_template_map()
-        configured_path = str(recap_map.get("default_template_path") or "").strip()
-        if configured_path:
-            template_path = Path(configured_path).expanduser().resolve()
-            if template_path.is_file():
-                return template_path
-
-        raise FileNotFoundError(
-            f"No recap template workbook could be resolved for config bundle '{profile_dir}'."
-        )
 
     def _build_source_document_id(self, *, file_hash: str, storage_ref: str) -> str:
         """Build a stable source-document identity from file hash and storage location."""

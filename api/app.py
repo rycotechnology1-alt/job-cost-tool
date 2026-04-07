@@ -10,6 +10,12 @@ from fastapi import FastAPI
 
 from api.dependencies import ApiRuntime, build_runtime
 from api.routes.exports import router as exports_router
+from api.routes.profiles import (
+    profile_drafts_router,
+    profile_sync_exports_router,
+    profile_versions_router,
+    profiles_router,
+)
 from api.routes.review_sessions import router as review_sessions_router
 from api.routes.runs import router as runs_router
 from api.routes.trusted_profiles import router as trusted_profiles_router
@@ -58,11 +64,15 @@ def create_app(
 
     app = FastAPI(
         title="Job Cost Tool API",
-        version="phase1-step6",
+        version="phase1-step7",
         lifespan=lifespan,
     )
     app.state.runtime = runtime
     app.include_router(trusted_profiles_router)
+    app.include_router(profiles_router)
+    app.include_router(profile_versions_router)
+    app.include_router(profile_drafts_router)
+    app.include_router(profile_sync_exports_router)
     app.include_router(uploads_router)
     app.include_router(runs_router)
     app.include_router(review_sessions_router)
