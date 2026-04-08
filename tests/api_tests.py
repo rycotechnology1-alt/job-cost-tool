@@ -122,10 +122,167 @@ class Phase1ApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual([profile["profile_name"] for profile in payload], ["alternate", "default"])
         self.assertEqual(payload[0]["display_name"], "Alternate Profile")
+        self.assertEqual(payload[0]["source_kind"], "filesystem_bootstrap")
+        self.assertFalse(payload[0]["has_open_draft"])
         self.assertFalse(payload[0]["is_active_profile"])
+        self.assertIsNone(payload[0]["archived_at"])
         self.assertEqual(payload[1]["trusted_profile_id"], "trusted-profile:org-default:default")
+        self.assertEqual(payload[1]["source_kind"], "seeded")
+        self.assertEqual(payload[1]["current_published_version_number"], 1)
         self.assertTrue(payload[1]["is_active_profile"])
+        self.assertIsNone(payload[1]["archived_at"])
         self.assertEqual(payload[1]["template_filename"], "recap_template.xlsx")
+
+    def test_create_second_profile_lists_opens_saves_and_publishes_independently(self) -> None:
+        create_response = self.client.post(
+            "/api/profiles",
+            json={
+                "profile_name": "field-team",
+                "display_name": "Field Team",
+                "description": "Second trusted profile",
+                "seed_trusted_profile_id": "trusted-profile:org-default:default",
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+        created_payload = create_response.json()
+
+        listing_response = self.client.get("/api/trusted-profiles")
+        self.assertEqual(listing_response.status_code, 200)
+        listing_payload = listing_response.json()
+        self.assertEqual([profile["profile_name"] for profile in listing_payload], ["alternate", "default", "field-team"])
+        self.assertEqual(listing_payload[2]["source_kind"], "published_clone")
+        self.assertFalse(listing_payload[2]["has_open_draft"])
+
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:field-team/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_id = draft_response.json()["trusted_profile_draft_id"]
+
+        listing_with_draft = self.client.get("/api/trusted-profiles")
+        self.assertTrue(listing_with_draft.json()[2]["has_open_draft"])
+
+        save_response = self.client.patch(
+            f"/api/profile-drafts/{draft_id}/default-omit",
+            json={
+                "default_omit_rules": [
+                    {"phase_code": "50", "phase_name": "Other Job Cost"},
+                ]
+            },
+        )
+        self.assertEqual(save_response.status_code, 200)
+
+        publish_response = self.client.post(f"/api/profile-drafts/{draft_id}/publish")
+        self.assertEqual(publish_response.status_code, 200)
+        published_payload = publish_response.json()
+
+        default_detail = self.client.get("/api/profiles/trusted-profile:org-default:default")
+        created_detail = self.client.get("/api/profiles/trusted-profile:org-default:field-team")
+
+        self.assertEqual(created_payload["current_published_version"]["version_number"], 1)
+        self.assertEqual(published_payload["current_published_version"]["version_number"], 2)
+        self.assertEqual(
+            published_payload["current_published_version"]["trusted_profile_version_id"],
+            created_detail.json()["current_published_version"]["trusted_profile_version_id"],
+        )
+        self.assertEqual(default_detail.status_code, 200)
+        self.assertEqual(default_detail.json()["current_published_version"]["version_number"], 1)
+        self.assertIsNone(published_payload["open_draft_id"])
+        self.assertEqual(published_payload["profile_name"], "field-team")
+
+    def test_create_second_profile_rejects_duplicate_key_and_duplicate_active_display_name(self) -> None:
+        first_create = self.client.post(
+            "/api/profiles",
+            json={
+                "profile_name": "field-team",
+                "display_name": "Field Team",
+                "description": "Second trusted profile",
+                "seed_trusted_profile_id": "trusted-profile:org-default:default",
+            },
+        )
+        self.assertEqual(first_create.status_code, 201)
+
+        duplicate_key_response = self.client.post(
+            "/api/profiles",
+            json={
+                "profile_name": "FIELD-TEAM",
+                "display_name": "Field Team 2",
+                "description": "Duplicate key",
+                "seed_trusted_profile_id": "trusted-profile:org-default:default",
+            },
+        )
+        duplicate_display_response = self.client.post(
+            "/api/profiles",
+            json={
+                "profile_name": "field-team-2",
+                "display_name": "Field Team",
+                "description": "Duplicate display name",
+                "seed_trusted_profile_id": "trusted-profile:org-default:default",
+            },
+        )
+
+        self.assertEqual(duplicate_key_response.status_code, 409)
+        self.assertIn("already exists", duplicate_key_response.json()["detail"]["message"])
+        self.assertIn("profile_name", duplicate_key_response.json()["detail"]["field_errors"])
+        self.assertEqual(duplicate_display_response.status_code, 409)
+        self.assertIn("already in use", duplicate_display_response.json()["detail"]["message"])
+        self.assertIn("display_name", duplicate_display_response.json()["detail"]["field_errors"])
+
+    def test_archive_user_created_profile_hides_it_from_active_listing_without_deleting_history(self) -> None:
+        create_response = self.client.post(
+            "/api/profiles",
+            json={
+                "profile_name": "field-team",
+                "display_name": "Field Team",
+                "description": "Second trusted profile",
+                "seed_trusted_profile_id": "trusted-profile:org-default:default",
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+
+        archive_response = self.client.post("/api/profiles/trusted-profile:org-default:field-team/archive")
+        self.assertEqual(archive_response.status_code, 204)
+
+        listing_response = self.client.get("/api/trusted-profiles")
+        detail_response = self.client.get("/api/profiles/trusted-profile:org-default:field-team")
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:field-team/draft")
+
+        self.assertEqual([profile["profile_name"] for profile in listing_response.json()], ["alternate", "default"])
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.json()["current_published_version"]["version_number"], 1)
+        self.assertEqual(draft_response.status_code, 400)
+        self.assertIn("archived", draft_response.json()["detail"])
+
+    def test_trusted_profile_listing_can_include_archived_profiles_and_unarchive_restores_active_listing(self) -> None:
+        create_response = self.client.post(
+            "/api/profiles",
+            json={
+                "profile_name": "field-team",
+                "display_name": "Field Team",
+                "description": "Second trusted profile",
+                "seed_trusted_profile_id": "trusted-profile:org-default:default",
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+
+        archive_response = self.client.post("/api/profiles/trusted-profile:org-default:field-team/archive")
+        self.assertEqual(archive_response.status_code, 204)
+
+        active_listing = self.client.get("/api/trusted-profiles")
+        all_listing = self.client.get("/api/trusted-profiles?include_archived=true")
+
+        self.assertEqual([profile["profile_name"] for profile in active_listing.json()], ["alternate", "default"])
+        archived_profile = next(
+            profile for profile in all_listing.json() if profile["profile_name"] == "field-team"
+        )
+        self.assertTrue(archived_profile["archived_at"])
+
+        unarchive_response = self.client.post("/api/profiles/trusted-profile:org-default:field-team/unarchive")
+        self.assertEqual(unarchive_response.status_code, 204)
+
+        restored_listing = self.client.get("/api/trusted-profiles")
+        self.assertEqual(
+            [profile["profile_name"] for profile in restored_listing.json()],
+            ["alternate", "default", "field-team"],
+        )
 
     def test_review_session_open_and_append_edit_batch_do_not_mutate_base_run_records(self) -> None:
         processing_run_id = self._create_processing_run_via_api()

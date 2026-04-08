@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS trusted_profiles (
     description TEXT NOT NULL DEFAULT '',
     version_label TEXT,
     current_published_version_id TEXT,
+    archived_at TEXT,
     created_by_user_id TEXT,
     created_at TEXT NOT NULL,
     UNIQUE (organization_id, profile_name),

@@ -140,7 +140,11 @@ def to_trusted_profile_response(profile: TrustedProfileSummary) -> TrustedProfil
         description=profile.description,
         version_label=profile.version_label,
         template_filename=profile.template_filename,
+        source_kind=profile.source_kind,
+        current_published_version_number=profile.current_published_version_number,
+        has_open_draft=profile.has_open_draft,
         is_active_profile=profile.is_active_profile,
+        archived_at=profile.archived_at,
     )
 
 

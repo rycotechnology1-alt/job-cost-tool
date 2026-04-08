@@ -13,7 +13,11 @@ export interface TrustedProfileResponse {
   description: string;
   version_label: string | null;
   template_filename: string | null;
+  source_kind: string;
+  current_published_version_number: number;
+  has_open_draft: boolean;
   is_active_profile: boolean;
+  archived_at: string | null;
 }
 
 export interface HistoricalExportStatusResponse {
@@ -184,6 +188,13 @@ export interface PublishedProfileDetailResponse {
   current_published_version: ProfileVersionSummaryResponse;
   open_draft_id: string | null;
   deferred_domains: DeferredDomainsResponse;
+}
+
+export interface CreateTrustedProfileRequest {
+  profile_name: string;
+  display_name: string;
+  description: string;
+  seed_trusted_profile_id?: string | null;
 }
 
 export interface ProfileSyncExportResponse {

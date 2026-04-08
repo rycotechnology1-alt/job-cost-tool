@@ -12,7 +12,11 @@ const trustedProfilesPayload = [
     description: "Default trusted profile",
     version_label: "1.0",
     template_filename: "recap_template.xlsx",
+    source_kind: "seeded",
+    current_published_version_number: 1,
+    has_open_draft: false,
     is_active_profile: true,
+    archived_at: null,
   },
   {
     trusted_profile_id: "trusted-profile:org-default:alternate",
@@ -21,7 +25,11 @@ const trustedProfilesPayload = [
     description: "Alternate trusted profile",
     version_label: "1.1",
     template_filename: "alternate_template.xlsx",
+    source_kind: "filesystem_bootstrap",
+    current_published_version_number: 1,
+    has_open_draft: false,
     is_active_profile: false,
+    archived_at: null,
   },
 ];
 

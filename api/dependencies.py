@@ -70,6 +70,7 @@ def build_runtime(
             now_provider=now_provider,
         ),
         trusted_profile_service=TrustedProfileService(
+            repository=trusted_profile_authoring_repository,
             profile_manager=persisted_profile_manager,
         ),
         profile_authoring_service=ProfileAuthoringService(

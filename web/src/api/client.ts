@@ -1,5 +1,6 @@
 import type {
   ClassificationSlotRow,
+  CreateTrustedProfileRequest,
   DefaultOmitRuleRow,
   DraftEditorStateResponse,
   EquipmentMappingRow,
@@ -20,6 +21,26 @@ import { resolveApiBaseUrl } from "../runtimeConfig";
 
 const apiBaseUrl = resolveApiBaseUrl(import.meta.env);
 
+interface ApiErrorDetail {
+  message?: unknown;
+  error_code?: unknown;
+  field_errors?: unknown;
+}
+
+export class ApiRequestError extends Error {
+  status: number;
+  errorCode?: string;
+  fieldErrors: Record<string, string[]>;
+
+  constructor(status: number, message: string, options?: { errorCode?: string; fieldErrors?: Record<string, string[]> }) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.errorCode = options?.errorCode;
+    this.fieldErrors = options?.fieldErrors ?? {};
+  }
+}
+
 function buildApiUrl(path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return path;
@@ -34,17 +55,35 @@ async function apiRequest(path: string, init?: RequestInit): Promise<Response> {
   }
 
   let detail = `Request failed with status ${response.status}.`;
+  let errorCode: string | undefined;
+  let fieldErrors: Record<string, string[]> = {};
   try {
     const payload = (await response.json()) as { detail?: unknown };
     if (typeof payload.detail === "string" && payload.detail.trim()) {
       detail = payload.detail;
+    } else if (payload.detail && typeof payload.detail === "object") {
+      const typedDetail = payload.detail as ApiErrorDetail;
+      if (typeof typedDetail.message === "string" && typedDetail.message.trim()) {
+        detail = typedDetail.message;
+      }
+      if (typeof typedDetail.error_code === "string" && typedDetail.error_code.trim()) {
+        errorCode = typedDetail.error_code;
+      }
+      if (typedDetail.field_errors && typeof typedDetail.field_errors === "object") {
+        fieldErrors = Object.fromEntries(
+          Object.entries(typedDetail.field_errors as Record<string, unknown>).map(([key, value]) => [
+            key,
+            Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [],
+          ]),
+        );
+      }
     }
   } catch {
     if (response.statusText.trim()) {
       detail = response.statusText;
     }
   }
-  throw new Error(detail);
+  throw new ApiRequestError(response.status, detail, { errorCode, fieldErrors });
 }
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -77,14 +116,29 @@ export async function uploadSourceDocument(file: File): Promise<SourceUploadResp
   });
 }
 
-export async function fetchTrustedProfiles(): Promise<TrustedProfileResponse[]> {
-  return apiJson<TrustedProfileResponse[]>("/api/trusted-profiles");
+export async function fetchTrustedProfiles(includeArchived = false): Promise<TrustedProfileResponse[]> {
+  const query = includeArchived ? "?include_archived=true" : "";
+  return apiJson<TrustedProfileResponse[]>(`/api/trusted-profiles${query}`);
 }
 
 export async function fetchProfileDetail(
   trustedProfileId: string,
 ): Promise<PublishedProfileDetailResponse> {
   return apiJson<PublishedProfileDetailResponse>(`/api/profiles/${trustedProfileId}`);
+}
+
+export async function createTrustedProfile(
+  request: CreateTrustedProfileRequest,
+): Promise<PublishedProfileDetailResponse> {
+  return apiJson<PublishedProfileDetailResponse>("/api/profiles", buildJsonRequest(request));
+}
+
+export async function archiveTrustedProfile(trustedProfileId: string): Promise<void> {
+  await apiRequest(`/api/profiles/${trustedProfileId}/archive`, buildJsonRequest({}));
+}
+
+export async function unarchiveTrustedProfile(trustedProfileId: string): Promise<void> {
+  await apiRequest(`/api/profiles/${trustedProfileId}/unarchive`, buildJsonRequest({}));
 }
 
 export async function createOrOpenProfileDraft(

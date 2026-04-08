@@ -90,9 +90,10 @@ class SqliteLineageStore:
                     description,
                     version_label,
                     current_published_version_id,
+                    archived_at,
                     created_by_user_id,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trusted_profile.trusted_profile_id,
@@ -104,6 +105,7 @@ class SqliteLineageStore:
                     trusted_profile.description,
                     trusted_profile.version_label,
                     trusted_profile.current_published_version_id,
+                    _dt(trusted_profile.archived_at) if trusted_profile.archived_at else None,
                     trusted_profile.created_by_user_id,
                     _dt(trusted_profile.created_at),
                 ),
@@ -122,7 +124,8 @@ class SqliteLineageStore:
                     bundle_ref = ?,
                     description = ?,
                     version_label = ?,
-                    current_published_version_id = COALESCE(?, current_published_version_id)
+                    current_published_version_id = COALESCE(?, current_published_version_id),
+                    archived_at = ?
                 WHERE trusted_profile_id = ?
                 """,
                 (
@@ -132,6 +135,7 @@ class SqliteLineageStore:
                     trusted_profile.description,
                     trusted_profile.version_label,
                     trusted_profile.current_published_version_id,
+                    _dt(trusted_profile.archived_at) if trusted_profile.archived_at else None,
                     row["trusted_profile_id"],
                 ),
             )
@@ -186,15 +190,56 @@ class SqliteLineageStore:
 
     def list_trusted_profiles(self, organization_id: str) -> list[TrustedProfile]:
         """List persisted logical trusted profiles for one organization."""
-        rows = self._connection.execute(
-            """
+        return self.list_trusted_profiles_for_organization(organization_id, include_archived=False)
+
+    def list_trusted_profiles_for_organization(
+        self,
+        organization_id: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[TrustedProfile]:
+        """List persisted logical trusted profiles for one organization."""
+        query = """
             SELECT * FROM trusted_profiles
             WHERE organization_id = ?
-            ORDER BY profile_name ASC, trusted_profile_id ASC
-            """,
-            (organization_id,),
-        ).fetchall()
+        """
+        parameters: list[object] = [organization_id]
+        if not include_archived:
+            query += " AND archived_at IS NULL"
+        query += " ORDER BY profile_name ASC, trusted_profile_id ASC"
+        rows = self._connection.execute(query, parameters).fetchall()
         return [_trusted_profile_from_row(row) for row in rows]
+
+    def archive_trusted_profile(
+        self,
+        trusted_profile_id: str,
+        *,
+        archived_at: datetime,
+    ) -> TrustedProfile:
+        """Mark one trusted profile archived without deleting lineage history."""
+        self._connection.execute(
+            """
+            UPDATE trusted_profiles
+            SET archived_at = ?
+            WHERE trusted_profile_id = ?
+            """,
+            (_dt(archived_at), trusted_profile_id),
+        )
+        self._connection.commit()
+        return self.get_trusted_profile(trusted_profile_id)
+
+    def unarchive_trusted_profile(self, trusted_profile_id: str) -> TrustedProfile:
+        """Clear the archived marker for one logical trusted profile."""
+        self._connection.execute(
+            """
+            UPDATE trusted_profiles
+            SET archived_at = NULL
+            WHERE trusted_profile_id = ?
+            """,
+            (trusted_profile_id,),
+        )
+        self._connection.commit()
+        return self.get_trusted_profile(trusted_profile_id)
 
     def get_or_create_template_artifact(
         self,
@@ -1051,6 +1096,11 @@ class SqliteLineageStore:
             "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
         )
         self._ensure_column(
+            "trusted_profiles",
+            "archived_at",
+            "TEXT",
+        )
+        self._ensure_column(
             "profile_snapshots",
             "trusted_profile_version_id",
             "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
@@ -1104,6 +1154,7 @@ def _trusted_profile_from_row(row: sqlite3.Row) -> TrustedProfile:
         description=row["description"],
         version_label=row["version_label"],
         current_published_version_id=row["current_published_version_id"],
+        archived_at=_parse_dt(row["archived_at"]) if row["archived_at"] else None,
         created_by_user_id=row["created_by_user_id"],
         created_at=_parse_dt(row["created_at"]),
     )

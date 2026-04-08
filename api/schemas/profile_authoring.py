@@ -98,6 +98,15 @@ class PublishedProfileDetailResponse(ApiModel):
     deferred_domains: DeferredDomainsResponse
 
 
+class CreateTrustedProfileRequest(ApiModel):
+    """Request body for creating one new trusted profile from an existing published profile seed."""
+
+    profile_name: str
+    display_name: str
+    description: str = ""
+    seed_trusted_profile_id: str | None = None
+
+
 class ProfileSyncExportResponse(ApiModel):
     """Published-version desktop-sync export metadata returned after archive creation."""
 

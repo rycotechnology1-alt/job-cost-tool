@@ -16,6 +16,7 @@ from core.models import Record
 from infrastructure.persistence import SqliteLineageStore
 from infrastructure.storage import LocalRuntimeFileStore
 from services.processing_run_service import ProcessingRunService
+from services.profile_authoring_errors import ProfileAuthoringConflictError
 from services.profile_authoring_service import ProfileAuthoringService
 from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
 
@@ -105,6 +106,124 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.assertEqual(first_state.labor_mappings[0]["target_classification"], "Default Journeyman")
         self.assertEqual(first_state.labor_slots[0]["slot_id"], "labor_1")
         self.assertEqual(first_state.validation_errors, [])
+
+    def test_create_trusted_profile_seeds_second_profile_and_keeps_default_profile_independent(self) -> None:
+        default_profile_id = "trusted-profile:org-default:default"
+        default_detail = self.service.get_profile_detail(default_profile_id)
+
+        created_detail = self.service.create_trusted_profile(
+            profile_name="field-team",
+            display_name="Field Team",
+            description="Second trusted profile",
+            seed_trusted_profile_id=default_profile_id,
+        )
+        draft_state = self.service.create_or_open_draft(created_detail.trusted_profile_id)
+        self.service.update_default_omit_rules(
+            draft_state.trusted_profile_draft_id,
+            [{"phase_code": "20", "phase_name": "Labor"}],
+        )
+        published_detail = self.service.publish_draft(draft_state.trusted_profile_draft_id)
+        default_after = self.service.get_profile_detail(default_profile_id)
+
+        self.assertEqual(created_detail.profile_name, "field-team")
+        self.assertEqual(created_detail.current_published_version_number, 1)
+        self.assertEqual(draft_state.current_published_version_number, 1)
+        self.assertEqual(published_detail.current_published_version_number, 2)
+        self.assertEqual(
+            self.repository.get_current_published_version(created_detail.trusted_profile_id).version_number,
+            2,
+        )
+        self.assertEqual(
+            self.repository.get_current_published_version(default_profile_id).version_number,
+            default_detail.current_published_version_number,
+        )
+        self.assertEqual(default_after.current_published_version_id, default_detail.current_published_version_id)
+        self.assertEqual(default_after.open_draft_id, default_detail.open_draft_id)
+
+    def test_create_trusted_profile_rejects_duplicate_key_and_duplicate_active_display_name(self) -> None:
+        default_profile_id = "trusted-profile:org-default:default"
+        self.service.create_trusted_profile(
+            profile_name="field-team",
+            display_name="Field Team",
+            description="Second trusted profile",
+            seed_trusted_profile_id=default_profile_id,
+        )
+
+        with self.assertRaises(ProfileAuthoringConflictError):
+            self.service.create_trusted_profile(
+                profile_name="FIELD-TEAM",
+                display_name="Different Display",
+                description="Duplicate key differing only by case",
+                seed_trusted_profile_id=default_profile_id,
+            )
+
+        with self.assertRaises(ProfileAuthoringConflictError):
+            self.service.create_trusted_profile(
+                profile_name="field-team-2",
+                display_name="Field Team",
+                description="Duplicate display name",
+                seed_trusted_profile_id=default_profile_id,
+            )
+
+    def test_archive_trusted_profile_hides_user_created_profile_and_preserves_published_version(self) -> None:
+        default_profile_id = "trusted-profile:org-default:default"
+        created_detail = self.service.create_trusted_profile(
+            profile_name="field-team",
+            display_name="Field Team",
+            description="Second trusted profile",
+            seed_trusted_profile_id=default_profile_id,
+        )
+
+        self.service.archive_trusted_profile(created_detail.trusted_profile_id)
+
+        active_profiles = {profile.profile_name for profile in self.repository.list_trusted_profiles()}
+        archived_profile = self.repository.get_trusted_profile(created_detail.trusted_profile_id)
+
+        self.assertNotIn("field-team", active_profiles)
+        self.assertIsNotNone(archived_profile.archived_at)
+        self.assertEqual(
+            self.repository.get_current_published_version(created_detail.trusted_profile_id).version_number,
+            1,
+        )
+        with self.assertRaises(ValueError):
+            self.service.create_or_open_draft(created_detail.trusted_profile_id)
+
+    def test_unarchive_trusted_profile_restores_archived_profile_to_active_listing(self) -> None:
+        default_profile_id = "trusted-profile:org-default:default"
+        created_detail = self.service.create_trusted_profile(
+            profile_name="field-team",
+            display_name="Field Team",
+            description="Second trusted profile",
+            seed_trusted_profile_id=default_profile_id,
+        )
+        self.service.archive_trusted_profile(created_detail.trusted_profile_id)
+
+        self.service.unarchive_trusted_profile(created_detail.trusted_profile_id)
+
+        active_profiles = {profile.profile_name for profile in self.repository.list_trusted_profiles()}
+        restored_profile = self.repository.get_trusted_profile(created_detail.trusted_profile_id)
+
+        self.assertIn("field-team", active_profiles)
+        self.assertIsNone(restored_profile.archived_at)
+
+    def test_unarchive_trusted_profile_rejects_display_name_conflict_with_active_profile(self) -> None:
+        default_profile_id = "trusted-profile:org-default:default"
+        created_detail = self.service.create_trusted_profile(
+            profile_name="field-team",
+            display_name="Field Team",
+            description="Second trusted profile",
+            seed_trusted_profile_id=default_profile_id,
+        )
+        self.service.archive_trusted_profile(created_detail.trusted_profile_id)
+        self.service.create_trusted_profile(
+            profile_name="field-team-2",
+            display_name="Field Team",
+            description="Replacement trusted profile",
+            seed_trusted_profile_id=default_profile_id,
+        )
+
+        with self.assertRaises(ProfileAuthoringConflictError):
+            self.service.unarchive_trusted_profile(created_detail.trusted_profile_id)
 
     def test_update_classifications_propagates_mapping_rate_and_recap_targets(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"

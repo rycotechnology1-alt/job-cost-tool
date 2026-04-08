@@ -42,6 +42,7 @@ from services.profile_bundle_helpers import (
     merge_observed_equipment_raw_values,
     merge_observed_labor_raw_values,
 )
+from services.profile_authoring_errors import ProfileAuthoringConflictError
 from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
 
 
@@ -154,6 +155,59 @@ class ProfileAuthoringService:
             published_version=published_version,
             open_draft_id=draft_id,
         )
+
+    def create_trusted_profile(
+        self,
+        *,
+        profile_name: str,
+        display_name: str,
+        description: str = "",
+        seed_trusted_profile_id: str | None = None,
+        created_by_user_id: str | None = None,
+    ) -> PublishedProfileDetail:
+        """Create one new trusted profile seeded from an existing published profile."""
+        normalized_profile_name = self._profile_manager.validate_profile_name(profile_name)
+        normalized_display_name = str(display_name or "").strip()
+        if not normalized_display_name:
+            raise ValueError("Display name is required when creating a trusted profile.")
+        self._validate_new_profile_identity(
+            profile_name=normalized_profile_name,
+            display_name=normalized_display_name,
+        )
+        seed_profile_id = seed_trusted_profile_id or self._default_seed_trusted_profile_id()
+        trusted_profile, published_version = self._repository.create_trusted_profile_from_published_clone(
+            profile_name=normalized_profile_name,
+            display_name=normalized_display_name,
+            description=description,
+            seed_trusted_profile_id=seed_profile_id,
+            created_by_user_id=created_by_user_id,
+        )
+        return self._build_profile_detail(
+            trusted_profile=trusted_profile,
+            published_version=published_version,
+            open_draft_id=None,
+        )
+
+    def archive_trusted_profile(self, trusted_profile_id: str) -> None:
+        """Archive one user-created trusted profile without deleting published lineage."""
+        trusted_profile = self._repository.get_trusted_profile(trusted_profile_id)
+        if trusted_profile.archived_at is not None:
+            raise ValueError(f"Trusted profile '{trusted_profile.display_name}' is already archived.")
+        if trusted_profile.source_kind != "published_clone":
+            raise ValueError("Only user-created trusted profiles can be archived in web settings.")
+        if self._get_open_draft_or_none(trusted_profile_id) is not None:
+            raise ValueError("Publish the open draft before archiving this trusted profile.")
+        self._repository.archive_trusted_profile(trusted_profile_id)
+
+    def unarchive_trusted_profile(self, trusted_profile_id: str) -> None:
+        """Restore one archived user-created trusted profile to the active settings lists."""
+        trusted_profile = self._repository.get_trusted_profile(trusted_profile_id)
+        if trusted_profile.archived_at is None:
+            raise ValueError(f"Trusted profile '{trusted_profile.display_name}' is already active.")
+        if trusted_profile.source_kind != "published_clone":
+            raise ValueError("Only user-created trusted profiles can be restored from web settings.")
+        self._validate_unarchived_display_name(trusted_profile)
+        self._repository.unarchive_trusted_profile(trusted_profile_id)
 
     def create_or_open_draft(
         self,
@@ -687,6 +741,71 @@ class ProfileAuthoringService:
             return self._repository.get_open_draft(trusted_profile_id)
         except KeyError:
             return None
+
+    def _default_seed_trusted_profile_id(self) -> str:
+        """Resolve the default seed trusted profile for explicit create-profile flows."""
+        active_profile_name = str(self._profile_manager.get_active_profile_name() or "").strip()
+        resolved = self._repository.resolve_current_published_profile(active_profile_name or None)
+        return resolved.trusted_profile.trusted_profile_id
+
+    def _validate_new_profile_identity(self, *, profile_name: str, display_name: str) -> None:
+        """Validate one new trusted-profile identity against current persisted state."""
+        all_profiles = self._repository.list_trusted_profiles(include_archived=True)
+        field_errors: dict[str, list[str]] = {}
+        if any(existing.profile_name.casefold() == profile_name.casefold() for existing in all_profiles):
+            field_errors["profile_name"] = [
+                f"Trusted profile key '{profile_name}' already exists. Choose a different stable profile key."
+            ]
+        if any(
+            existing.archived_at is None
+            and existing.display_name.strip().casefold() == display_name.casefold()
+            for existing in all_profiles
+        ):
+            field_errors["display_name"] = [
+                f"Display name '{display_name}' is already in use by another active trusted profile."
+            ]
+        if field_errors:
+            if "profile_name" in field_errors and "display_name" in field_errors:
+                message = "Choose a unique profile key and display name before creating this trusted profile."
+            elif "profile_name" in field_errors:
+                message = field_errors["profile_name"][0]
+            else:
+                message = field_errors["display_name"][0]
+            raise ProfileAuthoringConflictError(
+                message,
+                error_code="trusted_profile_identity_conflict",
+                field_errors=field_errors,
+            )
+
+    def _validate_unarchived_display_name(self, trusted_profile: TrustedProfile) -> None:
+        """Reject restoring an archived profile when its active display name slot is no longer available."""
+        active_profiles = self._repository.list_trusted_profiles()
+        conflicting_active = next(
+            (
+                existing
+                for existing in active_profiles
+                if existing.trusted_profile_id != trusted_profile.trusted_profile_id
+                and existing.display_name.strip().casefold() == trusted_profile.display_name.strip().casefold()
+            ),
+            None,
+        )
+        if conflicting_active is None:
+            return
+        raise ProfileAuthoringConflictError(
+            (
+                f"Display name '{trusted_profile.display_name}' is already in use by active trusted profile "
+                f"'{conflicting_active.display_name}'."
+            ),
+            error_code="trusted_profile_restore_conflict",
+            field_errors={
+                "display_name": [
+                    (
+                        f"Restore is blocked until the active display name '{trusted_profile.display_name}' "
+                        "is no longer in use."
+                    )
+                ]
+            },
+        )
 
     def _build_observation_id(
         self,

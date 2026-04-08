@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from api.schemas.common import ApiModel
 
 
@@ -14,4 +16,8 @@ class TrustedProfileResponse(ApiModel):
     description: str
     version_label: str | None = None
     template_filename: str | None = None
+    source_kind: str
+    current_published_version_number: int
+    has_open_draft: bool
     is_active_profile: bool
+    archived_at: datetime | None = None

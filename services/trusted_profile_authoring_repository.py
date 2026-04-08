@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 
 from core.config import ConfigLoader, ProfileManager
 from core.models.lineage import (
@@ -142,14 +142,20 @@ class TrustedProfileAuthoringRepository:
 
         return bootstrapped_versions
 
-    def list_trusted_profiles(self) -> list[TrustedProfile]:
+    def list_trusted_profiles(self, *, include_archived: bool = False) -> list[TrustedProfile]:
         """List logical trusted profiles after ensuring filesystem bootstrap exists."""
         organization = self._ensure_default_organization()
-        profiles = self._lineage_store.list_trusted_profiles(organization.organization_id)
+        profiles = self._lineage_store.list_trusted_profiles_for_organization(
+            organization.organization_id,
+            include_archived=include_archived,
+        )
         if profiles:
             return profiles
         self.bootstrap_filesystem_profiles()
-        return self._lineage_store.list_trusted_profiles(organization.organization_id)
+        return self._lineage_store.list_trusted_profiles_for_organization(
+            organization.organization_id,
+            include_archived=include_archived,
+        )
 
     def get_trusted_profile(self, trusted_profile_id: str) -> TrustedProfile:
         """Fetch one logical trusted profile by id."""
@@ -194,6 +200,7 @@ class TrustedProfileAuthoringRepository:
                 profile_name=resolved_profile_name,
             )
         )
+        self._assert_profile_not_archived(trusted_profile)
         current_version_id = str(trusted_profile.current_published_version_id or "").strip()
         if not current_version_id:
             raise ValueError(
@@ -238,6 +245,7 @@ class TrustedProfileAuthoringRepository:
         created_by_user_id: str | None = None,
     ) -> TrustedProfileDraft:
         """Create or reuse the single open draft copied from the current published version."""
+        self._assert_profile_not_archived(self.get_trusted_profile(trusted_profile_id))
         base_version = self.get_current_published_version(trusted_profile_id)
         created_at = self._now_provider()
         return self._lineage_store.get_or_create_trusted_profile_draft(
@@ -257,6 +265,112 @@ class TrustedProfileAuthoringRepository:
                 updated_at=created_at,
             )
         )
+
+    def archive_trusted_profile(self, trusted_profile_id: str) -> TrustedProfile:
+        """Archive one logical trusted profile without deleting published lineage."""
+        trusted_profile = self.get_trusted_profile(trusted_profile_id)
+        if trusted_profile.archived_at is not None:
+            return trusted_profile
+        return self._lineage_store.archive_trusted_profile(
+            trusted_profile_id,
+            archived_at=self._now_provider(),
+        )
+
+    def unarchive_trusted_profile(self, trusted_profile_id: str) -> TrustedProfile:
+        """Restore one archived logical trusted profile to the active settings lists."""
+        trusted_profile = self.get_trusted_profile(trusted_profile_id)
+        if trusted_profile.archived_at is None:
+            return trusted_profile
+        return self._lineage_store.unarchive_trusted_profile(trusted_profile_id)
+
+    def create_trusted_profile_from_published_clone(
+        self,
+        *,
+        profile_name: str,
+        display_name: str,
+        description: str = "",
+        seed_trusted_profile_id: str,
+        created_by_user_id: str | None = None,
+    ) -> tuple[TrustedProfile, TrustedProfileVersion]:
+        """Create one new logical trusted profile seeded from an existing published version."""
+        organization = self._ensure_default_organization()
+        normalized_profile_name = self._normalize_profile_name(profile_name)
+        normalized_display_name = str(display_name or "").strip()
+        if not normalized_display_name:
+            raise ValueError("Display name is required when creating a trusted profile.")
+
+        try:
+            self._lineage_store.get_trusted_profile_by_name(
+                organization_id=organization.organization_id,
+                profile_name=normalized_profile_name,
+            )
+        except KeyError:
+            pass
+        else:
+            raise ValueError(f"Trusted profile '{normalized_profile_name}' already exists.")
+
+        seed_profile = self.get_trusted_profile(seed_trusted_profile_id)
+        self._assert_profile_not_archived(seed_profile)
+        seed_version = self.get_current_published_version(seed_trusted_profile_id)
+        created_at = self._now_provider()
+        trusted_profile = self._lineage_store.get_or_create_trusted_profile(
+            TrustedProfile(
+                trusted_profile_id=self._build_trusted_profile_id(
+                    organization_id=organization.organization_id,
+                    profile_name=normalized_profile_name,
+                ),
+                organization_id=organization.organization_id,
+                profile_name=normalized_profile_name,
+                display_name=normalized_display_name,
+                source_kind="published_clone",
+                bundle_ref=None,
+                description=str(description or "").strip(),
+                version_label=seed_profile.version_label,
+                created_at=created_at,
+                created_by_user_id=created_by_user_id,
+            )
+        )
+        bundle_payload = self._clone_bundle_payload_for_profile(
+            seed_version.bundle_payload,
+            profile_name=trusted_profile.profile_name,
+            display_name=trusted_profile.display_name,
+            description=trusted_profile.description,
+            version_label=trusted_profile.version_label,
+        )
+        normalized_bundle_payload, canonical_bundle_json, content_hash = self.serialize_bundle_payload(
+            bundle_payload,
+            template_artifact_ref=seed_version.template_artifact_ref,
+            template_file_hash=seed_version.template_file_hash,
+        )
+        published_version = self._lineage_store.get_or_create_trusted_profile_version(
+            TrustedProfileVersion(
+                trusted_profile_version_id=self._build_trusted_profile_version_id(
+                    organization_id=organization.organization_id,
+                    profile_name=trusted_profile.profile_name,
+                    version_number=1,
+                ),
+                organization_id=organization.organization_id,
+                trusted_profile_id=trusted_profile.trusted_profile_id,
+                version_number=1,
+                bundle_payload=normalized_bundle_payload,
+                canonical_bundle_json=canonical_bundle_json,
+                content_hash=content_hash,
+                template_artifact_id=seed_version.template_artifact_id,
+                template_artifact_ref=seed_version.template_artifact_ref,
+                template_file_hash=seed_version.template_file_hash,
+                source_kind="published_clone_seed",
+                base_trusted_profile_version_id=seed_version.trusted_profile_version_id,
+                created_by_user_id=created_by_user_id,
+                created_at=created_at,
+            )
+        )
+        trusted_profile = self._lineage_store.set_current_published_version(
+            trusted_profile.trusted_profile_id,
+            published_version.trusted_profile_version_id,
+        )
+        if trusted_profile.current_published_version_id != published_version.trusted_profile_version_id:
+            raise ValueError("Failed to persist current published trusted-profile version.")
+        return trusted_profile, published_version
 
     def serialize_bundle_payload(
         self,
@@ -480,11 +594,27 @@ class TrustedProfileAuthoringRepository:
             except KeyError:
                 pass
 
+        if not self._can_repair_from_filesystem(trusted_profile):
+            return trusted_profile
+
         # Bootstrap is idempotent and already reuses equivalent versions by content hash, so it is
         # safe to use here to repair older local databases that have a logical profile row without a
         # current published version linkage.
         self.bootstrap_filesystem_profiles()
         return self._lineage_store.get_trusted_profile(trusted_profile.trusted_profile_id)
+
+    def _can_repair_from_filesystem(self, trusted_profile: TrustedProfile) -> bool:
+        """Return whether bootstrap repair is appropriate for one logical trusted profile."""
+        return trusted_profile.source_kind in {"seeded", "filesystem_bootstrap"} and bool(
+            str(trusted_profile.bundle_ref or "").strip()
+        )
+
+    def _assert_profile_not_archived(self, trusted_profile: TrustedProfile) -> None:
+        """Reject operations that should not continue against archived trusted profiles."""
+        if trusted_profile.archived_at is not None:
+            raise ValueError(
+                f"Trusted profile '{trusted_profile.display_name}' is archived and cannot be used for new web work."
+            )
 
     def _materialize_filesystem_profile(
         self,
@@ -608,6 +738,35 @@ class TrustedProfileAuthoringRepository:
                 }
             },
         }
+
+    def _clone_bundle_payload_for_profile(
+        self,
+        bundle_payload: dict[str, object],
+        *,
+        profile_name: str,
+        display_name: str,
+        description: str,
+        version_label: str | None,
+    ) -> dict[str, object]:
+        """Deep-copy one published bundle payload and rewrite logical profile traceability metadata."""
+        cloned_payload = json.loads(json.dumps(bundle_payload, ensure_ascii=True))
+        if not isinstance(cloned_payload, dict):
+            raise ValueError("Trusted profile bundle payload must be a JSON object.")
+
+        traceability = cloned_payload.get("traceability")
+        if not isinstance(traceability, dict):
+            traceability = {}
+            cloned_payload["traceability"] = traceability
+        trusted_profile_trace = traceability.get("trusted_profile")
+        if not isinstance(trusted_profile_trace, dict):
+            trusted_profile_trace = {}
+            traceability["trusted_profile"] = trusted_profile_trace
+
+        trusted_profile_trace["profile_name"] = profile_name
+        trusted_profile_trace["display_name"] = display_name
+        trusted_profile_trace["description"] = description
+        trusted_profile_trace["version"] = str(version_label or "")
+        return cloned_payload
 
     def _build_hash_payload(
         self,
@@ -775,3 +934,16 @@ class TrustedProfileAuthoringRepository:
     ) -> str:
         """Build a deterministic trusted-profile version id."""
         return f"trusted-profile-version:{organization_id}:{profile_name}:v{version_number}"
+
+    def _build_trusted_profile_id(
+        self,
+        *,
+        organization_id: str,
+        profile_name: str,
+    ) -> str:
+        """Build a deterministic logical trusted-profile id."""
+        return f"trusted-profile:{organization_id}:{profile_name}"
+
+    def _normalize_profile_name(self, profile_name: str) -> str:
+        """Validate and normalize a trusted-profile key using the shared profile-name rules."""
+        return self._profile_manager.validate_profile_name(profile_name)

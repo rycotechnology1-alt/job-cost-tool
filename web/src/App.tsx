@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 
 import {
+  ApiRequestError,
+  archiveTrustedProfile,
   appendReviewEdits,
+  createTrustedProfile,
   createOrOpenProfileDraft,
   createExportArtifact,
   createProfileSyncExport,
@@ -14,6 +17,7 @@ import {
   fetchProcessingRun,
   openReviewSession,
   publishProfileDraft,
+  unarchiveTrustedProfile,
   updateDraftClassifications,
   updateDraftDefaultOmit,
   updateDraftEquipmentMappings,
@@ -23,6 +27,7 @@ import {
 } from "./api/client";
 import type {
   ClassificationSlotRow,
+  CreateTrustedProfileRequest,
   DefaultOmitRuleRow,
   DraftEditorStateResponse,
   EquipmentMappingRow,
@@ -41,6 +46,21 @@ import type {
 import { ProfileSettingsWorkspace } from "./components/ProfileSettingsWorkspace";
 import { ReviewWorkspace, type ReviewEditFormValue, type WorkspaceRow } from "./components/ReviewWorkspace";
 import { UploadRunPanel } from "./components/UploadRunPanel";
+
+type DraftSyncReason =
+  | "reset"
+  | "profileSwitch"
+  | "open"
+  | "defaultOmit"
+  | "laborMappings"
+  | "equipmentMappings"
+  | "classifications"
+  | "rates";
+
+interface DraftSyncToken {
+  reason: DraftSyncReason;
+  sequence: number;
+}
 
 const emptyEditForm: ReviewEditFormValue = {
   vendorNameNormalized: "",
@@ -81,6 +101,7 @@ function buildEditFormFromRow(row: WorkspaceRow): ReviewEditFormValue {
 export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<"review" | "settings">("review");
   const [trustedProfiles, setTrustedProfiles] = useState<TrustedProfileResponse[]>([]);
+  const [archivedTrustedProfiles, setArchivedTrustedProfiles] = useState<TrustedProfileResponse[]>([]);
   const [selectedTrustedProfileName, setSelectedTrustedProfileName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [upload, setUpload] = useState<SourceUploadResponse | null>(null);
@@ -88,6 +109,7 @@ export default function App() {
   const [reviewSession, setReviewSession] = useState<ReviewSessionResponse | null>(null);
   const [profileDetail, setProfileDetail] = useState<PublishedProfileDetailResponse | null>(null);
   const [draftState, setDraftState] = useState<DraftEditorStateResponse | null>(null);
+  const [draftSyncToken, setDraftSyncToken] = useState<DraftSyncToken>({ reason: "reset", sequence: 0 });
   const [selectedRecordKey, setSelectedRecordKey] = useState("");
   const [editForm, setEditForm] = useState<ReviewEditFormValue>(emptyEditForm);
   const [exportArtifact, setExportArtifact] = useState<ExportArtifactResponse | null>(null);
@@ -102,8 +124,73 @@ export default function App() {
 
   const selectedTrustedProfile =
     trustedProfiles.find((profile) => profile.profile_name === selectedTrustedProfileName) ?? null;
+  const selectedTrustedProfileId = selectedTrustedProfile?.trusted_profile_id ?? "";
   const rows = buildWorkspaceRows(runDetail, reviewSession);
   const selectedRow = rows.find((row) => row.recordKey === selectedRecordKey) ?? rows[0] ?? null;
+
+  function advanceDraftSync(reason: DraftSyncReason) {
+    setDraftSyncToken((current) => ({
+      reason,
+      sequence: current.sequence + 1,
+    }));
+  }
+
+  async function loadSettingsProfileDetail(trustedProfileId: string): Promise<PublishedProfileDetailResponse> {
+    return fetchProfileDetail(trustedProfileId);
+  }
+
+  function applyTrustedProfiles(profiles: TrustedProfileResponse[], preferredProfileName?: string) {
+    setTrustedProfiles(profiles);
+    setSelectedTrustedProfileName((current) => {
+      if (preferredProfileName && profiles.some((profile) => profile.profile_name === preferredProfileName)) {
+        return preferredProfileName;
+      }
+      const existingMatch = profiles.some((profile) => profile.profile_name === current);
+      if (existingMatch) {
+        return current;
+      }
+      const activeProfile = profiles.find((profile) => profile.is_active_profile);
+      return activeProfile?.profile_name ?? profiles[0]?.profile_name ?? "";
+    });
+  }
+
+  function patchTrustedProfileSummary(
+    profileName: string,
+    patch: Partial<TrustedProfileResponse>,
+  ) {
+    setTrustedProfiles((current) =>
+      current.map((profile) =>
+        profile.profile_name === profileName
+          ? {
+              ...profile,
+              ...patch,
+            }
+          : profile,
+      ),
+    );
+  }
+
+  function applyArchivedTrustedProfiles(profiles: TrustedProfileResponse[]) {
+    setArchivedTrustedProfiles(profiles.filter((profile) => Boolean(profile.archived_at)));
+  }
+
+  async function reloadTrustedProfiles(preferredProfileName?: string): Promise<TrustedProfileResponse[]> {
+    const profiles = await fetchTrustedProfiles();
+    applyTrustedProfiles(profiles, preferredProfileName);
+    return profiles;
+  }
+
+  async function reloadArchivedTrustedProfiles(): Promise<TrustedProfileResponse[]> {
+    const profiles = await fetchTrustedProfiles(true);
+    applyArchivedTrustedProfiles(profiles);
+    return profiles;
+  }
+
+  async function reloadSettingsTrustedProfiles(preferredProfileName?: string): Promise<TrustedProfileResponse[]> {
+    const profiles = await reloadTrustedProfiles(preferredProfileName);
+    await reloadArchivedTrustedProfiles();
+    return profiles;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -114,15 +201,7 @@ export default function App() {
         if (cancelled) {
           return;
         }
-        setTrustedProfiles(profiles);
-        setSelectedTrustedProfileName((current) => {
-          const existingMatch = profiles.some((profile) => profile.profile_name === current);
-          if (existingMatch) {
-            return current;
-          }
-          const activeProfile = profiles.find((profile) => profile.is_active_profile);
-          return activeProfile?.profile_name ?? profiles[0]?.profile_name ?? "";
-        });
+        applyTrustedProfiles(profiles);
         if (profiles.length > 0) {
           setStatusMessage("Trusted profiles loaded.");
         } else {
@@ -147,9 +226,37 @@ export default function App() {
       return;
     }
 
+    let cancelled = false;
+
+    async function loadArchivedProfiles() {
+      try {
+        const profiles = await fetchTrustedProfiles(true);
+        if (cancelled) {
+          return;
+        }
+        applyArchivedTrustedProfiles(profiles);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setErrorMessage(error instanceof Error ? error.message : "Failed to load archived trusted profiles.");
+      }
+    }
+
+    void loadArchivedProfiles();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace]);
+
+  useEffect(() => {
+    if (activeWorkspace !== "settings") {
+      return;
+    }
+
     setDraftState(null);
     setLastDownloadedProfileSyncFilename("");
-    if (!selectedTrustedProfile) {
+    if (!selectedTrustedProfile || !selectedTrustedProfileId) {
       setProfileDetail(null);
       return;
     }
@@ -157,15 +264,23 @@ export default function App() {
     let cancelled = false;
     setProfileDetail(null);
     setErrorMessage("");
-    const trustedProfileId = selectedTrustedProfile.trusted_profile_id;
+    const trustedProfileId = selectedTrustedProfileId;
+    const selectedProfileName = selectedTrustedProfile.profile_name;
 
     async function loadProfileDetail() {
       try {
-        const detail = await fetchProfileDetail(trustedProfileId);
+        if (cancelled) {
+          return;
+        }
+        const detail = await loadSettingsProfileDetail(trustedProfileId);
         if (cancelled) {
           return;
         }
         setProfileDetail(detail);
+        patchTrustedProfileSummary(selectedProfileName, {
+          current_published_version_number: detail.current_published_version.version_number,
+          has_open_draft: Boolean(detail.open_draft_id),
+        });
         setSettingsStatusMessage(
           `Inspecting published version v${detail.current_published_version.version_number} for ${detail.display_name}.`,
         );
@@ -181,18 +296,61 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeWorkspace, selectedTrustedProfile]);
+  }, [activeWorkspace, selectedTrustedProfileId]);
 
-  async function runAction(actionLabel: string, action: () => Promise<void>) {
+  async function runAction(
+    actionLabel: string,
+    action: () => Promise<void>,
+    options?: { rethrow?: boolean },
+  ) {
     setBusyAction(actionLabel);
     setErrorMessage("");
     try {
       await action();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Unexpected browser workflow error.");
+      const normalizedError = error instanceof Error ? error : new Error("Unexpected browser workflow error.");
+      setErrorMessage(normalizedError.message);
+      if (options?.rethrow) {
+        throw normalizedError;
+      }
     } finally {
       setBusyAction(null);
     }
+  }
+
+  async function handleReloadSettingsProfileDetail() {
+    await runAction("Reloading published profile detail...", async () => {
+      if (!selectedTrustedProfile) {
+        throw new Error("Choose a trusted profile before reloading profile settings.");
+      }
+      const detail = await loadSettingsProfileDetail(selectedTrustedProfile.trusted_profile_id);
+      setProfileDetail(detail);
+      patchTrustedProfileSummary(selectedTrustedProfile.profile_name, {
+        current_published_version_number: detail.current_published_version.version_number,
+        has_open_draft: Boolean(detail.open_draft_id),
+      });
+      setSettingsStatusMessage(
+        `Inspecting published version v${detail.current_published_version.version_number} for ${detail.display_name}.`,
+      );
+    });
+  }
+
+  function handleSettingsTrustedProfileNameChange(nextProfileName: string) {
+    if (!nextProfileName || nextProfileName === selectedTrustedProfileName) {
+      return;
+    }
+    const nextProfile =
+      trustedProfiles.find((profile) => profile.profile_name === nextProfileName) ?? null;
+    setSelectedTrustedProfileName(nextProfileName);
+    setProfileDetail(null);
+    setDraftState(null);
+    setLastDownloadedProfileSyncFilename("");
+    advanceDraftSync("profileSwitch");
+    setSettingsStatusMessage(
+      nextProfile
+        ? `Loading published settings for ${nextProfile.display_name}.`
+        : "Loading trusted profile settings.",
+    );
   }
 
   function selectRow(nextRows: WorkspaceRow[], recordKey: string | null) {
@@ -306,10 +464,23 @@ export default function App() {
         throw new Error("Choose a trusted profile before opening a draft.");
       }
 
-      const draft = profileDetail?.open_draft_id
-        ? await fetchProfileDraft(profileDetail.open_draft_id)
-        : await createOrOpenProfileDraft(selectedTrustedProfile.trusted_profile_id);
+      let usedFallbackCreate = false;
+      let draft: DraftEditorStateResponse;
+      if (profileDetail?.open_draft_id) {
+        try {
+          draft = await fetchProfileDraft(profileDetail.open_draft_id);
+        } catch (error) {
+          if (!(error instanceof ApiRequestError) || error.status !== 404) {
+            throw error;
+          }
+          draft = await createOrOpenProfileDraft(selectedTrustedProfile.trusted_profile_id);
+          usedFallbackCreate = true;
+        }
+      } else {
+        draft = await createOrOpenProfileDraft(selectedTrustedProfile.trusted_profile_id);
+      }
       setDraftState(draft);
+      advanceDraftSync("open");
       setProfileDetail((current) =>
         current
           ? {
@@ -318,7 +489,14 @@ export default function App() {
             }
           : current,
       );
-      setSettingsStatusMessage(`Draft ${draft.trusted_profile_draft_id} is ready for editing.`);
+      patchTrustedProfileSummary(selectedTrustedProfile.profile_name, {
+        has_open_draft: true,
+      });
+      setSettingsStatusMessage(
+        usedFallbackCreate
+          ? `Recovered from a missing current draft link and reopened draft ${draft.trusted_profile_draft_id}.`
+          : `Draft ${draft.trusted_profile_draft_id} is ready for editing.`,
+      );
     });
   }
 
@@ -329,6 +507,7 @@ export default function App() {
       }
       const nextDraft = await updateDraftDefaultOmit(draftState.trusted_profile_draft_id, rowsToSave);
       setDraftState(nextDraft);
+      advanceDraftSync("defaultOmit");
       setSettingsStatusMessage("Saved default omit rules to the current draft.");
     });
   }
@@ -340,6 +519,7 @@ export default function App() {
       }
       const nextDraft = await updateDraftLaborMappings(draftState.trusted_profile_draft_id, rowsToSave);
       setDraftState(nextDraft);
+      advanceDraftSync("laborMappings");
       setSettingsStatusMessage("Saved labor mappings to the current draft.");
     });
   }
@@ -351,6 +531,7 @@ export default function App() {
       }
       const nextDraft = await updateDraftEquipmentMappings(draftState.trusted_profile_draft_id, rowsToSave);
       setDraftState(nextDraft);
+      advanceDraftSync("equipmentMappings");
       setSettingsStatusMessage("Saved equipment mappings to the current draft.");
     });
   }
@@ -369,6 +550,7 @@ export default function App() {
         equipmentSlots,
       );
       setDraftState(nextDraft);
+      advanceDraftSync("classifications");
       setSettingsStatusMessage("Saved labor and equipment classifications to the current draft.");
     });
   }
@@ -380,6 +562,7 @@ export default function App() {
       }
       const nextDraft = await updateDraftRates(draftState.trusted_profile_draft_id, laborRates, equipmentRates);
       setDraftState(nextDraft);
+      advanceDraftSync("rates");
       setSettingsStatusMessage("Saved rates to the current draft.");
     });
   }
@@ -391,10 +574,30 @@ export default function App() {
       }
 
       const publishedDetail = await publishProfileDraft(draftState.trusted_profile_draft_id);
-      setProfileDetail(publishedDetail);
       setDraftState(null);
+      advanceDraftSync("reset");
+
+      let refreshedDetail = publishedDetail;
+      let refreshConfirmed = false;
+      if (selectedTrustedProfile) {
+        try {
+          refreshedDetail = await fetchProfileDetail(selectedTrustedProfile.trusted_profile_id);
+          refreshConfirmed = true;
+        } catch {
+          refreshConfirmed = false;
+        }
+      }
+      setProfileDetail(refreshedDetail);
+      if (selectedTrustedProfile) {
+        patchTrustedProfileSummary(selectedTrustedProfile.profile_name, {
+          current_published_version_number: refreshedDetail.current_published_version.version_number,
+          has_open_draft: false,
+        });
+      }
       setSettingsStatusMessage(
-        `Published version v${publishedDetail.current_published_version.version_number} for ${publishedDetail.display_name}.`,
+        refreshConfirmed
+          ? `Published version v${refreshedDetail.current_published_version.version_number} for ${refreshedDetail.display_name} and reloaded the published summary.`
+          : `Published version v${publishedDetail.current_published_version.version_number} for ${publishedDetail.display_name}. The published summary is showing the publish response until the next reload.`,
       );
     });
   }
@@ -412,6 +615,64 @@ export default function App() {
       setLastDownloadedProfileSyncFilename(filename);
       setSettingsStatusMessage(
         `Downloaded ${filename} for manual desktop sync from published version v${syncExport.version_number}.`,
+      );
+    });
+  }
+
+  async function handleCreateTrustedProfile(request: CreateTrustedProfileRequest) {
+    await runAction("Creating trusted profile...", async () => {
+      const seedProfile = selectedTrustedProfile;
+      if (!seedProfile) {
+        throw new Error("Choose a seed trusted profile before creating another profile.");
+      }
+      const seedVersionNumber =
+        profileDetail?.current_published_version.version_number ??
+        seedProfile.current_published_version_number ??
+        1;
+
+      const createdDetail = await createTrustedProfile({
+        ...request,
+        seed_trusted_profile_id: seedProfile.trusted_profile_id,
+      });
+      await reloadSettingsTrustedProfiles(createdDetail.profile_name);
+      setSelectedTrustedProfileName(createdDetail.profile_name);
+      setDraftState(null);
+      setProfileDetail(createdDetail);
+      setLastDownloadedProfileSyncFilename("");
+      advanceDraftSync("reset");
+      setSettingsStatusMessage(
+        `Created ${createdDetail.display_name} from published version v${seedVersionNumber} of ${seedProfile.display_name}. Open a draft when you are ready to edit it.`,
+      );
+    }, { rethrow: true });
+  }
+
+  async function handleArchiveTrustedProfile() {
+    await runAction("Archiving trusted profile...", async () => {
+      if (!selectedTrustedProfile || !profileDetail) {
+        throw new Error("Load a trusted profile before archiving it.");
+      }
+      await archiveTrustedProfile(selectedTrustedProfile.trusted_profile_id);
+      const archivedDisplayName = profileDetail.display_name;
+      const profiles = await reloadSettingsTrustedProfiles();
+      const fallbackProfileName =
+        profiles.find((profile) => profile.is_active_profile)?.profile_name ?? profiles[0]?.profile_name ?? "";
+      setSelectedTrustedProfileName(fallbackProfileName);
+      setDraftState(null);
+      setProfileDetail(null);
+      setLastDownloadedProfileSyncFilename("");
+      advanceDraftSync("reset");
+      setSettingsStatusMessage(
+        `Archived ${archivedDisplayName}. Archived profiles stay in lineage history but are removed from active web selectors.`,
+      );
+    });
+  }
+
+  async function handleUnarchiveTrustedProfile(trustedProfileId: string, displayName: string) {
+    await runAction("Restoring trusted profile...", async () => {
+      await unarchiveTrustedProfile(trustedProfileId);
+      await reloadSettingsTrustedProfiles();
+      setSettingsStatusMessage(
+        `Restored ${displayName} to the active trusted profile lists. It remains non-processable until you explicitly select it for future review work.`,
       );
     });
   }
@@ -512,12 +773,16 @@ export default function App() {
       ) : (
         <ProfileSettingsWorkspace
           trustedProfiles={trustedProfiles}
+          archivedTrustedProfiles={archivedTrustedProfiles}
           selectedTrustedProfileName={selectedTrustedProfileName}
           selectedTrustedProfile={selectedTrustedProfile}
           profileDetail={profileDetail}
           draftState={draftState}
+          draftSyncToken={draftSyncToken}
           busy={busy}
-          onTrustedProfileNameChange={setSelectedTrustedProfileName}
+          settingsErrorMessage={errorMessage}
+          onTrustedProfileNameChange={handleSettingsTrustedProfileNameChange}
+          onReloadProfileDetail={handleReloadSettingsProfileDetail}
           onOpenDraft={handleOpenSettingsDraft}
           onSaveDefaultOmit={handleSaveDefaultOmit}
           onSaveLaborMappings={handleSaveLaborMappings}
@@ -525,6 +790,9 @@ export default function App() {
           onSaveClassifications={handleSaveClassifications}
           onSaveRates={handleSaveRates}
           onPublishDraft={handlePublishDraft}
+          onCreateTrustedProfile={handleCreateTrustedProfile}
+          onArchiveTrustedProfile={handleArchiveTrustedProfile}
+          onUnarchiveTrustedProfile={handleUnarchiveTrustedProfile}
           onCreateDesktopSyncExport={handleCreateDesktopSyncExport}
           lastDownloadedProfileSyncFilename={lastDownloadedProfileSyncFilename}
         />

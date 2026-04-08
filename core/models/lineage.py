@@ -46,6 +46,7 @@ class TrustedProfile:
     description: str = ""
     version_label: str | None = None
     current_published_version_id: str | None = None
+    archived_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

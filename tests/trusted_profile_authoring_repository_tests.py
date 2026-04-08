@@ -191,6 +191,100 @@ class TrustedProfileAuthoringRepositoryTests(unittest.TestCase):
             "Default Journeyman",
         )
 
+    def test_create_trusted_profile_from_published_clone_creates_second_profile_with_initial_version(self) -> None:
+        self.repository.bootstrap_filesystem_profiles()
+        default_profile = next(
+            profile for profile in self.repository.list_trusted_profiles() if profile.profile_name == "default"
+        )
+        default_version = self.repository.get_current_published_version(default_profile.trusted_profile_id)
+
+        cloned_profile, cloned_version = self.repository.create_trusted_profile_from_published_clone(
+            profile_name="field-team",
+            display_name="Field Team",
+            description="Second trusted profile",
+            seed_trusted_profile_id=default_profile.trusted_profile_id,
+        )
+        cloned_draft = self.repository.create_open_draft(cloned_profile.trusted_profile_id)
+
+        profiles = {profile.profile_name: profile for profile in self.repository.list_trusted_profiles()}
+
+        self.assertIn("field-team", profiles)
+        self.assertEqual(cloned_profile.source_kind, "published_clone")
+        self.assertEqual(cloned_version.version_number, 1)
+        self.assertEqual(cloned_version.base_trusted_profile_version_id, default_version.trusted_profile_version_id)
+        self.assertEqual(cloned_profile.current_published_version_id, cloned_version.trusted_profile_version_id)
+        self.assertEqual(
+            cloned_version.bundle_payload["traceability"]["trusted_profile"]["profile_name"],
+            "field-team",
+        )
+        self.assertEqual(
+            cloned_version.bundle_payload["traceability"]["trusted_profile"]["display_name"],
+            "Field Team",
+        )
+        self.assertEqual(
+            cloned_version.bundle_payload["traceability"]["trusted_profile"]["description"],
+            "Second trusted profile",
+        )
+        self.assertEqual(
+            cloned_version.bundle_payload["behavioral_bundle"]["labor_mapping"]["raw_mappings"]["103/J"],
+            "Default Journeyman",
+        )
+        self.assertEqual(cloned_draft.base_trusted_profile_version_id, cloned_version.trusted_profile_version_id)
+        self.assertEqual(
+            self.repository.get_current_published_version(default_profile.trusted_profile_id).trusted_profile_version_id,
+            default_version.trusted_profile_version_id,
+        )
+
+    def test_archive_trusted_profile_hides_user_created_profile_from_active_list_without_deleting_versions(self) -> None:
+        self.repository.bootstrap_filesystem_profiles()
+        default_profile = next(
+            profile for profile in self.repository.list_trusted_profiles() if profile.profile_name == "default"
+        )
+        cloned_profile, cloned_version = self.repository.create_trusted_profile_from_published_clone(
+            profile_name="field-team",
+            display_name="Field Team",
+            description="Second trusted profile",
+            seed_trusted_profile_id=default_profile.trusted_profile_id,
+        )
+
+        archived_profile = self.repository.archive_trusted_profile(cloned_profile.trusted_profile_id)
+        active_profiles = {profile.profile_name for profile in self.repository.list_trusted_profiles()}
+        all_profiles = {profile.profile_name for profile in self.repository.list_trusted_profiles(include_archived=True)}
+
+        self.assertIsNotNone(archived_profile.archived_at)
+        self.assertNotIn("field-team", active_profiles)
+        self.assertIn("field-team", all_profiles)
+        self.assertEqual(
+            self.repository.get_current_published_version(cloned_profile.trusted_profile_id).trusted_profile_version_id,
+            cloned_version.trusted_profile_version_id,
+        )
+        with self.assertRaises(ValueError):
+            self.repository.resolve_current_published_profile("field-team")
+
+    def test_unarchive_trusted_profile_restores_user_created_profile_to_active_list(self) -> None:
+        self.repository.bootstrap_filesystem_profiles()
+        default_profile = next(
+            profile for profile in self.repository.list_trusted_profiles() if profile.profile_name == "default"
+        )
+        cloned_profile, cloned_version = self.repository.create_trusted_profile_from_published_clone(
+            profile_name="field-team",
+            display_name="Field Team",
+            description="Second trusted profile",
+            seed_trusted_profile_id=default_profile.trusted_profile_id,
+        )
+
+        self.repository.archive_trusted_profile(cloned_profile.trusted_profile_id)
+        restored_profile = self.repository.unarchive_trusted_profile(cloned_profile.trusted_profile_id)
+
+        active_profiles = {profile.profile_name for profile in self.repository.list_trusted_profiles()}
+
+        self.assertIsNone(restored_profile.archived_at)
+        self.assertIn("field-team", active_profiles)
+        self.assertEqual(
+            self.repository.get_current_published_version(cloned_profile.trusted_profile_id).trusted_profile_version_id,
+            cloned_version.trusted_profile_version_id,
+        )
+
     def test_resolve_current_published_profile_reuses_persisted_version_without_refreshing_from_filesystem(self) -> None:
         self.repository.bootstrap_filesystem_profiles()
         initial_resolution = self.repository.resolve_current_published_profile("default")

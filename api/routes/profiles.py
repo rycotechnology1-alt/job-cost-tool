@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from fastapi.responses import FileResponse
 
 from api.dependencies import ApiRuntime, get_runtime
 from api.errors import to_http_exception
 from api.schemas.profile_authoring import (
     ClassificationsPatchRequest,
+    CreateTrustedProfileRequest,
     DefaultOmitPatchRequest,
     DraftEditorStateResponse,
     EquipmentMappingsPatchRequest,
@@ -30,6 +31,24 @@ profile_drafts_router = APIRouter(prefix="/api/profile-drafts", tags=["profile-d
 profile_sync_exports_router = APIRouter(prefix="/api/profile-sync-exports", tags=["profile-sync-exports"])
 
 
+@profiles_router.post("", response_model=PublishedProfileDetailResponse, status_code=status.HTTP_201_CREATED)
+def create_trusted_profile(
+    request: CreateTrustedProfileRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> PublishedProfileDetailResponse:
+    """Create one new trusted profile seeded from an existing published profile."""
+    try:
+        detail = runtime.profile_authoring_service.create_trusted_profile(
+            profile_name=request.profile_name,
+            display_name=request.display_name,
+            description=request.description,
+            seed_trusted_profile_id=request.seed_trusted_profile_id,
+        )
+        return to_published_profile_detail_response(detail)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
 @profiles_router.get("/{trusted_profile_id}", response_model=PublishedProfileDetailResponse)
 def get_profile_detail(
     trusted_profile_id: str,
@@ -39,6 +58,32 @@ def get_profile_detail(
     try:
         detail = runtime.profile_authoring_service.get_profile_detail(trusted_profile_id)
         return to_published_profile_detail_response(detail)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profiles_router.post("/{trusted_profile_id}/archive", status_code=status.HTTP_204_NO_CONTENT)
+def archive_trusted_profile(
+    trusted_profile_id: str,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> Response:
+    """Archive one user-created trusted profile without deleting published lineage."""
+    try:
+        runtime.profile_authoring_service.archive_trusted_profile(trusted_profile_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profiles_router.post("/{trusted_profile_id}/unarchive", status_code=status.HTTP_204_NO_CONTENT)
+def unarchive_trusted_profile(
+    trusted_profile_id: str,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> Response:
+    """Restore one archived user-created trusted profile to the active settings lists."""
+    try:
+        runtime.profile_authoring_service.unarchive_trusted_profile(trusted_profile_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception as exc:  # pragma: no cover - exercised via API tests
         raise to_http_exception(exc) from exc
 
