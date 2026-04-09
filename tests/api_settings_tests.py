@@ -17,6 +17,7 @@ class ApiSettingsTests(unittest.TestCase):
         self.assertEqual(settings.database_path, str(Path("runtime/api") / "lineage.db"))
         self.assertEqual(settings.upload_root, Path("runtime/api/uploads"))
         self.assertEqual(settings.export_root, Path("runtime/api/exports"))
+        self.assertEqual(settings.upload_retention_hours, 24)
         self.assertEqual(settings.engine_version, "dev-local")
 
     def test_with_overrides_preserves_simple_explicit_runtime_values(self) -> None:
@@ -24,12 +25,14 @@ class ApiSettingsTests(unittest.TestCase):
             database_path=":memory:",
             upload_root="tests/runtime/uploads",
             export_root="tests/runtime/exports",
+            upload_retention_hours=48,
             engine_version="engine-test",
         )
 
         self.assertEqual(settings.database_path, ":memory:")
         self.assertEqual(settings.upload_root, Path("tests/runtime/uploads"))
         self.assertEqual(settings.export_root, Path("tests/runtime/exports"))
+        self.assertEqual(settings.upload_retention_hours, 48)
         self.assertEqual(settings.engine_version, "engine-test")
 
 

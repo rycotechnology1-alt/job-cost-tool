@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -17,6 +18,7 @@ class StoredUpload:
     file_size_bytes: int
     storage_ref: str
     file_path: Path
+    created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +46,9 @@ class RuntimeStorage(Protocol):
 
     def get_upload(self, upload_id: str) -> StoredUpload:
         """Resolve one uploaded source document by upload id."""
+
+    def cleanup_expired_uploads(self) -> int:
+        """Delete expired uploaded source documents and return the number removed."""
 
     def save_export_artifact(
         self,

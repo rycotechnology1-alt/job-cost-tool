@@ -28,6 +28,8 @@ interface ReviewWorkspaceProps {
   editForm: ReviewEditFormValue;
   exportArtifact: ExportArtifactResponse | null;
   lastDownloadedFilename: string;
+  exportDisabled: boolean;
+  exportDisabledMessage: string;
   busy: boolean;
   onSelectRow: (recordKey: string) => void;
   onEditFormChange: (value: ReviewEditFormValue) => void;
@@ -69,6 +71,28 @@ function buildAttentionSummary(row: WorkspaceRow): string {
   return "Ready";
 }
 
+function buildSelectChoices(options: string[], currentValue: string): Array<{ value: string; label: string; disabled?: boolean }> {
+  const trimmedCurrent = currentValue.trim();
+  const hasCurrentValue = trimmedCurrent.length > 0;
+  const normalizedOptions = new Set(options.map((option) => option.trim().toLocaleLowerCase()));
+  const choices: Array<{ value: string; label: string; disabled?: boolean }> = [
+    { value: "", label: "No override" },
+  ];
+
+  if (hasCurrentValue && !normalizedOptions.has(trimmedCurrent.toLocaleLowerCase())) {
+    choices.push({
+      value: trimmedCurrent,
+      label: `${trimmedCurrent} (legacy invalid value)`,
+      disabled: true,
+    });
+  }
+
+  for (const option of options) {
+    choices.push({ value: option, label: option });
+  }
+  return choices;
+}
+
 export function ReviewWorkspace({
   runDetail,
   reviewSession,
@@ -77,6 +101,8 @@ export function ReviewWorkspace({
   editForm,
   exportArtifact,
   lastDownloadedFilename,
+  exportDisabled,
+  exportDisabledMessage,
   busy,
   onSelectRow,
   onEditFormChange,
@@ -86,6 +112,24 @@ export function ReviewWorkspace({
   const currentBlockers = reviewSession?.blocking_issues ?? [];
   const aggregateBlockers = runDetail?.aggregate_blockers ?? [];
   const exportRevision = reviewSession?.current_revision ?? 0;
+  const laborChoices = buildSelectChoices(
+    reviewSession?.labor_classification_options ?? [],
+    editForm.recapLaborClassification,
+  );
+  const equipmentChoices = buildSelectChoices(
+    reviewSession?.equipment_classification_options ?? [],
+    editForm.equipmentCategory,
+  );
+  const hasInvalidLaborSelection =
+    editForm.recapLaborClassification.trim().length > 0 &&
+    !reviewSession?.labor_classification_options.some(
+      (option) => option.trim().toLocaleLowerCase() === editForm.recapLaborClassification.trim().toLocaleLowerCase(),
+    );
+  const hasInvalidEquipmentSelection =
+    editForm.equipmentCategory.trim().length > 0 &&
+    !reviewSession?.equipment_classification_options.some(
+      (option) => option.trim().toLocaleLowerCase() === editForm.equipmentCategory.trim().toLocaleLowerCase(),
+    );
 
   return (
     <section className="workspace-shell">
@@ -125,6 +169,12 @@ export function ReviewWorkspace({
       ) : (
         <div className="workspace-grid">
           <div className="workspace-main panel">
+            {exportDisabledMessage ? (
+              <div className="banner warning" role="status">
+                <strong>Review context is stale for export.</strong>
+                <p>{exportDisabledMessage}</p>
+              </div>
+            ) : null}
             {currentBlockers.length > 0 ? (
               <div className="banner warning">
                 <strong>Current blockers</strong>
@@ -304,6 +354,10 @@ export function ReviewWorkspace({
 
                   <div className="edit-card">
                     <h3>Edit selected row</h3>
+                    <p className="muted">
+                      Labor and equipment edits must use the target classifications captured in this run&apos;s trusted
+                      profile snapshot.
+                    </p>
                     <div className="form-grid">
                       <label className="field">
                         <span>Vendor</span>
@@ -320,7 +374,7 @@ export function ReviewWorkspace({
                       </label>
                       <label className="field">
                         <span>Labor class</span>
-                        <input
+                        <select
                           value={editForm.recapLaborClassification}
                           onChange={(event) =>
                             onEditFormChange({
@@ -328,12 +382,23 @@ export function ReviewWorkspace({
                               recapLaborClassification: event.target.value,
                             })
                           }
-                          placeholder="Recap labor class"
-                        />
+                        >
+                          {laborChoices.map((choice) => (
+                            <option key={`labor-${choice.value || "blank"}`} value={choice.value} disabled={choice.disabled}>
+                              {choice.label}
+                            </option>
+                          ))}
+                        </select>
+                        {hasInvalidLaborSelection ? (
+                          <span className="field-error">
+                            This review currently contains a legacy labor classification that is outside the run&apos;s
+                            trusted profile list. Choose a configured labor classification or leave it blank.
+                          </span>
+                        ) : null}
                       </label>
                       <label className="field">
                         <span>Equipment class</span>
-                        <input
+                        <select
                           value={editForm.equipmentCategory}
                           onChange={(event) =>
                             onEditFormChange({
@@ -341,8 +406,23 @@ export function ReviewWorkspace({
                               equipmentCategory: event.target.value,
                             })
                           }
-                          placeholder="Equipment class"
-                        />
+                        >
+                          {equipmentChoices.map((choice) => (
+                            <option
+                              key={`equipment-${choice.value || "blank"}`}
+                              value={choice.value}
+                              disabled={choice.disabled}
+                            >
+                              {choice.label}
+                            </option>
+                          ))}
+                        </select>
+                        {hasInvalidEquipmentSelection ? (
+                          <span className="field-error">
+                            This review currently contains a legacy equipment classification that is outside the run&apos;s
+                            trusted profile list. Choose a configured equipment classification or leave it blank.
+                          </span>
+                        ) : null}
                       </label>
                       <label className="field">
                         <span>Omission</span>
@@ -371,6 +451,9 @@ export function ReviewWorkspace({
                   <div className="summary-card export-card">
                     <strong>Export workbook</strong>
                     <p>Downloads the current review revision and keeps exact-revision lineage under the hood.</p>
+                    {exportDisabledMessage ? (
+                      <p className="field-error">{exportDisabledMessage}</p>
+                    ) : null}
                     <dl className="summary-list compact">
                       <div>
                         <dt>Current revision</dt>
@@ -386,7 +469,7 @@ export function ReviewWorkspace({
                       </div>
                     </dl>
                     <div className="actions">
-                      <button type="button" onClick={onExportAndDownload} disabled={busy}>
+                      <button type="button" onClick={onExportAndDownload} disabled={busy || exportDisabled}>
                         Export and download workbook
                       </button>
                     </div>

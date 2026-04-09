@@ -103,6 +103,19 @@ class ReviewSessionServiceTests(unittest.TestCase):
         self.assertEqual(reopened_state.session_revision, 1)
         self.assertEqual(reopened_state.records[0].vendor_name_normalized, "Vendor B")
 
+    def test_review_session_state_exposes_snapshot_classification_options(self) -> None:
+        processing_result = self._create_processing_run()
+
+        state = self.review_session_service.open_review_session(
+            processing_result.processing_run.processing_run_id,
+        )
+
+        self.assertEqual(
+            state.labor_classification_options,
+            ["103 General FM", "103 Foreman", "103 Journeyman"],
+        )
+        self.assertEqual(state.equipment_classification_options, ["Pick-up Truck"])
+
     def test_export_uses_one_exact_session_revision_even_after_later_edits_exist(self) -> None:
         processing_result = self._create_processing_run()
         processing_run_id = processing_result.processing_run.processing_run_id

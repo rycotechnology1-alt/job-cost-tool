@@ -37,5 +37,7 @@ class ReviewSessionResponse(ApiModel):
     current_revision: int
     session_revision: int
     blocking_issues: list[str]
+    labor_classification_options: list[str]
+    equipment_classification_options: list[str]
     historical_export_status: HistoricalExportStatusResponse
     records: list[ReviewRecordResponse]

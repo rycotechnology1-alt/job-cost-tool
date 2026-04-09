@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException, status
 
+from infrastructure.storage.local_runtime_file_store import ExpiredUploadError
 from services.profile_authoring_errors import ProfileAuthoringConflictError
 from services.review_session_service import HistoricalExportUnavailableError
 
@@ -14,6 +15,8 @@ def to_http_exception(exc: Exception) -> HTTPException:
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_clean_message(exc))
     if isinstance(exc, ProfileAuthoringConflictError):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.to_api_detail())
+    if isinstance(exc, ExpiredUploadError):
+        return HTTPException(status_code=status.HTTP_410_GONE, detail=_clean_message(exc))
     if isinstance(exc, KeyError):
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_clean_message(exc))
     if isinstance(exc, FileNotFoundError):

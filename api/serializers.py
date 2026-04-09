@@ -106,6 +106,8 @@ def to_review_session_response(state: ReviewSessionState) -> ReviewSessionRespon
         current_revision=state.review_session.current_revision,
         session_revision=state.session_revision,
         blocking_issues=list(state.blocking_issues),
+        labor_classification_options=list(state.labor_classification_options),
+        equipment_classification_options=list(state.equipment_classification_options),
         historical_export_status=HistoricalExportStatusResponse(
             status_code=state.historical_export_status.status_code,
             is_reproducible=state.historical_export_status.is_reproducible,

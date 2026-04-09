@@ -7,7 +7,7 @@ import json
 import shutil
 import unittest
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -35,6 +35,7 @@ class Phase1ApiTests(unittest.TestCase):
         (TEST_ROOT / "legacy_config").mkdir(parents=True, exist_ok=True)
         self.settings_path = TEST_ROOT / "app_settings.json"
         self.created_at = datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc)
+        self.current_time = self.created_at
 
         self._write_profile_bundle()
         self._write_profile_bundle(
@@ -42,6 +43,8 @@ class Phase1ApiTests(unittest.TestCase):
             display_name="Alternate Profile",
             description="Alternate API test profile",
             template_filename="alternate_template.xlsx",
+            labor_classifications=["ALT Journeyman"],
+            equipment_classifications=["ALT Truck"],
         )
         self._write_json(self.settings_path, {"active_profile": "default"})
         self._write_json(TEST_ROOT / "legacy_config" / "phase_catalog.json", {"phases": []})
@@ -58,8 +61,9 @@ class Phase1ApiTests(unittest.TestCase):
                 profile_manager=self.profile_manager,
                 upload_root=TEST_ROOT / "runtime" / "uploads",
                 export_root=TEST_ROOT / "runtime" / "exports",
+                upload_retention_hours=24,
                 engine_version="engine-1",
-                now_provider=lambda: self.created_at,
+                now_provider=lambda: self.current_time,
             )
         )
 
@@ -291,6 +295,8 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertEqual(session_response.status_code, 200)
         self.assertEqual(session_response.json()["current_revision"], 0)
         self.assertEqual(session_response.json()["session_revision"], 0)
+        self.assertEqual(session_response.json()["labor_classification_options"], ["103 Journeyman"])
+        self.assertEqual(session_response.json()["equipment_classification_options"], ["Pick-up Truck"])
         self.assertTrue(session_response.json()["historical_export_status"]["is_reproducible"])
 
         edit_response = self.client.post(
@@ -318,6 +324,75 @@ class Phase1ApiTests(unittest.TestCase):
             run_payload["run_records"][0]["canonical_record"]["vendor_name_normalized"],
             "Vendor A",
         )
+
+    def test_review_session_open_uses_processing_run_profile_snapshot_for_option_sets(self) -> None:
+        processing_run_id = self._create_processing_run_via_api(trusted_profile_name="alternate")
+
+        session_response = self.client.get(f"/api/runs/{processing_run_id}/review-session")
+
+        self.assertEqual(session_response.status_code, 200)
+        self.assertEqual(session_response.json()["labor_classification_options"], ["ALT Journeyman"])
+        self.assertEqual(session_response.json()["equipment_classification_options"], ["ALT Truck"])
+
+    def test_review_edit_rejects_invalid_classification_submission(self) -> None:
+        processing_run_id = self._create_processing_run_via_api()
+
+        edit_response = self.client.post(
+            f"/api/runs/{processing_run_id}/review-session/edits",
+            json={
+                "edits": [
+                    {
+                        "record_key": "record-0",
+                        "changed_fields": {"recap_labor_classification": "Not Allowed"},
+                    }
+                ]
+            },
+        )
+        session_response = self.client.get(f"/api/runs/{processing_run_id}/review-session")
+
+        self.assertEqual(edit_response.status_code, 400)
+        self.assertIn("not allowed for this review", edit_response.json()["detail"])
+        self.assertEqual(session_response.status_code, 200)
+        self.assertEqual(session_response.json()["current_revision"], 0)
+
+    def test_expired_upload_returns_clear_reupload_message_when_creating_run(self) -> None:
+        upload_response = self.client.post(
+            "/api/source-documents/uploads",
+            files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        upload_id = upload_response.json()["upload_id"]
+
+        self.current_time += timedelta(hours=25)
+        run_response = self.client.post(
+            "/api/runs",
+            json={
+                "upload_id": upload_id,
+                "trusted_profile_name": "default",
+            },
+        )
+
+        self.assertEqual(run_response.status_code, 410)
+        self.assertIn("expired from temporary storage", run_response.json()["detail"])
+        self.assertIn("upload the PDF again", run_response.json()["detail"])
+
+    def test_existing_run_remains_fetchable_after_original_upload_is_cleaned_up(self) -> None:
+        processing_run_id = self._create_processing_run_via_api()
+
+        self.current_time += timedelta(hours=25)
+        second_upload = self.client.post(
+            "/api/source-documents/uploads",
+            files={"file": ("report-2.pdf", b"sample pdf bytes", "application/pdf")},
+        )
+        self.assertEqual(second_upload.status_code, 201)
+
+        run_detail_response = self.client.get(f"/api/runs/{processing_run_id}")
+        review_session_response = self.client.get(f"/api/runs/{processing_run_id}/review-session")
+
+        self.assertEqual(run_detail_response.status_code, 200)
+        self.assertEqual(run_detail_response.json()["source_document_filename"], "report.pdf")
+        self.assertEqual(review_session_response.status_code, 200)
+        self.assertEqual(review_session_response.json()["current_revision"], 0)
 
     def test_export_creation_and_download_bind_to_one_exact_session_revision(self) -> None:
         processing_run_id = self._create_processing_run_via_api()
@@ -615,7 +690,7 @@ class Phase1ApiTests(unittest.TestCase):
         response = self.client.get("/api/profile-sync-exports/does-not-exist/download")
         self.assertEqual(response.status_code, 404)
 
-    def _create_processing_run_via_api(self) -> str:
+    def _create_processing_run_via_api(self, *, trusted_profile_name: str = "default") -> str:
         upload_response = self.client.post(
             "/api/source-documents/uploads",
             files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
@@ -631,7 +706,7 @@ class Phase1ApiTests(unittest.TestCase):
                 "/api/runs",
                 json={
                     "upload_id": upload_payload["upload_id"],
-                    "trusted_profile_name": "default",
+                    "trusted_profile_name": trusted_profile_name,
                 },
             )
 
@@ -645,8 +720,12 @@ class Phase1ApiTests(unittest.TestCase):
         display_name: str = "Default Profile",
         description: str = "Default API test profile",
         template_filename: str = "recap_template.xlsx",
+        labor_classifications: list[str] | None = None,
+        equipment_classifications: list[str] | None = None,
     ) -> None:
         profile_dir = TEST_ROOT / "profiles" / profile_name
+        resolved_labor_classifications = labor_classifications or ["103 Journeyman"]
+        resolved_equipment_classifications = equipment_classifications or ["Pick-up Truck"]
         self._write_json(
             profile_dir / "profile.json",
             {
@@ -669,15 +748,21 @@ class Phase1ApiTests(unittest.TestCase):
         self._write_json(
             profile_dir / "target_labor_classifications.json",
             {
-                "slots": [{"slot_id": "labor_1", "label": "103 Journeyman", "active": True}],
-                "classifications": ["103 Journeyman"],
+                "slots": [
+                    {"slot_id": f"labor_{index + 1}", "label": label, "active": True}
+                    for index, label in enumerate(resolved_labor_classifications)
+                ],
+                "classifications": resolved_labor_classifications,
             },
         )
         self._write_json(
             profile_dir / "target_equipment_classifications.json",
             {
-                "slots": [{"slot_id": "equipment_1", "label": "Pick-up Truck", "active": True}],
-                "classifications": ["Pick-up Truck"],
+                "slots": [
+                    {"slot_id": f"equipment_{index + 1}", "label": label, "active": True}
+                    for index, label in enumerate(resolved_equipment_classifications)
+                ],
+                "classifications": resolved_equipment_classifications,
             },
         )
         self._write_json(profile_dir / "rates.json", {"labor_rates": {}, "equipment_rates": {}})
@@ -691,7 +776,7 @@ class Phase1ApiTests(unittest.TestCase):
                     "job_number": {"cell": "H6"},
                 },
                 "labor_rows": {
-                    "103 Journeyman": {
+                    resolved_labor_classifications[0]: {
                         "st_hours": "B14",
                         "ot_hours": "C14",
                         "dt_hours": "D14",
@@ -700,7 +785,7 @@ class Phase1ApiTests(unittest.TestCase):
                         "dt_rate": "G14",
                     }
                 },
-                "equipment_rows": {"Pick-up Truck": {"hours_qty": "B32", "rate": "D32"}},
+                "equipment_rows": {resolved_equipment_classifications[0]: {"hours_qty": "B32", "rate": "D32"}},
                 "materials_section": {
                     "start_row": 27,
                     "end_row": 41,

@@ -188,8 +188,13 @@ def _apply_slot_backed_updates(
             allowed_updates["recap_labor_slot_id"] = None
         else:
             slot = loader.get_labor_slot_lookup().get(label.casefold())
+            if not isinstance(slot, dict):
+                raise ValueError(
+                    f"Labor classification '{label}' is not allowed for this review. "
+                    "Choose one of the trusted profile target labor classifications."
+                )
             allowed_updates["recap_labor_slot_id"] = (
-                str(slot.get("slot_id") or "").strip() if isinstance(slot, dict) else None
+                str(slot.get("slot_id") or "").strip()
             ) or None
 
     if "equipment_category" in allowed_updates:
@@ -198,8 +203,13 @@ def _apply_slot_backed_updates(
             allowed_updates["recap_equipment_slot_id"] = None
         else:
             slot = loader.get_equipment_slot_lookup().get(label.casefold())
+            if not isinstance(slot, dict):
+                raise ValueError(
+                    f"Equipment classification '{label}' is not allowed for this review. "
+                    "Choose one of the trusted profile target equipment classifications."
+                )
             allowed_updates["recap_equipment_slot_id"] = (
-                str(slot.get("slot_id") or "").strip() if isinstance(slot, dict) else None
+                str(slot.get("slot_id") or "").strip()
             ) or None
 
 

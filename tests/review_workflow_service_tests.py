@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.config import ConfigLoader, ProfileManager
-from core.models.record import LABOR, MATERIAL, Record
+from core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
 from services.review_workflow_service import load_edit_options, load_review_data, update_review_record
 
 
@@ -246,6 +246,83 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
             self.fail("Expected review update result.")
         self.assertEqual(result.review_records[0].recap_labor_classification, "103 Journeyman")
         self.assertEqual(result.review_records[0].recap_labor_slot_id, "labor_1")
+
+    def test_update_review_record_rejects_unknown_labor_classification(self) -> None:
+        manager = self._build_manager()
+        loader_class = ConfigLoader
+
+        record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100.0,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="J",
+            labor_class_normalized="J",
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="source",
+            record_type_normalized=LABOR,
+            recap_labor_slot_id=None,
+            recap_labor_classification=None,
+            is_omitted=True,
+        )
+
+        with patch(
+            "services.review_workflow_service.ConfigLoader",
+            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
+        ):
+            with self.assertRaisesRegex(ValueError, "Labor classification 'Not Allowed' is not allowed for this review."):
+                update_review_record(
+                    [record],
+                    0,
+                    {"recap_labor_classification": "Not Allowed"},
+                    file_path="sample.pdf",
+                )
+
+    def test_update_review_record_rejects_unknown_equipment_classification(self) -> None:
+        manager = self._build_manager()
+        loader_class = ConfigLoader
+
+        record = Record(
+            record_type=EQUIPMENT,
+            phase_code="20",
+            raw_description="Equipment line",
+            cost=100.0,
+            hours=8.0,
+            hour_type="EA",
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="Pickup truck",
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="source",
+            record_type_normalized=EQUIPMENT,
+            recap_equipment_slot_id=None,
+            is_omitted=False,
+        )
+
+        with patch(
+            "services.review_workflow_service.ConfigLoader",
+            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
+        ):
+            with self.assertRaisesRegex(ValueError, "Equipment classification 'Not Allowed' is not allowed for this review."):
+                update_review_record(
+                    [record],
+                    0,
+                    {"equipment_category": "Not Allowed"},
+                    file_path="sample.pdf",
+                )
 
     def test_load_edit_options_returns_profile_defined_choices(self) -> None:
         manager = self._build_manager()

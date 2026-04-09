@@ -34,7 +34,7 @@ from services.lineage_service import (
     create_review_session,
     rebuild_review_records,
 )
-from services.review_workflow_service import prepare_review_updates
+from services.review_workflow_service import load_edit_options, prepare_review_updates
 from services.validation_service import validate_records
 
 
@@ -50,6 +50,8 @@ class ReviewSessionState:
     run_records: list[RunRecord]
     records: list[Record]
     blocking_issues: list[str]
+    labor_classification_options: list[str]
+    equipment_classification_options: list[str]
     session_revision: int
     historical_export_status: HistoricalExportStatus
 
@@ -135,6 +137,11 @@ class ReviewSessionService:
             reviewed_record_edits=reviewed_record_edits,
         )
         validated_records, blocking_issues = validate_records(effective_records)
+        with self._materialized_snapshot_bundle(context.profile_snapshot) as snapshot_bundle:
+            labor_options, equipment_options = load_edit_options(
+                config_dir=snapshot_bundle.config_dir,
+                legacy_config_dir=snapshot_bundle.legacy_config_dir,
+            )
         return ReviewSessionState(
             processing_run=context.processing_run,
             profile_snapshot=context.profile_snapshot,
@@ -144,6 +151,8 @@ class ReviewSessionService:
             run_records=context.run_records,
             records=list(validated_records),
             blocking_issues=list(blocking_issues),
+            labor_classification_options=labor_options,
+            equipment_classification_options=equipment_options,
             session_revision=target_revision,
             historical_export_status=build_historical_export_status(context.profile_snapshot),
         )

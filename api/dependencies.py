@@ -37,6 +37,7 @@ def build_runtime(
     profile_manager: ProfileManager | None = None,
     upload_root: str | Path = "runtime/api/uploads",
     export_root: str | Path = "runtime/api/exports",
+    upload_retention_hours: int = 24,
     engine_version: str = "dev-local",
     now_provider: Callable | None = None,
 ) -> tuple[ApiRuntime, bool]:
@@ -54,6 +55,8 @@ def build_runtime(
     file_store = LocalRuntimeFileStore(
         upload_root=upload_root,
         export_root=export_root,
+        upload_retention_hours=upload_retention_hours,
+        now_provider=now_provider,
     )
     runtime = ApiRuntime(
         lineage_store=persisted_store,

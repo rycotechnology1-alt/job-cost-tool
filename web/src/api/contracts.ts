@@ -93,6 +93,8 @@ export interface ReviewSessionResponse {
   current_revision: number;
   session_revision: number;
   blocking_issues: string[];
+  labor_classification_options: string[];
+  equipment_classification_options: string[];
   historical_export_status: HistoricalExportStatusResponse;
   records: ReviewRecordResponse[];
 }

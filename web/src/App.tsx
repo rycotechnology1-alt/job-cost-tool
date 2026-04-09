@@ -115,6 +115,7 @@ export default function App() {
   const [exportArtifact, setExportArtifact] = useState<ExportArtifactResponse | null>(null);
   const [lastDownloadedFilename, setLastDownloadedFilename] = useState("");
   const [lastDownloadedProfileSyncFilename, setLastDownloadedProfileSyncFilename] = useState("");
+  const [reviewContextInvalidated, setReviewContextInvalidated] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [statusMessage, setStatusMessage] = useState("Choose a trusted profile and a PDF to start reviewing.");
@@ -127,6 +128,28 @@ export default function App() {
   const selectedTrustedProfileId = selectedTrustedProfile?.trusted_profile_id ?? "";
   const rows = buildWorkspaceRows(runDetail, reviewSession);
   const selectedRow = rows.find((row) => row.recordKey === selectedRecordKey) ?? rows[0] ?? null;
+  const activeReviewProfileMismatch = Boolean(
+    runDetail &&
+      reviewSession &&
+      selectedTrustedProfile &&
+      (
+        (runDetail.trusted_profile_id &&
+          selectedTrustedProfile.trusted_profile_id &&
+          runDetail.trusted_profile_id !== selectedTrustedProfile.trusted_profile_id) ||
+        ((!runDetail.trusted_profile_id || !selectedTrustedProfile.trusted_profile_id) &&
+          runDetail.trusted_profile_name &&
+          runDetail.trusted_profile_name !== selectedTrustedProfile.profile_name)
+      ),
+  );
+  const reviewExportInvalidated = reviewContextInvalidated || activeReviewProfileMismatch;
+  const activeReviewProfileLabel =
+    runDetail?.trusted_profile_name ?? selectedTrustedProfile?.display_name ?? "the prior trusted profile";
+  const reviewContextMessage =
+    runDetail && reviewSession && reviewExportInvalidated
+      ? activeReviewProfileMismatch
+        ? `This loaded review was processed under ${activeReviewProfileLabel}, but the current trusted profile selection is ${selectedTrustedProfile?.display_name ?? "different"}. Reprocess under the selected profile before export is allowed.`
+        : `This loaded review was processed under ${activeReviewProfileLabel}, and the trusted profile selection changed afterward. This review is now stale for export and must be reprocessed before export is allowed.`
+      : "";
 
   function advanceDraftSync(reason: DraftSyncReason) {
     setDraftSyncToken((current) => ({
@@ -374,21 +397,53 @@ export default function App() {
         throw new Error("Choose a report PDF before opening the review workspace.");
       }
 
-      const createdRun = await createProcessingRun(uploadToUse.upload_id, selectedTrustedProfileName.trim());
-      const nextRunDetail = await fetchProcessingRun(createdRun.processing_run_id);
-      const nextReviewSession = await openReviewSession(createdRun.processing_run_id);
-      const nextRows = buildWorkspaceRows(nextRunDetail, nextReviewSession);
+      try {
+        const createdRun = await createProcessingRun(uploadToUse.upload_id, selectedTrustedProfileName.trim());
+        const nextRunDetail = await fetchProcessingRun(createdRun.processing_run_id);
+        const nextReviewSession = await openReviewSession(createdRun.processing_run_id);
+        const nextRows = buildWorkspaceRows(nextRunDetail, nextReviewSession);
 
-      setUpload(uploadToUse);
-      setRunDetail(nextRunDetail);
-      setReviewSession(nextReviewSession);
-      setExportArtifact(null);
-      setLastDownloadedFilename("");
-      selectRow(nextRows, nextRows[0]?.recordKey ?? null);
-      setStatusMessage(
-        `Loaded ${nextReviewSession.records.length} review records from ${nextRunDetail.source_document_filename}.`,
-      );
+        setUpload(uploadToUse);
+        setRunDetail(nextRunDetail);
+        setReviewSession(nextReviewSession);
+        setExportArtifact(null);
+        setLastDownloadedFilename("");
+        setReviewContextInvalidated(false);
+        selectRow(nextRows, nextRows[0]?.recordKey ?? null);
+        setStatusMessage(
+          `Loaded ${nextReviewSession.records.length} review records from ${nextRunDetail.source_document_filename}.`,
+        );
+      } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 410 && selectedFile === null) {
+          setUpload(null);
+          setStatusMessage("The cached uploaded PDF expired from temporary storage. Select the PDF again to continue.");
+        }
+        throw error;
+      }
     });
+  }
+
+  function handleReviewTrustedProfileNameChange(nextProfileName: string) {
+    if (!nextProfileName || nextProfileName === selectedTrustedProfileName) {
+      return;
+    }
+
+    const nextProfile =
+      trustedProfiles.find((profile) => profile.profile_name === nextProfileName) ?? null;
+    const hasActiveReview = Boolean(runDetail && reviewSession);
+
+    setSelectedTrustedProfileName(nextProfileName);
+
+    if (!hasActiveReview) {
+      return;
+    }
+
+    setReviewContextInvalidated(true);
+    setExportArtifact(null);
+    setLastDownloadedFilename("");
+    setStatusMessage(
+      `Profile selection changed to ${nextProfile?.display_name ?? nextProfileName}. The loaded review was processed under ${activeReviewProfileLabel} and must be reprocessed before export is allowed.`,
+    );
   }
 
   function buildChangedFields(row: WorkspaceRow): ReviewEditFields {
@@ -405,9 +460,13 @@ export default function App() {
     }
     if (laborClass && laborClass !== currentLabor) {
       changedFields.recap_labor_classification = laborClass;
+    } else if (!laborClass && currentLabor) {
+      changedFields.recap_labor_classification = null;
     }
     if (equipmentCategory && equipmentCategory !== currentEquipment) {
       changedFields.equipment_category = equipmentCategory;
+    } else if (!equipmentCategory && currentEquipment) {
+      changedFields.equipment_category = null;
     }
     if (editForm.omissionChoice === "omit" && !row.record.is_omitted) {
       changedFields.is_omitted = true;
@@ -448,6 +507,9 @@ export default function App() {
     await runAction("Exporting workbook...", async () => {
       if (!runDetail || !reviewSession) {
         throw new Error("Open the review workspace before exporting a workbook.");
+      }
+      if (reviewExportInvalidated) {
+        throw new Error(reviewContextMessage || "This loaded review is stale for export. Reprocess it first.");
       }
 
       const artifact = await createExportArtifact(runDetail.processing_run_id, reviewSession.current_revision);
@@ -746,7 +808,7 @@ export default function App() {
             selectedFileName={selectedFile?.name ?? ""}
             upload={upload}
             busy={busy}
-            onTrustedProfileNameChange={setSelectedTrustedProfileName}
+            onTrustedProfileNameChange={handleReviewTrustedProfileNameChange}
             onFileSelected={setSelectedFile}
             onLaunchReviewWorkspace={handleLaunchReviewWorkspace}
           />
@@ -759,6 +821,8 @@ export default function App() {
             editForm={editForm}
             exportArtifact={exportArtifact}
             lastDownloadedFilename={lastDownloadedFilename}
+            exportDisabled={reviewExportInvalidated}
+            exportDisabledMessage={reviewContextMessage}
             busy={busy}
             onSelectRow={(recordKey) => {
               const row = rows.find((item) => item.recordKey === recordKey) ?? null;

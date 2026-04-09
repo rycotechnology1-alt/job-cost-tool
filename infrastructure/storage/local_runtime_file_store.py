@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import json
+import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 from .runtime_storage import RuntimeStorage, StoredArtifact, StoredUpload
+
+
+class ExpiredUploadError(FileNotFoundError):
+    """Raised when a cached upload has expired and must be uploaded again."""
 
 
 class LocalRuntimeFileStore(RuntimeStorage):
@@ -17,11 +24,16 @@ class LocalRuntimeFileStore(RuntimeStorage):
         *,
         upload_root: str | Path,
         export_root: str | Path,
+        upload_retention_hours: int | float = 24,
+        now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         self._upload_root = Path(upload_root).expanduser().resolve()
         self._export_root = Path(export_root).expanduser().resolve()
+        self._upload_retention_hours = float(upload_retention_hours)
+        self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         self._upload_root.mkdir(parents=True, exist_ok=True)
         self._export_root.mkdir(parents=True, exist_ok=True)
+        self.cleanup_expired_uploads()
 
     def save_upload(
         self,
@@ -31,6 +43,7 @@ class LocalRuntimeFileStore(RuntimeStorage):
         content_type: str | None = None,
     ) -> StoredUpload:
         """Persist one uploaded source document and return its stable local reference."""
+        self.cleanup_expired_uploads()
         filename = self._normalize_filename(original_filename)
         if not content_bytes:
             raise ValueError("Uploaded source document must not be empty.")
@@ -40,6 +53,7 @@ class LocalRuntimeFileStore(RuntimeStorage):
         upload_dir.mkdir(parents=True, exist_ok=False)
         file_path = (upload_dir / filename).resolve()
         file_path.write_bytes(content_bytes)
+        created_at = self._normalize_timestamp(self._now_provider())
 
         metadata = {
             "upload_id": upload_id,
@@ -48,6 +62,7 @@ class LocalRuntimeFileStore(RuntimeStorage):
             "file_size_bytes": len(content_bytes),
             "storage_ref": f"uploads/{upload_id}/{filename}",
             "filename": filename,
+            "created_at": created_at.isoformat(),
         }
         (upload_dir / "metadata.json").write_text(
             json.dumps(metadata, indent=2, sort_keys=True),
@@ -60,6 +75,7 @@ class LocalRuntimeFileStore(RuntimeStorage):
             file_size_bytes=len(content_bytes),
             storage_ref=metadata["storage_ref"],
             file_path=file_path,
+            created_at=created_at,
         )
 
     def get_upload(self, upload_id: str) -> StoredUpload:
@@ -74,10 +90,17 @@ class LocalRuntimeFileStore(RuntimeStorage):
             raise FileNotFoundError(f"Uploaded source document '{normalized_upload_id}' was not found.")
 
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        upload_created_at = self._resolve_upload_created_at(upload_dir, metadata)
+        if self._is_expired(upload_created_at):
+            self._delete_upload_dir(upload_dir)
+            raise ExpiredUploadError(
+                "The uploaded PDF expired from temporary storage. Reselect and upload the PDF again before processing."
+            )
         file_path = (upload_dir / str(metadata["filename"])).resolve()
         if not file_path.is_file():
             raise FileNotFoundError(f"Uploaded source document payload is missing for '{normalized_upload_id}'.")
 
+        self.cleanup_expired_uploads()
         return StoredUpload(
             upload_id=str(metadata["upload_id"]),
             original_filename=str(metadata["original_filename"]),
@@ -85,7 +108,26 @@ class LocalRuntimeFileStore(RuntimeStorage):
             file_size_bytes=int(metadata["file_size_bytes"]),
             storage_ref=str(metadata["storage_ref"]),
             file_path=file_path,
+            created_at=upload_created_at,
         )
+
+    def cleanup_expired_uploads(self) -> int:
+        """Delete expired uploaded source documents from the temporary runtime cache."""
+        if self._upload_retention_hours <= 0:
+            return 0
+
+        deleted_count = 0
+        for upload_dir in self._upload_root.iterdir():
+            if not upload_dir.is_dir():
+                continue
+            try:
+                created_at = self._resolve_upload_created_at(upload_dir)
+            except Exception:
+                created_at = self._fallback_created_at(upload_dir)
+            if self._is_expired(created_at):
+                self._delete_upload_dir(upload_dir)
+                deleted_count += 1
+        return deleted_count
 
     def save_export_artifact(
         self,
@@ -251,3 +293,47 @@ class LocalRuntimeFileStore(RuntimeStorage):
         """Return a safe local filename for persisted upload or export content."""
         filename = Path(str(original_filename or "").strip()).name
         return filename or "source-document.pdf"
+
+    def _resolve_upload_created_at(self, upload_dir: Path, metadata: dict | None = None) -> datetime:
+        """Return the upload creation timestamp from metadata or legacy filesystem state."""
+        raw_metadata = metadata
+        if raw_metadata is None:
+            metadata_path = upload_dir / "metadata.json"
+            if metadata_path.is_file():
+                raw_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            else:
+                raw_metadata = {}
+
+        created_at_value = str(raw_metadata.get("created_at") or "").strip()
+        if created_at_value:
+            try:
+                return self._normalize_timestamp(datetime.fromisoformat(created_at_value))
+            except ValueError:
+                pass
+        return self._fallback_created_at(upload_dir)
+
+    def _fallback_created_at(self, upload_dir: Path) -> datetime:
+        """Return a best-effort timestamp for legacy uploads that predate created_at metadata."""
+        candidate_paths = [upload_dir / "metadata.json", *upload_dir.iterdir(), upload_dir]
+        existing_paths = [path for path in candidate_paths if path.exists()]
+        oldest_mtime = min(path.stat().st_mtime for path in existing_paths)
+        return datetime.fromtimestamp(oldest_mtime, tz=timezone.utc)
+
+    def _is_expired(self, created_at: datetime) -> bool:
+        """Return True when one upload is older than the configured retention window."""
+        if self._upload_retention_hours <= 0:
+            return False
+        expires_at = created_at + timedelta(hours=self._upload_retention_hours)
+        return self._normalize_timestamp(self._now_provider()) >= expires_at
+
+    def _delete_upload_dir(self, upload_dir: Path) -> None:
+        """Delete one cached upload directory safely inside the configured upload root."""
+        resolved_dir = upload_dir.resolve()
+        resolved_dir.relative_to(self._upload_root)
+        shutil.rmtree(resolved_dir, ignore_errors=True)
+
+    def _normalize_timestamp(self, value: datetime) -> datetime:
+        """Return one timezone-aware UTC timestamp."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
