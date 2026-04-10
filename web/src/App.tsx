@@ -74,12 +74,25 @@ interface LeaveSettingsPromptState {
   profileDisplayName: string;
 }
 
+interface StagedReportItem {
+  stagedReportId: string;
+  file: File;
+  filename: string;
+  upload: SourceUploadResponse | null;
+}
+
 const emptyEditForm: ReviewEditFormValue = {
   vendorNameNormalized: "",
   recapLaborClassification: "",
   equipmentCategory: "",
   omissionChoice: "unchanged",
 };
+
+const maxStagedReports = 10;
+
+function buildStagedReportId(): string {
+  return `staged-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function buildWorkspaceRows(
   runDetail: ProcessingRunDetailResponse | null,
@@ -110,19 +123,30 @@ function buildEditFormFromRow(row: WorkspaceRow): ReviewEditFormValue {
   };
 }
 
+function isLaborBulkCompatibleRow(row: WorkspaceRow): boolean {
+  const normalizedType = (row.record.record_type_normalized ?? row.record.record_type ?? "").trim().toLowerCase();
+  return normalizedType === "labor";
+}
+
+function isEquipmentBulkCompatibleRow(row: WorkspaceRow): boolean {
+  const normalizedType = (row.record.record_type_normalized ?? row.record.record_type ?? "").trim().toLowerCase();
+  return normalizedType === "equipment";
+}
+
 export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<"review" | "settings">("review");
   const [trustedProfiles, setTrustedProfiles] = useState<TrustedProfileResponse[]>([]);
   const [archivedTrustedProfiles, setArchivedTrustedProfiles] = useState<TrustedProfileResponse[]>([]);
   const [selectedTrustedProfileName, setSelectedTrustedProfileName] = useState("");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [upload, setUpload] = useState<SourceUploadResponse | null>(null);
+  const [stagedReports, setStagedReports] = useState<StagedReportItem[]>([]);
+  const [activeStagedReportId, setActiveStagedReportId] = useState("");
   const [runDetail, setRunDetail] = useState<ProcessingRunDetailResponse | null>(null);
   const [reviewSession, setReviewSession] = useState<ReviewSessionResponse | null>(null);
   const [profileDetail, setProfileDetail] = useState<PublishedProfileDetailResponse | null>(null);
   const [draftState, setDraftState] = useState<DraftEditorStateResponse | null>(null);
   const [draftSyncToken, setDraftSyncToken] = useState<DraftSyncToken>({ reason: "reset", sequence: 0 });
   const [selectedRecordKey, setSelectedRecordKey] = useState("");
+  const [selectedReviewRecordKeys, setSelectedReviewRecordKeys] = useState<string[]>([]);
   const [editForm, setEditForm] = useState<ReviewEditFormValue>(emptyEditForm);
   const [exportArtifact, setExportArtifact] = useState<ExportArtifactResponse | null>(null);
   const [lastDownloadedFilename, setLastDownloadedFilename] = useState("");
@@ -130,7 +154,9 @@ export default function App() {
   const [reviewContextInvalidated, setReviewContextInvalidated] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
-  const [statusMessage, setStatusMessage] = useState("Choose a trusted profile and a PDF to start reviewing.");
+  const [statusMessage, setStatusMessage] = useState(
+    "Choose a trusted profile and stage one or more PDFs to start reviewing.",
+  );
   const [settingsStatusMessage, setSettingsStatusMessage] = useState(
     "Inspect the live trusted profile and select Edit current profile when you are ready to make changes.",
   );
@@ -140,8 +166,10 @@ export default function App() {
   const selectedTrustedProfile =
     trustedProfiles.find((profile) => profile.profile_name === selectedTrustedProfileName) ?? null;
   const selectedTrustedProfileId = selectedTrustedProfile?.trusted_profile_id ?? "";
+  const activeStagedReport =
+    stagedReports.find((report) => report.stagedReportId === activeStagedReportId) ?? stagedReports[0] ?? null;
   const rows = buildWorkspaceRows(runDetail, reviewSession);
-  const selectedRow = rows.find((row) => row.recordKey === selectedRecordKey) ?? rows[0] ?? null;
+  const selectedRow = rows.find((row) => row.recordKey === selectedRecordKey) ?? null;
   const activeReviewProfileMismatch = Boolean(
     runDetail &&
       reviewSession &&
@@ -230,6 +258,71 @@ export default function App() {
 
   async function loadSettingsProfileDetail(trustedProfileId: string): Promise<PublishedProfileDetailResponse> {
     return fetchProfileDetail(trustedProfileId);
+  }
+
+  function updateStagedReportUpload(stagedReportId: string, upload: SourceUploadResponse | null) {
+    setStagedReports((current) =>
+      current.map((report) =>
+        report.stagedReportId === stagedReportId
+          ? {
+              ...report,
+              upload,
+            }
+          : report,
+      ),
+    );
+  }
+
+  function handleStageFiles(files: File[]) {
+    const pdfFiles = files.filter(
+      (file) => file.type === "application/pdf" || file.name.toLocaleLowerCase().endsWith(".pdf"),
+    );
+
+    if (pdfFiles.length === 0) {
+      return;
+    }
+
+    const remainingSlots = Math.max(0, maxStagedReports - stagedReports.length);
+    const acceptedFiles = pdfFiles.slice(0, remainingSlots);
+    const nextReports = acceptedFiles.map((file) => ({
+      stagedReportId: buildStagedReportId(),
+      file,
+      filename: file.name,
+      upload: null,
+    }));
+    const acceptedCount = nextReports.length;
+    const ignoredCount = pdfFiles.length - acceptedCount;
+
+    setStagedReports((current) => [...current, ...nextReports]);
+    if (!activeStagedReportId && nextReports.length > 0) {
+      setActiveStagedReportId(nextReports[0].stagedReportId);
+    }
+    setErrorMessage("");
+
+    if (acceptedCount === 0) {
+      setStatusMessage("The staged review queue already holds 10 PDFs. Remove one before adding more.");
+      return;
+    }
+
+    setStatusMessage(
+      ignoredCount > 0
+        ? `Staged ${acceptedCount} report${acceptedCount === 1 ? "" : "s"}. The queue holds up to 10 PDFs, so ${ignoredCount} additional file${ignoredCount === 1 ? " was" : "s were"} ignored.`
+        : `Staged ${acceptedCount} report${acceptedCount === 1 ? "" : "s"} for review. Select one queued PDF and open the review workspace when ready.`,
+    );
+  }
+
+  function handleSelectStagedReport(stagedReportId: string) {
+    setActiveStagedReportId(stagedReportId);
+    setErrorMessage("");
+  }
+
+  function handleRemoveStagedReport(stagedReportId: string) {
+    const remaining = stagedReports.filter((report) => report.stagedReportId !== stagedReportId);
+    setStagedReports(remaining);
+    if (activeStagedReportId === stagedReportId) {
+      setActiveStagedReportId(remaining[0]?.stagedReportId ?? "");
+    }
+    setErrorMessage("");
   }
 
   function applyTrustedProfiles(profiles: TrustedProfileResponse[], preferredProfileName?: string) {
@@ -441,11 +534,37 @@ export default function App() {
     });
   }
 
-  function selectRow(nextRows: WorkspaceRow[], recordKey: string | null) {
-    const preferred = recordKey ? nextRows.find((row) => row.recordKey === recordKey) : nextRows[0] ?? null;
-    const row = preferred ?? nextRows[0] ?? null;
+  function selectRow(nextRows: WorkspaceRow[], recordKey: string | null, options?: { fallbackToFirst?: boolean }) {
+    const preferred = recordKey ? nextRows.find((row) => row.recordKey === recordKey) ?? null : null;
+    const row = preferred ?? (options?.fallbackToFirst ? nextRows[0] ?? null : null);
     setSelectedRecordKey(row?.recordKey ?? "");
     setEditForm(row ? buildEditFormFromRow(row) : emptyEditForm);
+  }
+
+  async function loadReviewWorkspaceFromUpload(uploadToUse: SourceUploadResponse) {
+    const createdRun = await createProcessingRun(uploadToUse.upload_id, selectedTrustedProfileName.trim());
+    const nextRunDetail = await fetchProcessingRun(createdRun.processing_run_id);
+    const nextReviewSession = await openReviewSession(createdRun.processing_run_id);
+    return {
+      nextRunDetail,
+      nextReviewSession,
+    };
+  }
+
+  function applyLoadedReviewWorkspace(
+    nextRunDetail: ProcessingRunDetailResponse,
+    nextReviewSession: ReviewSessionResponse,
+    nextStatusMessage: string,
+  ) {
+    const nextRows = buildWorkspaceRows(nextRunDetail, nextReviewSession);
+    setRunDetail(nextRunDetail);
+    setReviewSession(nextReviewSession);
+    setExportArtifact(null);
+    setLastDownloadedFilename("");
+    setReviewContextInvalidated(false);
+    setSelectedReviewRecordKeys([]);
+    selectRow(nextRows, null);
+    setStatusMessage(nextStatusMessage);
   }
 
   async function handleLaunchReviewWorkspace() {
@@ -454,36 +573,39 @@ export default function App() {
         throw new Error("Choose a trusted profile before opening the review workspace.");
       }
 
-      const uploadToUse =
-        selectedFile !== null
-          ? await uploadSourceDocument(selectedFile)
-          : upload;
+      const stagedReport = activeStagedReport;
+      if (!stagedReport) {
+        throw new Error("Stage at least one report PDF before opening the review workspace.");
+      }
+
+      let uploadToUse = stagedReport.upload;
       if (!uploadToUse) {
-        throw new Error("Choose a report PDF before opening the review workspace.");
+        uploadToUse = await uploadSourceDocument(stagedReport.file);
+        updateStagedReportUpload(stagedReport.stagedReportId, uploadToUse);
       }
 
       try {
-        const createdRun = await createProcessingRun(uploadToUse.upload_id, selectedTrustedProfileName.trim());
-        const nextRunDetail = await fetchProcessingRun(createdRun.processing_run_id);
-        const nextReviewSession = await openReviewSession(createdRun.processing_run_id);
-        const nextRows = buildWorkspaceRows(nextRunDetail, nextReviewSession);
-
-        setUpload(uploadToUse);
-        setRunDetail(nextRunDetail);
-        setReviewSession(nextReviewSession);
-        setExportArtifact(null);
-        setLastDownloadedFilename("");
-        setReviewContextInvalidated(false);
-        selectRow(nextRows, nextRows[0]?.recordKey ?? null);
-        setStatusMessage(
+        const { nextRunDetail, nextReviewSession } = await loadReviewWorkspaceFromUpload(uploadToUse);
+        applyLoadedReviewWorkspace(
+          nextRunDetail,
+          nextReviewSession,
           `Loaded ${nextReviewSession.records.length} review records from ${nextRunDetail.source_document_filename}.`,
         );
       } catch (error) {
-        if (error instanceof ApiRequestError && error.status === 410 && selectedFile === null) {
-          setUpload(null);
-          setStatusMessage("The cached uploaded PDF expired from temporary storage. Select the PDF again to continue.");
+        if (!(error instanceof ApiRequestError) || error.status !== 410) {
+          throw error;
         }
-        throw error;
+
+        updateStagedReportUpload(stagedReport.stagedReportId, null);
+        const refreshedUpload = await uploadSourceDocument(stagedReport.file);
+        updateStagedReportUpload(stagedReport.stagedReportId, refreshedUpload);
+
+        const { nextRunDetail, nextReviewSession } = await loadReviewWorkspaceFromUpload(refreshedUpload);
+        applyLoadedReviewWorkspace(
+          nextRunDetail,
+          nextReviewSession,
+          `The cached upload for ${stagedReport.filename} expired from temporary storage, so the queued PDF was uploaded again and reopened in review.`,
+        );
       }
     });
   }
@@ -563,8 +685,170 @@ export default function App() {
       setReviewSession(nextReviewSession);
       setExportArtifact(null);
       setLastDownloadedFilename("");
+      setSelectedReviewRecordKeys((current) => current.filter((recordKey) => nextRows.some((row) => row.recordKey === recordKey)));
       selectRow(nextRows, selectedRow.recordKey);
       setStatusMessage(`Applied a review change and advanced the session to revision ${nextReviewSession.current_revision}.`);
+    });
+  }
+
+  function handleReviewRowSelectionChange(recordKey: string, isSelected: boolean) {
+    setSelectedReviewRecordKeys((current) => {
+      if (isSelected) {
+        if (current.includes(recordKey)) {
+          return current;
+        }
+        return [...current, recordKey];
+      }
+      return current.filter((key) => key !== recordKey);
+    });
+  }
+
+  async function handleApplyBulkOmission(nextOmissionState: boolean) {
+    await runAction(
+      nextOmissionState ? "Bulk omitting review rows..." : "Bulk including review rows...",
+      async () => {
+        if (!runDetail || !reviewSession) {
+          throw new Error("Open the review workspace before applying a bulk omission change.");
+        }
+
+        const selectedRows = rows.filter((row) => selectedReviewRecordKeys.includes(row.recordKey));
+        if (selectedRows.length === 0) {
+          throw new Error("Select at least one review row before applying a bulk omission change.");
+        }
+
+        const applicableRows = selectedRows.filter((row) => row.record.is_omitted !== nextOmissionState);
+        if (applicableRows.length === 0) {
+          throw new Error(
+            nextOmissionState
+              ? "Select at least one currently included row before bulk omitting."
+              : "Select at least one currently omitted row before bulk including.",
+          );
+        }
+
+        const nextReviewSession = await appendReviewEdits(
+          runDetail.processing_run_id,
+          applicableRows.map((row) => ({
+            record_key: row.recordKey,
+            changed_fields: {
+              is_omitted: nextOmissionState,
+            },
+          })),
+        );
+        const nextRows = buildWorkspaceRows(runDetail, nextReviewSession);
+        const preferredSelectedRecordKey =
+          selectedRow && nextRows.some((row) => row.recordKey === selectedRow.recordKey)
+            ? selectedRow.recordKey
+            : applicableRows[0]?.recordKey ?? null;
+
+        setReviewSession(nextReviewSession);
+        setExportArtifact(null);
+        setLastDownloadedFilename("");
+        setSelectedReviewRecordKeys([]);
+        selectRow(nextRows, preferredSelectedRecordKey);
+        setStatusMessage(
+          `Applied a bulk ${nextOmissionState ? "omit" : "include"} change to ${applicableRows.length} row${applicableRows.length === 1 ? "" : "s"} and advanced the session to revision ${nextReviewSession.current_revision}.`,
+        );
+      },
+    );
+  }
+
+  async function handleApplyBulkLaborClassification(targetClassification: string) {
+    const nextTarget = targetClassification.trim();
+    await runAction("Applying bulk labor classification...", async () => {
+      if (!runDetail || !reviewSession) {
+        throw new Error("Open the review workspace before applying a bulk labor classification.");
+      }
+      if (!nextTarget) {
+        throw new Error("Choose a labor classification before applying a bulk review change.");
+      }
+
+      const selectedRows = rows.filter((row) => selectedReviewRecordKeys.includes(row.recordKey));
+      if (selectedRows.length === 0) {
+        throw new Error("Select at least one review row before applying a bulk labor classification.");
+      }
+      if (!selectedRows.every(isLaborBulkCompatibleRow)) {
+        throw new Error("Bulk labor classification only works when every selected row is a labor row.");
+      }
+
+      const applicableRows = selectedRows.filter(
+        (row) => (row.record.recap_labor_classification ?? "").trim() !== nextTarget,
+      );
+      if (applicableRows.length === 0) {
+        throw new Error("The selected labor rows already use that classification.");
+      }
+
+      const nextReviewSession = await appendReviewEdits(
+        runDetail.processing_run_id,
+        applicableRows.map((row) => ({
+          record_key: row.recordKey,
+          changed_fields: {
+            recap_labor_classification: nextTarget,
+          },
+        })),
+      );
+      const nextRows = buildWorkspaceRows(runDetail, nextReviewSession);
+      const preferredSelectedRecordKey =
+        selectedRow && nextRows.some((row) => row.recordKey === selectedRow.recordKey)
+          ? selectedRow.recordKey
+          : applicableRows[0]?.recordKey ?? null;
+
+      setReviewSession(nextReviewSession);
+      setExportArtifact(null);
+      setLastDownloadedFilename("");
+      setSelectedReviewRecordKeys([]);
+      selectRow(nextRows, preferredSelectedRecordKey);
+      setStatusMessage(
+        `Applied labor classification ${nextTarget} to ${applicableRows.length} selected row${applicableRows.length === 1 ? "" : "s"} and advanced the session to revision ${nextReviewSession.current_revision}.`,
+      );
+    });
+  }
+
+  async function handleApplyBulkEquipmentCategory(targetCategory: string) {
+    const nextTarget = targetCategory.trim();
+    await runAction("Applying bulk equipment category...", async () => {
+      if (!runDetail || !reviewSession) {
+        throw new Error("Open the review workspace before applying a bulk equipment category.");
+      }
+      if (!nextTarget) {
+        throw new Error("Choose an equipment category before applying a bulk review change.");
+      }
+
+      const selectedRows = rows.filter((row) => selectedReviewRecordKeys.includes(row.recordKey));
+      if (selectedRows.length === 0) {
+        throw new Error("Select at least one review row before applying a bulk equipment category.");
+      }
+      if (!selectedRows.every(isEquipmentBulkCompatibleRow)) {
+        throw new Error("Bulk equipment category only works when every selected row is an equipment row.");
+      }
+
+      const applicableRows = selectedRows.filter((row) => (row.record.equipment_category ?? "").trim() !== nextTarget);
+      if (applicableRows.length === 0) {
+        throw new Error("The selected equipment rows already use that category.");
+      }
+
+      const nextReviewSession = await appendReviewEdits(
+        runDetail.processing_run_id,
+        applicableRows.map((row) => ({
+          record_key: row.recordKey,
+          changed_fields: {
+            equipment_category: nextTarget,
+          },
+        })),
+      );
+      const nextRows = buildWorkspaceRows(runDetail, nextReviewSession);
+      const preferredSelectedRecordKey =
+        selectedRow && nextRows.some((row) => row.recordKey === selectedRow.recordKey)
+          ? selectedRow.recordKey
+          : applicableRows[0]?.recordKey ?? null;
+
+      setReviewSession(nextReviewSession);
+      setExportArtifact(null);
+      setLastDownloadedFilename("");
+      setSelectedReviewRecordKeys([]);
+      selectRow(nextRows, preferredSelectedRecordKey);
+      setStatusMessage(
+        `Applied equipment category ${nextTarget} to ${applicableRows.length} selected row${applicableRows.length === 1 ? "" : "s"} and advanced the session to revision ${nextReviewSession.current_revision}.`,
+      );
     });
   }
 
@@ -997,11 +1281,13 @@ export default function App() {
             trustedProfiles={trustedProfiles}
             selectedTrustedProfileName={selectedTrustedProfileName}
             selectedTrustedProfile={selectedTrustedProfile}
-            selectedFileName={selectedFile?.name ?? ""}
-            upload={upload}
+            stagedReports={stagedReports}
+            activeStagedReportId={activeStagedReport?.stagedReportId ?? ""}
             busy={busy}
             onTrustedProfileNameChange={handleReviewTrustedProfileNameChange}
-            onFileSelected={setSelectedFile}
+            onStageFiles={handleStageFiles}
+            onSelectStagedReport={handleSelectStagedReport}
+            onRemoveStagedReport={handleRemoveStagedReport}
             onLaunchReviewWorkspace={handleLaunchReviewWorkspace}
           />
 
@@ -1010,12 +1296,14 @@ export default function App() {
             reviewSession={reviewSession}
             rows={rows}
             selectedRow={selectedRow}
+            selectedReviewRecordKeys={selectedReviewRecordKeys}
             editForm={editForm}
             exportArtifact={exportArtifact}
             lastDownloadedFilename={lastDownloadedFilename}
             exportDisabled={reviewExportInvalidated}
             exportDisabledMessage={reviewContextMessage}
             busy={busy}
+            onToggleReviewRowSelection={handleReviewRowSelectionChange}
             onSelectRow={(recordKey) => {
               const row = rows.find((item) => item.recordKey === recordKey) ?? null;
               setSelectedRecordKey(recordKey);
@@ -1023,6 +1311,9 @@ export default function App() {
             }}
             onEditFormChange={setEditForm}
             onApplyEditBatch={handleApplyEditBatch}
+            onApplyBulkOmission={handleApplyBulkOmission}
+            onApplyBulkLaborClassification={handleApplyBulkLaborClassification}
+            onApplyBulkEquipmentCategory={handleApplyBulkEquipmentCategory}
             onExportAndDownload={handleExportAndDownload}
           />
         </>

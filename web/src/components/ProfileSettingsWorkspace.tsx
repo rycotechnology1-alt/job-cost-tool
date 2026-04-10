@@ -126,6 +126,7 @@ function emptyLaborMappingRow(): LaborMappingRow {
     target_classification: "",
     notes: "",
     is_observed: false,
+    is_required_for_recent_processing: false,
   };
 }
 
@@ -135,6 +136,9 @@ function emptyEquipmentMappingRow(): EquipmentMappingRow {
     raw_pattern: "",
     target_category: "",
     is_observed: false,
+    is_required_for_recent_processing: false,
+    prediction_target: null,
+    prediction_confidence_label: null,
   };
 }
 
@@ -423,6 +427,10 @@ function ObservedBadge() {
   return <span className="observed-badge">Observed</span>;
 }
 
+function RequiredObservedBadge() {
+  return <span className="required-observed-badge">Required now</span>;
+}
+
 function StatusPill({ tone, children }: { tone: "neutral" | "success" | "warning" | "error"; children: ReactNode }) {
   return <span className={`status-pill ${tone}`}>{children}</span>;
 }
@@ -454,6 +462,14 @@ function SectionStatusPill({
       {errorCount > 0 ? `${errorCount} issue${errorCount === 1 ? "" : "s"}` : dirty ? "Unsaved" : "Saved"}
     </StatusPill>
   );
+}
+
+function buildLaborMappingRowKey(row: LaborMappingRow, index: number): string {
+  return `labor:${index}`;
+}
+
+function buildEquipmentMappingRowKey(row: EquipmentMappingRow, index: number): string {
+  return `equipment:${index}`;
 }
 
 export function ProfileSettingsWorkspace({
@@ -495,6 +511,10 @@ export function ProfileSettingsWorkspace({
   const [newProfileDescription, setNewProfileDescription] = useState("");
   const [createServerFieldErrors, setCreateServerFieldErrors] = useState<Record<string, string[]>>({});
   const [createServerMessage, setCreateServerMessage] = useState("");
+  const [selectedLaborMappingKeys, setSelectedLaborMappingKeys] = useState<string[]>([]);
+  const [selectedEquipmentMappingKeys, setSelectedEquipmentMappingKeys] = useState<string[]>([]);
+  const [bulkLaborTarget, setBulkLaborTarget] = useState("");
+  const [bulkEquipmentTarget, setBulkEquipmentTarget] = useState("");
   const [retainedDraftStates, setRetainedDraftStates] = useState<Record<string, RetainedDraftWorkspaceState>>({});
   const [restoredDraftNotice, setRestoredDraftNotice] = useState("");
   const lastDraftIdRef = useRef<string | null>(null);
@@ -632,6 +652,50 @@ export function ProfileSettingsWorkspace({
   const laborTargets = laborSlots.filter((row) => row.active && row.label.trim()).map((row) => row.label.trim());
   const equipmentTargets = equipmentSlots.filter((row) => row.active && row.label.trim()).map((row) => row.label.trim());
   const observedDraftNote = hasObservedUnmappedRows(laborMappings, equipmentMappings);
+  const laborMappingEntries = laborMappings
+    .map((row, index) => ({
+      row,
+      index,
+      rowKey: buildLaborMappingRowKey(row, index),
+    }))
+    .sort((left, right) => {
+      const leftPriority = left.row.is_required_for_recent_processing
+        ? 0
+        : left.row.is_observed && !left.row.target_classification.trim()
+          ? 1
+          : 2;
+      const rightPriority = right.row.is_required_for_recent_processing
+        ? 0
+        : right.row.is_observed && !right.row.target_classification.trim()
+          ? 1
+          : 2;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+      return buildLaborMappingRowKey(left.row, left.index).localeCompare(buildLaborMappingRowKey(right.row, right.index));
+    });
+  const equipmentMappingEntries = equipmentMappings
+    .map((row, index) => ({
+      row,
+      index,
+      rowKey: buildEquipmentMappingRowKey(row, index),
+    }))
+    .sort((left, right) => {
+      const leftPriority = left.row.is_required_for_recent_processing
+        ? 0
+        : left.row.is_observed && !left.row.target_category.trim()
+          ? 1
+          : 2;
+      const rightPriority = right.row.is_required_for_recent_processing
+        ? 0
+        : right.row.is_observed && !right.row.target_category.trim()
+          ? 1
+          : 2;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+      return buildEquipmentMappingRowKey(left.row, left.index).localeCompare(buildEquipmentMappingRowKey(right.row, right.index));
+    });
 
   const defaultOmitValidation = useMemo(() => buildDefaultOmitValidation(defaultOmitRules), [defaultOmitRules]);
   const laborMappingValidation = useMemo(
@@ -739,6 +803,22 @@ export function ProfileSettingsWorkspace({
   const workspaceViewTone = draftState ? "warning" : "neutral";
 
   useEffect(() => {
+    const validKeys = new Set(laborMappingEntries.map((entry) => entry.rowKey));
+    setSelectedLaborMappingKeys((current) => {
+      const next = current.filter((rowKey) => validKeys.has(rowKey));
+      return next.length === current.length && next.every((rowKey, index) => rowKey === current[index]) ? current : next;
+    });
+  }, [laborMappingEntries]);
+
+  useEffect(() => {
+    const validKeys = new Set(equipmentMappingEntries.map((entry) => entry.rowKey));
+    setSelectedEquipmentMappingKeys((current) => {
+      const next = current.filter((rowKey) => validKeys.has(rowKey));
+      return next.length === current.length && next.every((rowKey, index) => rowKey === current[index]) ? current : next;
+    });
+  }, [equipmentMappingEntries]);
+
+  useEffect(() => {
     if (
       !draftState ||
       !selectedTrustedProfileId ||
@@ -809,6 +889,80 @@ export function ProfileSettingsWorkspace({
     currentDraftHydrationKey,
     selectedTrustedProfileId,
   ]);
+
+  function handleLaborMappingSelectionChange(rowKey: string, isSelected: boolean) {
+    setSelectedLaborMappingKeys((current) => {
+      if (isSelected) {
+        return current.includes(rowKey) ? current : [...current, rowKey];
+      }
+      return current.filter((candidate) => candidate !== rowKey);
+    });
+  }
+
+  function handleEquipmentMappingSelectionChange(rowKey: string, isSelected: boolean) {
+    setSelectedEquipmentMappingKeys((current) => {
+      if (isSelected) {
+        return current.includes(rowKey) ? current : [...current, rowKey];
+      }
+      return current.filter((candidate) => candidate !== rowKey);
+    });
+  }
+
+  function handleBulkLaborTargetApply() {
+    const nextTarget = bulkLaborTarget.trim();
+    if (!nextTarget || selectedLaborMappingKeys.length === 0) {
+      return;
+    }
+    const selectedKeySet = new Set(selectedLaborMappingKeys);
+    setLaborMappings(
+      laborMappings.map((row, index) =>
+        selectedKeySet.has(buildLaborMappingRowKey(row, index))
+          ? { ...row, target_classification: nextTarget, is_required_for_recent_processing: false }
+          : row,
+      ),
+    );
+    setSelectedLaborMappingKeys([]);
+    setBulkLaborTarget("");
+  }
+
+  function handleBulkEquipmentTargetApply() {
+    const nextTarget = bulkEquipmentTarget.trim();
+    if (!nextTarget || selectedEquipmentMappingKeys.length === 0) {
+      return;
+    }
+    const selectedKeySet = new Set(selectedEquipmentMappingKeys);
+    setEquipmentMappings(
+      equipmentMappings.map((row, index) =>
+        selectedKeySet.has(buildEquipmentMappingRowKey(row, index))
+          ? {
+              ...row,
+              target_category: nextTarget,
+              is_required_for_recent_processing: false,
+              prediction_target: null,
+              prediction_confidence_label: null,
+            }
+          : row,
+      ),
+    );
+    setSelectedEquipmentMappingKeys([]);
+    setBulkEquipmentTarget("");
+  }
+
+  function handleApplyEquipmentPrediction(rowIndex: number, predictionTarget: string) {
+    setEquipmentMappings(
+      equipmentMappings.map((row, index) =>
+        index === rowIndex
+          ? {
+              ...row,
+              target_category: predictionTarget,
+              is_required_for_recent_processing: false,
+              prediction_target: null,
+              prediction_confidence_label: null,
+            }
+          : row,
+      ),
+    );
+  }
 
   async function saveAllDirtySections(): Promise<boolean> {
     if (!draftState) {
@@ -1486,31 +1640,75 @@ export function ProfileSettingsWorkspace({
                     }
                   />
                   <p className="muted">
-                    Observed rows were auto-added from unmapped labor values seen during processing. Leave them blank or
-                    map them when ready.
+                    Required unmapped labor values from recent processing appear first. Observed rows were auto-added from
+                    labor values seen during processing and can stay blank until you are ready to map them.
                   </p>
                   {laborMappingValidation.messages.length > 0 ? <RowMessages messages={laborMappingValidation.messages} /> : null}
+                  <div className="review-bulk-bar settings-bulk-bar">
+                    <div>
+                      <strong>{selectedLaborMappingKeys.length} labor row{selectedLaborMappingKeys.length === 1 ? "" : "s"} selected</strong>
+                      <p className="muted">Choose one labor target to apply it across the current mapping selection.</p>
+                    </div>
+                    <div className="actions review-bulk-actions">
+                      <label className="field bulk-field">
+                        <span>Bulk labor target</span>
+                        <select
+                          aria-label="Bulk labor mapping target"
+                          value={bulkLaborTarget}
+                          onChange={(event) => setBulkLaborTarget(event.target.value)}
+                          disabled={busy || laborMappings.length === 0}
+                        >
+                          <option value="">Choose labor target</option>
+                          {laborTargets.map((target) => (
+                            <option key={`labor-bulk-target-${target}`} value={target}>
+                              {target}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={handleBulkLaborTargetApply}
+                        disabled={busy || selectedLaborMappingKeys.length === 0 || !bulkLaborTarget.trim()}
+                      >
+                        Apply labor target
+                      </button>
+                    </div>
+                  </div>
                   <div className="table-wrap">
                     <table>
                       <thead>
                         <tr>
+                          <th>Select</th>
                           <th>Raw value</th>
                           <th>Target classification</th>
                           <th>Notes</th>
-                          <th>Observed</th>
+                          <th>Source</th>
                           <th>Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {laborMappings.length === 0 ? (
                           <tr>
-                            <td colSpan={5}>
+                            <td colSpan={6}>
                               <p className="empty-state">No labor mappings are saved yet. Add a row to start building this domain.</p>
                             </td>
                           </tr>
                         ) : (
-                          laborMappings.map((row, index) => (
-                            <tr key={`labor-mapping-${index}`}>
+                          laborMappingEntries.map(({ row, index, rowKey }) => (
+                            <tr
+                              key={`labor-mapping-${rowKey}`}
+                              className={row.is_required_for_recent_processing ? "mapping-row-required" : undefined}
+                            >
+                              <td>
+                                <input
+                                  aria-label={`Select labor mapping ${index + 1}`}
+                                  type="checkbox"
+                                  checked={selectedLaborMappingKeys.includes(rowKey)}
+                                  onChange={(event) => handleLaborMappingSelectionChange(rowKey, event.target.checked)}
+                                />
+                              </td>
                               <td>
                                 <input
                                   aria-label={`Labor raw value ${index + 1}`}
@@ -1535,7 +1733,11 @@ export function ProfileSettingsWorkspace({
                                     setLaborMappings(
                                       laborMappings.map((item, itemIndex) =>
                                         itemIndex === index
-                                          ? { ...item, target_classification: event.target.value }
+                                          ? {
+                                              ...item,
+                                              target_classification: event.target.value,
+                                              is_required_for_recent_processing: event.target.value.trim().length > 0 ? false : item.is_required_for_recent_processing,
+                                            }
                                           : item,
                                       ),
                                     )
@@ -1562,7 +1764,14 @@ export function ProfileSettingsWorkspace({
                                   }
                                 />
                               </td>
-                              <td>{row.is_observed ? <ObservedBadge /> : <span className="muted">User row</span>}</td>
+                              <td>
+                                <div className="mapping-badge-stack">
+                                  {row.is_required_for_recent_processing && !row.target_classification.trim() ? (
+                                    <RequiredObservedBadge />
+                                  ) : null}
+                                  {row.is_observed ? <ObservedBadge /> : <span className="muted">User row</span>}
+                                </div>
+                              </td>
                               <td>
                                 <button
                                   type="button"
@@ -1603,30 +1812,74 @@ export function ProfileSettingsWorkspace({
                     }
                   />
                   <p className="muted">
-                    Observed equipment rows were auto-added from unmapped keys seen during processing and can remain
-                    unresolved.
+                    Required unmapped equipment keys from recent processing appear first. Advisory suggestions can help
+                    you map repeated raw keys faster, but nothing auto-applies without your choice.
                   </p>
                   {equipmentMappingValidation.messages.length > 0 ? <RowMessages messages={equipmentMappingValidation.messages} /> : null}
+                  <div className="review-bulk-bar settings-bulk-bar">
+                    <div>
+                      <strong>{selectedEquipmentMappingKeys.length} equipment row{selectedEquipmentMappingKeys.length === 1 ? "" : "s"} selected</strong>
+                      <p className="muted">Choose one equipment class to apply it across the current mapping selection.</p>
+                    </div>
+                    <div className="actions review-bulk-actions">
+                      <label className="field bulk-field">
+                        <span>Bulk equipment target</span>
+                        <select
+                          aria-label="Bulk equipment mapping target"
+                          value={bulkEquipmentTarget}
+                          onChange={(event) => setBulkEquipmentTarget(event.target.value)}
+                          disabled={busy || equipmentMappings.length === 0}
+                        >
+                          <option value="">Choose equipment class</option>
+                          {equipmentTargets.map((target) => (
+                            <option key={`equipment-bulk-target-${target}`} value={target}>
+                              {target}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={handleBulkEquipmentTargetApply}
+                        disabled={busy || selectedEquipmentMappingKeys.length === 0 || !bulkEquipmentTarget.trim()}
+                      >
+                        Apply equipment class
+                      </button>
+                    </div>
+                  </div>
                   <div className="table-wrap">
                     <table>
                       <thead>
                         <tr>
+                          <th>Select</th>
                           <th>Raw description</th>
                           <th>Target category</th>
-                          <th>Observed</th>
+                          <th>Source</th>
                           <th>Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {equipmentMappings.length === 0 ? (
                           <tr>
-                            <td colSpan={4}>
+                            <td colSpan={5}>
                               <p className="empty-state">No equipment mappings are saved yet. Add a row to start building this domain.</p>
                             </td>
                           </tr>
                         ) : (
-                          equipmentMappings.map((row, index) => (
-                            <tr key={`equipment-mapping-${index}`}>
+                          equipmentMappingEntries.map(({ row, index, rowKey }) => (
+                            <tr
+                              key={`equipment-mapping-${rowKey}`}
+                              className={row.is_required_for_recent_processing ? "mapping-row-required" : undefined}
+                            >
+                              <td>
+                                <input
+                                  aria-label={`Select equipment mapping ${index + 1}`}
+                                  type="checkbox"
+                                  checked={selectedEquipmentMappingKeys.includes(rowKey)}
+                                  onChange={(event) => handleEquipmentMappingSelectionChange(rowKey, event.target.checked)}
+                                />
+                              </td>
                               <td>
                                 <input
                                   aria-label={`Equipment raw description ${index + 1}`}
@@ -1656,7 +1909,14 @@ export function ProfileSettingsWorkspace({
                                     setEquipmentMappings(
                                       equipmentMappings.map((item, itemIndex) =>
                                         itemIndex === index
-                                          ? { ...item, target_category: event.target.value }
+                                          ? {
+                                              ...item,
+                                              target_category: event.target.value,
+                                              is_required_for_recent_processing: event.target.value.trim().length > 0 ? false : item.is_required_for_recent_processing,
+                                              prediction_target: event.target.value.trim().length > 0 ? null : item.prediction_target,
+                                              prediction_confidence_label:
+                                                event.target.value.trim().length > 0 ? null : item.prediction_confidence_label,
+                                            }
                                           : item,
                                       ),
                                     )
@@ -1669,8 +1929,28 @@ export function ProfileSettingsWorkspace({
                                     </option>
                                   ))}
                                 </select>
+                                {!row.target_category.trim() && row.prediction_target ? (
+                                  <div className="cell-secondary prediction-callout">
+                                    <span>{row.prediction_confidence_label ?? "Suggested"}: {row.prediction_target}</span>
+                                    <button
+                                      type="button"
+                                      className="tertiary-button inline-button"
+                                      onClick={() => handleApplyEquipmentPrediction(index, row.prediction_target ?? "")}
+                                      disabled={busy}
+                                    >
+                                      Use suggestion
+                                    </button>
+                                  </div>
+                                ) : null}
                               </td>
-                              <td>{row.is_observed ? <ObservedBadge /> : <span className="muted">User row</span>}</td>
+                              <td>
+                                <div className="mapping-badge-stack">
+                                  {row.is_required_for_recent_processing && !row.target_category.trim() ? (
+                                    <RequiredObservedBadge />
+                                  ) : null}
+                                  {row.is_observed ? <ObservedBadge /> : <span className="muted">User row</span>}
+                                </div>
+                              </td>
                               <td>
                                 <button
                                   type="button"

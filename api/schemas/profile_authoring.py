@@ -50,6 +50,7 @@ class LaborMappingRow(ApiModel):
     target_classification: str = ""
     notes: str = ""
     is_observed: bool = False
+    is_required_for_recent_processing: bool = False
 
 
 class EquipmentMappingRow(ApiModel):
@@ -59,6 +60,9 @@ class EquipmentMappingRow(ApiModel):
     raw_pattern: str | None = None
     target_category: str = ""
     is_observed: bool = False
+    is_required_for_recent_processing: bool = False
+    prediction_target: str | None = None
+    prediction_confidence_label: str | None = None
 
 
 class ClassificationSlotRow(ApiModel):

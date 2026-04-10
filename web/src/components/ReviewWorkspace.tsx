@@ -1,3 +1,5 @@
+import { Fragment, useEffect, useState } from "react";
+
 import type {
   ExportArtifactResponse,
   ProcessingRunDetailResponse,
@@ -25,16 +27,30 @@ interface ReviewWorkspaceProps {
   reviewSession: ReviewSessionResponse | null;
   rows: WorkspaceRow[];
   selectedRow: WorkspaceRow | null;
+  selectedReviewRecordKeys: string[];
   editForm: ReviewEditFormValue;
   exportArtifact: ExportArtifactResponse | null;
   lastDownloadedFilename: string;
   exportDisabled: boolean;
   exportDisabledMessage: string;
   busy: boolean;
+  onToggleReviewRowSelection: (recordKey: string, isSelected: boolean) => void;
   onSelectRow: (recordKey: string) => void;
   onEditFormChange: (value: ReviewEditFormValue) => void;
   onApplyEditBatch: () => Promise<void> | void;
+  onApplyBulkOmission: (nextOmissionState: boolean) => Promise<void> | void;
+  onApplyBulkLaborClassification: (targetClassification: string) => Promise<void> | void;
+  onApplyBulkEquipmentCategory: (targetCategory: string) => Promise<void> | void;
   onExportAndDownload: () => Promise<void> | void;
+}
+
+interface ReviewFamilyGroup {
+  familyKey: string;
+  label: string;
+  rows: WorkspaceRow[];
+  rawCost: number;
+  includedCost: number;
+  omittedCost: number;
 }
 
 function renderPrimary(value: string | number | null | undefined, fallback = "-"): string {
@@ -93,25 +109,93 @@ function buildSelectChoices(options: string[], currentValue: string): Array<{ va
   return choices;
 }
 
+function isLaborBulkCompatibleRow(row: WorkspaceRow): boolean {
+  const normalizedType = (row.record.record_type_normalized ?? row.record.record_type ?? "").trim().toLowerCase();
+  return normalizedType === "labor";
+}
+
+function isEquipmentBulkCompatibleRow(row: WorkspaceRow): boolean {
+  const normalizedType = (row.record.record_type_normalized ?? row.record.record_type ?? "").trim().toLowerCase();
+  return normalizedType === "equipment";
+}
+
+function formatFamilyLabel(value: string | null | undefined): string {
+  const normalized = String(value ?? "unknown")
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  if (!normalized) {
+    return "Unknown";
+  }
+
+  return normalized
+    .split(" ")
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function buildFamilyKey(row: WorkspaceRow): string {
+  const rawValue = row.record.record_type_normalized ?? row.record.record_type ?? "unknown";
+  return String(rawValue).trim().toLocaleLowerCase() || "unknown";
+}
+
+function buildFamilyGroups(rows: WorkspaceRow[]): ReviewFamilyGroup[] {
+  const groups = new Map<string, ReviewFamilyGroup>();
+
+  for (const row of rows) {
+    const familyKey = buildFamilyKey(row);
+    const cost = typeof row.record.cost === "number" ? row.record.cost : 0;
+    const existingGroup = groups.get(familyKey);
+    if (existingGroup) {
+      existingGroup.rows.push(row);
+      existingGroup.rawCost += cost;
+      if (row.record.is_omitted) {
+        existingGroup.omittedCost += cost;
+      } else {
+        existingGroup.includedCost += cost;
+      }
+      continue;
+    }
+
+    groups.set(familyKey, {
+      familyKey,
+      label: formatFamilyLabel(row.record.record_type_normalized ?? row.record.record_type),
+      rows: [row],
+      rawCost: cost,
+      includedCost: row.record.is_omitted ? 0 : cost,
+      omittedCost: row.record.is_omitted ? cost : 0,
+    });
+  }
+
+  return [...groups.values()];
+}
+
 export function ReviewWorkspace({
   runDetail,
   reviewSession,
   rows,
   selectedRow,
+  selectedReviewRecordKeys,
   editForm,
   exportArtifact,
   lastDownloadedFilename,
   exportDisabled,
   exportDisabledMessage,
   busy,
+  onToggleReviewRowSelection,
   onSelectRow,
   onEditFormChange,
   onApplyEditBatch,
+  onApplyBulkOmission,
+  onApplyBulkLaborClassification,
+  onApplyBulkEquipmentCategory,
   onExportAndDownload,
 }: ReviewWorkspaceProps) {
   const currentBlockers = reviewSession?.blocking_issues ?? [];
   const aggregateBlockers = runDetail?.aggregate_blockers ?? [];
   const exportRevision = reviewSession?.current_revision ?? 0;
+  const selectedReviewRecordKeySet = new Set(selectedReviewRecordKeys);
   const laborChoices = buildSelectChoices(
     reviewSession?.labor_classification_options ?? [],
     editForm.recapLaborClassification,
@@ -130,6 +214,58 @@ export function ReviewWorkspace({
     !reviewSession?.equipment_classification_options.some(
       (option) => option.trim().toLocaleLowerCase() === editForm.equipmentCategory.trim().toLocaleLowerCase(),
     );
+  const reviewTotals = rows.reduce(
+    (totals, row) => {
+      const cost = typeof row.record.cost === "number" ? row.record.cost : 0;
+      totals.rawCost += cost;
+      if (row.record.is_omitted) {
+        totals.omittedCost += cost;
+      } else {
+        totals.includedCost += cost;
+      }
+      return totals;
+    },
+    {
+      rawCost: 0,
+      includedCost: 0,
+      omittedCost: 0,
+    },
+  );
+  const familyGroups = buildFamilyGroups(rows);
+  const familyStateKey = familyGroups.map((group) => group.familyKey).join("|");
+  const selectedReviewRows = rows.filter((row) => selectedReviewRecordKeySet.has(row.recordKey));
+  const canBulkOmit = selectedReviewRows.some((row) => !row.record.is_omitted);
+  const canBulkInclude = selectedReviewRows.some((row) => row.record.is_omitted);
+  const [bulkLaborClassification, setBulkLaborClassification] = useState("");
+  const [bulkEquipmentCategory, setBulkEquipmentCategory] = useState("");
+  const [expandedFamilies, setExpandedFamilies] = useState<Record<string, boolean>>({});
+  const laborCompatibleSelection = selectedReviewRows.length > 0 && selectedReviewRows.every(isLaborBulkCompatibleRow);
+  const equipmentCompatibleSelection = selectedReviewRows.length > 0 && selectedReviewRows.every(isEquipmentBulkCompatibleRow);
+  const canBulkApplyLaborClassification =
+    laborCompatibleSelection &&
+    bulkLaborClassification.trim().length > 0 &&
+    selectedReviewRows.some((row) => (row.record.recap_labor_classification ?? "").trim() !== bulkLaborClassification.trim());
+  const canBulkApplyEquipmentCategory =
+    equipmentCompatibleSelection &&
+    bulkEquipmentCategory.trim().length > 0 &&
+    selectedReviewRows.some((row) => (row.record.equipment_category ?? "").trim() !== bulkEquipmentCategory.trim());
+
+  useEffect(() => {
+    setExpandedFamilies((current) => {
+      const nextState: Record<string, boolean> = {};
+      for (const group of familyGroups) {
+        nextState[group.familyKey] = current[group.familyKey] ?? false;
+      }
+      return nextState;
+    });
+  }, [familyStateKey]);
+
+  useEffect(() => {
+    if (selectedReviewRows.length === 0) {
+      setBulkLaborClassification("");
+      setBulkEquipmentCategory("");
+    }
+  }, [selectedReviewRows.length]);
 
   return (
     <section className="workspace-shell">
@@ -158,6 +294,18 @@ export function ReviewWorkspace({
           <div>
             <dt>Run status</dt>
             <dd>{runDetail?.status ?? "Waiting"}</dd>
+          </div>
+          <div>
+            <dt>Full raw total</dt>
+            <dd>{formatCurrency(reviewTotals.rawCost)}</dd>
+          </div>
+          <div>
+            <dt>Included total</dt>
+            <dd>{formatCurrency(reviewTotals.includedCost)}</dd>
+          </div>
+          <div>
+            <dt>Omitted total</dt>
+            <dd>{formatCurrency(reviewTotals.omittedCost)}</dd>
           </div>
         </dl>
       </div>
@@ -191,10 +339,90 @@ export function ReviewWorkspace({
               </div>
             )}
 
+            <div className="review-bulk-bar">
+              <div>
+                <strong>{selectedReviewRecordKeys.length} row{selectedReviewRecordKeys.length === 1 ? "" : "s"} selected</strong>
+                <p className="muted">Rows stay grouped by family. Use bulk omit/include or apply one shared target to the current selection.</p>
+              </div>
+              <div className="actions review-bulk-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => onApplyBulkOmission(true)}
+                  disabled={busy || selectedReviewRecordKeys.length === 0 || !canBulkOmit}
+                >
+                  Bulk omit selected
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => onApplyBulkOmission(false)}
+                  disabled={busy || selectedReviewRecordKeys.length === 0 || !canBulkInclude}
+                >
+                  Bulk include selected
+                </button>
+                <label className="field bulk-field">
+                  <span>Bulk labor class</span>
+                  <select
+                    aria-label="Bulk labor classification"
+                    value={bulkLaborClassification}
+                    onChange={(event) => setBulkLaborClassification(event.target.value)}
+                    disabled={busy || selectedReviewRecordKeys.length === 0}
+                  >
+                    <option value="">Choose labor class</option>
+                    {reviewSession.labor_classification_options.map((option) => (
+                      <option key={`bulk-labor-${option}`} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => onApplyBulkLaborClassification(bulkLaborClassification)}
+                  disabled={busy || !canBulkApplyLaborClassification}
+                >
+                  Apply labor class
+                </button>
+                <label className="field bulk-field">
+                  <span>Bulk equipment class</span>
+                  <select
+                    aria-label="Bulk equipment category"
+                    value={bulkEquipmentCategory}
+                    onChange={(event) => setBulkEquipmentCategory(event.target.value)}
+                    disabled={busy || selectedReviewRecordKeys.length === 0}
+                  >
+                    <option value="">Choose equipment class</option>
+                    {reviewSession.equipment_classification_options.map((option) => (
+                      <option key={`bulk-equipment-${option}`} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => onApplyBulkEquipmentCategory(bulkEquipmentCategory)}
+                  disabled={busy || !canBulkApplyEquipmentCategory}
+                >
+                  Apply equipment class
+                </button>
+              </div>
+            </div>
+            {selectedReviewRows.length > 0 && !laborCompatibleSelection ? (
+              <p className="muted bulk-hint">Bulk labor classification works only when every selected row is a labor row.</p>
+            ) : null}
+            {selectedReviewRows.length > 0 && !equipmentCompatibleSelection ? (
+              <p className="muted bulk-hint">Bulk equipment category works only when every selected row is an equipment row.</p>
+            ) : null}
+
             <div className="table-wrap workspace-table-wrap">
               <table className="review-table">
                 <thead>
                   <tr>
+                    <th>Select</th>
                     <th>Type</th>
                     <th>Vendor</th>
                     <th>Labor Class</th>
@@ -205,55 +433,98 @@ export function ReviewWorkspace({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => {
-                    const currentType = row.record.record_type_normalized ?? row.record.record_type;
-                    const currentVendor = row.record.vendor_name_normalized ?? row.record.vendor_name;
-                    const currentLabor =
-                      row.record.recap_labor_classification ?? row.record.labor_class_normalized ?? row.record.labor_class_raw;
-                    const currentEquipment = row.record.equipment_category ?? row.record.equipment_description;
-                    const warningClass = row.record.warnings.length > 0 ? "warning" : "";
-                    const omittedClass = row.record.is_omitted ? "omitted" : "";
-                    const selectedClass = selectedRow?.recordKey === row.recordKey ? "selected" : "";
+                  {familyGroups.map((group) => {
+                    const isExpanded = expandedFamilies[group.familyKey] ?? false;
                     return (
-                      <tr
-                        key={row.recordKey}
-                        className={`workspace-row ${selectedClass} ${warningClass} ${omittedClass}`.trim()}
-                        onClick={() => onSelectRow(row.recordKey)}
-                        aria-selected={selectedRow?.recordKey === row.recordKey}
-                      >
-                        <td>
-                          <div className="cell-primary">{renderPrimary(currentType)}</div>
-                          <div className="cell-secondary">{renderPrimary(row.record.record_type, "-")}</div>
-                        </td>
-                        <td>
-                          <div className="cell-primary">{renderPrimary(currentVendor)}</div>
-                          <div className="cell-secondary">
-                            {renderPrimary(row.record.vendor_name ?? row.record.vendor_id_raw)}
-                          </div>
-                        </td>
-                        <td>
-                          <div className="cell-primary">{renderPrimary(currentLabor)}</div>
-                          <div className="cell-secondary">{renderPrimary(row.record.labor_class_raw)}</div>
-                        </td>
-                        <td>
-                          <div className="cell-primary">{renderPrimary(currentEquipment)}</div>
-                          <div className="cell-secondary">{renderPrimary(row.record.equipment_description)}</div>
-                        </td>
-                        <td>
-                          <div className="cell-primary">{formatCurrency(row.record.cost)}</div>
-                          <div className="cell-secondary">
-                            {row.record.hours ? `${row.record.hours} ${row.record.hour_type ?? "hrs"}` : "-"}
-                          </div>
-                        </td>
-                        <td>
-                          <div className="cell-primary">{renderPrimary(row.record.raw_description)}</div>
-                          <div className="cell-secondary">{formatSourceLabel(row)}</div>
-                        </td>
-                        <td>
-                          <div className="attention-pill">{buildAttentionSummary(row)}</div>
-                          <div className="cell-secondary">{row.record.is_omitted ? "Hidden from export" : "Included"}</div>
-                        </td>
-                      </tr>
+                      <Fragment key={group.familyKey}>
+                        <tr key={`${group.familyKey}-group`} className="review-group-row">
+                          <td colSpan={8}>
+                            <button
+                              type="button"
+                              className="review-group-toggle"
+                              aria-expanded={isExpanded}
+                              onClick={() =>
+                                setExpandedFamilies((current) => ({
+                                  ...current,
+                                  [group.familyKey]: !(current[group.familyKey] ?? false),
+                                }))
+                              }
+                            >
+                              <span className="review-group-title">
+                                {isExpanded ? "Hide" : "Show"} {group.label}
+                              </span>
+                              <span>{group.rows.length} rows</span>
+                              <span>Raw {formatCurrency(group.rawCost)}</span>
+                              <span>Included {formatCurrency(group.includedCost)}</span>
+                              {group.omittedCost > 0 ? <span>Omitted {formatCurrency(group.omittedCost)}</span> : null}
+                            </button>
+                          </td>
+                        </tr>
+                        {isExpanded
+                          ? group.rows.map((row) => {
+                              const currentType = row.record.record_type_normalized ?? row.record.record_type;
+                              const currentVendor = row.record.vendor_name_normalized ?? row.record.vendor_name;
+                              const currentLabor =
+                                row.record.recap_labor_classification ??
+                                row.record.labor_class_normalized ??
+                                row.record.labor_class_raw;
+                              const currentEquipment = row.record.equipment_category ?? row.record.equipment_description;
+                              const warningClass = row.record.warnings.length > 0 ? "warning" : "";
+                              const omittedClass = row.record.is_omitted ? "omitted" : "";
+                              const selectedClass = selectedRow?.recordKey === row.recordKey ? "selected" : "";
+                              const bulkSelectedClass = selectedReviewRecordKeySet.has(row.recordKey) ? "bulk-selected" : "";
+                              return (
+                                <tr
+                                  key={row.recordKey}
+                                  className={`workspace-row ${selectedClass} ${warningClass} ${omittedClass} ${bulkSelectedClass}`.trim()}
+                                  onClick={() => onSelectRow(row.recordKey)}
+                                  aria-selected={selectedRow?.recordKey === row.recordKey}
+                                >
+                                  <td onClick={(event) => event.stopPropagation()}>
+                                    <input
+                                      aria-label={`Select ${row.record.raw_description || row.recordKey}`}
+                                      type="checkbox"
+                                      checked={selectedReviewRecordKeySet.has(row.recordKey)}
+                                      onChange={(event) => onToggleReviewRowSelection(row.recordKey, event.target.checked)}
+                                    />
+                                  </td>
+                                  <td>
+                                    <div className="cell-primary">{renderPrimary(currentType)}</div>
+                                    <div className="cell-secondary">{renderPrimary(row.record.record_type, "-")}</div>
+                                  </td>
+                                  <td>
+                                    <div className="cell-primary">{renderPrimary(currentVendor)}</div>
+                                    <div className="cell-secondary">
+                                      {renderPrimary(row.record.vendor_name ?? row.record.vendor_id_raw)}
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="cell-primary">{renderPrimary(currentLabor)}</div>
+                                    <div className="cell-secondary">{renderPrimary(row.record.labor_class_raw)}</div>
+                                  </td>
+                                  <td>
+                                    <div className="cell-primary">{renderPrimary(currentEquipment)}</div>
+                                    <div className="cell-secondary">{renderPrimary(row.record.equipment_description)}</div>
+                                  </td>
+                                  <td>
+                                    <div className="cell-primary">{formatCurrency(row.record.cost)}</div>
+                                    <div className="cell-secondary">
+                                      {row.record.hours ? `${row.record.hours} ${row.record.hour_type ?? "hrs"}` : "-"}
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <div className="cell-primary">{renderPrimary(row.record.raw_description)}</div>
+                                    <div className="cell-secondary">{formatSourceLabel(row)}</div>
+                                  </td>
+                                  <td>
+                                    <div className="attention-pill">{buildAttentionSummary(row)}</div>
+                                    <div className="cell-secondary">{row.record.is_omitted ? "Hidden from export" : "Included"}</div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>

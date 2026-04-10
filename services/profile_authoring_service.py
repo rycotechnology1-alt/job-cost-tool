@@ -954,6 +954,20 @@ class ProfileAuthoringService:
             catalog_phase_rows=phase_catalog,
             saved_rule_rows=behavioral_bundle["review_rules"].get("default_omit_rules", []),
         )
+        unresolved_observations = self._repository.list_observations(
+            trusted_profile.trusted_profile_id,
+            unresolved_only=True,
+        )
+        required_labor_raw_values = [
+            observation.canonical_raw_key
+            for observation in unresolved_observations
+            if observation.observation_domain == _OBSERVATION_DOMAIN_LABOR
+        ]
+        required_equipment_raw_descriptions = [
+            observation.canonical_raw_key
+            for observation in unresolved_observations
+            if observation.observation_domain == _OBSERVATION_DOMAIN_EQUIPMENT
+        ]
         labor_classifications = self._active_classifications(behavioral_bundle["labor_slots"])
         equipment_classifications = self._active_classifications(behavioral_bundle["equipment_slots"])
         template_payload = self._template_payload(behavioral_bundle)
@@ -974,8 +988,15 @@ class ProfileAuthoringService:
             template_filename=str(template_payload.get("template_filename") or "") or None,
             default_omit_rules=default_omit_rules,
             default_omit_phase_options=phase_options,
-            labor_mappings=build_labor_mapping_rows(behavioral_bundle["labor_mapping"]),
-            equipment_mappings=build_equipment_mapping_rows(behavioral_bundle["equipment_mapping"]),
+            labor_mappings=build_labor_mapping_rows(
+                behavioral_bundle["labor_mapping"],
+                required_raw_values=required_labor_raw_values,
+            ),
+            equipment_mappings=build_equipment_mapping_rows(
+                behavioral_bundle["equipment_mapping"],
+                required_raw_descriptions=required_equipment_raw_descriptions,
+                active_targets=equipment_classifications,
+            ),
             labor_slots=self._slot_rows(behavioral_bundle["labor_slots"]),
             equipment_slots=self._slot_rows(behavioral_bundle["equipment_slots"]),
             labor_rates=build_labor_rate_rows(behavioral_bundle["rates"], labor_classifications),

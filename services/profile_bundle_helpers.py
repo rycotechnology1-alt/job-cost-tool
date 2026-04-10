@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import difflib
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -403,6 +405,7 @@ def _build_labor_mapping_rows(
     labor_mapping: dict[str, Any],
     *,
     observed_raw_values: list[str] | None = None,
+    required_raw_values: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Flatten raw-first labor mapping rows and observed values into editor rows."""
     saved_rows = _normalize_saved_labor_mapping_rows(labor_mapping.get("saved_mappings", []))
@@ -434,7 +437,24 @@ def _build_labor_mapping_rows(
             }
         )
 
-    rows.sort(key=lambda row: (row["target_classification"].casefold(), row["raw_value"].casefold()))
+    required_raw_key_set = {
+        _canonicalize_labor_token(str(raw_value).strip()).casefold()
+        for raw_value in (required_raw_values or [])
+        if _canonicalize_labor_token(str(raw_value).strip())
+    }
+
+    rows.sort(
+        key=lambda row: (
+            _mapping_priority(
+                raw_key=str(row.get("raw_value", "")),
+                target_value=str(row.get("target_classification", "")),
+                is_observed=_normalize_observed_flag(row.get("is_observed")),
+                required_raw_key_set=required_raw_key_set,
+            ),
+            row["target_classification"].casefold(),
+            row["raw_value"].casefold(),
+        )
+    )
     response_rows: list[dict[str, Any]] = []
     for row in rows:
         response_row: dict[str, Any] = {
@@ -442,8 +462,13 @@ def _build_labor_mapping_rows(
             "target_classification": row["target_classification"],
             "notes": row["notes"],
         }
-        if _normalize_observed_flag(row.get("is_observed")) and not str(row.get("target_classification", "")).strip():
+        is_unmapped_observed = _normalize_observed_flag(row.get("is_observed")) and not str(
+            row.get("target_classification", "")
+        ).strip()
+        if is_unmapped_observed:
             response_row["is_observed"] = True
+            if str(row.get("raw_value", "")).strip().casefold() in required_raw_key_set:
+                response_row["is_required_for_recent_processing"] = True
         response_rows.append(response_row)
     return response_rows
 
@@ -577,6 +602,8 @@ def _build_equipment_mapping_rows(
     equipment_mapping: dict[str, Any],
     *,
     observed_raw_descriptions: list[str] | None = None,
+    required_raw_descriptions: list[str] | None = None,
+    active_targets: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Flatten raw-first equipment mappings and observed values into editor rows."""
     saved_rows = _normalize_saved_equipment_mapping_rows(equipment_mapping.get("saved_mappings", []))
@@ -607,7 +634,25 @@ def _build_equipment_mapping_rows(
             }
         )
 
-    rows.sort(key=lambda row: (row["target_category"].casefold(), row["raw_description"].casefold()))
+    required_raw_key_set = {
+        _canonicalize_equipment_mapping_key(str(raw_description).strip()).casefold()
+        for raw_description in (required_raw_descriptions or [])
+        if _canonicalize_equipment_mapping_key(str(raw_description).strip())
+    }
+    prediction_map = _build_equipment_prediction_map(rows, active_targets=active_targets or [])
+
+    rows.sort(
+        key=lambda row: (
+            _mapping_priority(
+                raw_key=str(row.get("raw_description", "")),
+                target_value=str(row.get("target_category", "")),
+                is_observed=_normalize_observed_flag(row.get("is_observed")),
+                required_raw_key_set=required_raw_key_set,
+            ),
+            row["target_category"].casefold(),
+            row["raw_description"].casefold(),
+        )
+    )
     response_rows: list[dict[str, str | bool]] = []
     for row in rows:
         response_row: dict[str, str | bool] = {
@@ -615,8 +660,18 @@ def _build_equipment_mapping_rows(
             "raw_pattern": row["raw_description"],
             "target_category": row["target_category"],
         }
-        if _normalize_observed_flag(row.get("is_observed")) and not str(row.get("target_category", "")).strip():
+        is_unmapped_observed = _normalize_observed_flag(row.get("is_observed")) and not str(
+            row.get("target_category", "")
+        ).strip()
+        if is_unmapped_observed:
             response_row["is_observed"] = True
+            if str(row.get("raw_description", "")).strip().casefold() in required_raw_key_set:
+                response_row["is_required_for_recent_processing"] = True
+        if not str(row.get("target_category", "")).strip():
+            prediction = prediction_map.get(str(row.get("raw_description", "")).strip().casefold())
+            if prediction is not None:
+                response_row["prediction_target"] = prediction["prediction_target"]
+                response_row["prediction_confidence_label"] = prediction["prediction_confidence_label"]
         response_rows.append(response_row)
     return response_rows
 
@@ -1116,6 +1171,101 @@ def _normalize_observed_flag(value: Any) -> bool:
         return value
     text_value = str(value or "").strip().casefold()
     return text_value in {"1", "true", "yes", "y"}
+
+
+def _mapping_priority(
+    *,
+    raw_key: str,
+    target_value: str,
+    is_observed: bool,
+    required_raw_key_set: set[str],
+) -> int:
+    """Sort required unresolved observations ahead of the broader mapping list."""
+    normalized_raw_key = str(raw_key or "").strip().casefold()
+    if not str(target_value or "").strip() and normalized_raw_key in required_raw_key_set:
+        return 0
+    if not str(target_value or "").strip() and is_observed:
+        return 1
+    return 2
+
+
+def _prediction_tokens(value: str) -> set[str]:
+    """Tokenize a display label or canonical key for lightweight suggestion scoring."""
+    return {token for token in re.split(r"[^A-Z0-9]+", str(value or "").upper()) if len(token) >= 2}
+
+
+def _score_equipment_prediction_candidate(raw_description: str, candidate_text: str) -> float:
+    """Score one equipment prediction candidate using exactness, token overlap, and string similarity."""
+    normalized_raw = _canonicalize_equipment_mapping_key(raw_description)
+    normalized_candidate = _canonicalize_equipment_mapping_key(candidate_text)
+    if not normalized_raw or not normalized_candidate:
+        return 0.0
+    if normalized_raw == normalized_candidate:
+        return 1.0
+    if normalized_raw in normalized_candidate or normalized_candidate in normalized_raw:
+        return 0.94
+
+    raw_tokens = _prediction_tokens(normalized_raw)
+    candidate_tokens = _prediction_tokens(normalized_candidate)
+    token_overlap = (
+        len(raw_tokens.intersection(candidate_tokens)) / max(len(raw_tokens), len(candidate_tokens))
+        if raw_tokens and candidate_tokens
+        else 0.0
+    )
+    similarity = difflib.SequenceMatcher(a=normalized_raw, b=normalized_candidate).ratio()
+    return max(similarity, (similarity * 0.55) + (token_overlap * 0.75))
+
+
+def _build_equipment_prediction_map(
+    rows: list[dict[str, Any]],
+    *,
+    active_targets: list[str],
+) -> dict[str, dict[str, str]]:
+    """Suggest likely equipment targets for currently unmapped rows from nearby known mapping examples."""
+    example_rows = [
+        row
+        for row in rows
+        if str(row.get("target_category", "")).strip()
+    ]
+    if not example_rows:
+        return {}
+
+    allowed_target_set = {target.casefold() for target in active_targets if str(target).strip()}
+    target_examples: dict[str, list[str]] = {}
+    for row in example_rows:
+        target_category = str(row.get("target_category", "")).strip()
+        if not target_category:
+            continue
+        if allowed_target_set and target_category.casefold() not in allowed_target_set:
+            continue
+        target_examples.setdefault(target_category, []).append(str(row.get("raw_description", "")).strip())
+        target_examples[target_category].append(target_category)
+
+    predictions: dict[str, dict[str, str]] = {}
+    for row in rows:
+        raw_description = str(row.get("raw_description", "")).strip()
+        if not raw_description or str(row.get("target_category", "")).strip():
+            continue
+        ranked_candidates: list[tuple[float, str]] = []
+        for target_category, example_texts in target_examples.items():
+            score = max(
+                (_score_equipment_prediction_candidate(raw_description, candidate_text) for candidate_text in example_texts),
+                default=0.0,
+            )
+            ranked_candidates.append((score, target_category))
+
+        ranked_candidates.sort(key=lambda item: (-item[0], item[1].casefold()))
+        if not ranked_candidates or ranked_candidates[0][0] < 0.65:
+            continue
+        if len(ranked_candidates) > 1 and ranked_candidates[0][0] - ranked_candidates[1][0] < 0.08:
+            continue
+
+        confidence_label = "High confidence" if ranked_candidates[0][0] >= 0.9 else "Likely match"
+        predictions[raw_description.casefold()] = {
+            "prediction_target": ranked_candidates[0][1],
+            "prediction_confidence_label": confidence_label,
+        }
+    return predictions
 
 
 def _build_labor_saved_row(

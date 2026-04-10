@@ -82,6 +82,7 @@ function buildDraftState() {
         target_classification: "",
         notes: "",
         is_observed: true,
+        is_required_for_recent_processing: true,
       },
       {
         raw_value: "CARPENTER",
@@ -89,17 +90,33 @@ function buildDraftState() {
         notes: "Baseline row",
         is_observed: false,
       },
+      {
+        raw_value: "SHIFT DIFFERENTIAL",
+        target_classification: "",
+        notes: "",
+        is_observed: true,
+      },
     ],
     equipment_mappings: [
       {
         raw_description: "NEW OBSERVED EQUIPMENT",
         target_category: "",
         is_observed: true,
+        is_required_for_recent_processing: true,
+        prediction_target: "Excavator",
+        prediction_confidence_label: "Likely match",
       },
       {
         raw_description: "MINI EX",
         target_category: "Excavator",
         is_observed: false,
+      },
+      {
+        raw_description: "SMALL EX",
+        target_category: "",
+        is_observed: true,
+        prediction_target: "Excavator",
+        prediction_confidence_label: "Likely match",
       },
     ],
     labor_slots: [
@@ -648,6 +665,51 @@ describe("Profile settings workspace", () => {
     ).toBeGreaterThanOrEqual(2);
   });
 
+  it("prioritizes required mapping rows and applies bulk labor and equipment targets in settings", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+
+    expect(await screen.findAllByText("Required now")).toHaveLength(2);
+
+    await user.click(screen.getByRole("checkbox", { name: /select labor mapping 1/i }));
+    await user.click(screen.getByRole("checkbox", { name: /select labor mapping 3/i }));
+    await user.selectOptions(screen.getByRole("combobox", { name: /bulk labor mapping target/i }), "Journeyman");
+    await user.click(screen.getByRole("button", { name: /apply labor target/i }));
+
+    expect(screen.getByLabelText(/labor target classification 1/i)).toHaveValue("Journeyman");
+    expect(screen.getByLabelText(/labor target classification 3/i)).toHaveValue("Journeyman");
+
+    await user.click(screen.getByRole("checkbox", { name: /select equipment mapping 1/i }));
+    await user.click(screen.getByRole("checkbox", { name: /select equipment mapping 3/i }));
+    await user.selectOptions(screen.getByRole("combobox", { name: /bulk equipment mapping target/i }), "Excavator");
+    await user.click(screen.getByRole("button", { name: /apply equipment class/i }));
+
+    expect(screen.getByLabelText(/equipment target category 1/i)).toHaveValue("Excavator");
+    expect(screen.getByLabelText(/equipment target category 3/i)).toHaveValue("Excavator");
+  });
+
+  it("shows advisory equipment suggestions and only applies them when the user chooses them", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+
+    expect(await screen.findAllByText(/likely match: excavator/i)).toHaveLength(2);
+    expect(screen.getByLabelText(/equipment target category 1/i)).toHaveValue("");
+
+    await user.click(screen.getAllByRole("button", { name: /use suggestion/i })[0]);
+
+    expect(screen.getByLabelText(/equipment target category 1/i)).toHaveValue("Excavator");
+  });
+
   it("loads existing unpublished profile changes and shows save failure clearly", async () => {
     const user = userEvent.setup();
     installSettingsFetchMock({ openDraftId: "draft-1", publishFails: true });
@@ -734,7 +796,7 @@ describe("Profile settings workspace", () => {
     await user.click(screen.getByRole("button", { name: /stay here/i }));
 
     expect(screen.getByRole("heading", { name: "Default Profile" })).toBeInTheDocument();
-    expect(screen.getByDisplayValue("CHANGED-LABOR")).toBeInTheDocument();
+    expect(screen.getByLabelText(/labor raw value 2/i)).toHaveValue("CHANGED-LABOR");
     expect(screen.queryByRole("dialog", { name: /leave profile settings with unsaved sections/i })).not.toBeInTheDocument();
   });
 
@@ -759,7 +821,7 @@ describe("Profile settings workspace", () => {
     expect(await screen.findByRole("button", { name: /edit current profile/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /edit current profile/i }));
 
-    expect(await screen.findByDisplayValue("SAVED-LABOR")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/labor raw value 2/i)).toHaveValue("SAVED-LABOR");
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH")).toBe(true);
@@ -923,7 +985,7 @@ describe("Profile settings workspace", () => {
     await user.click(screen.getByRole("button", { name: "Field Team" }));
     await screen.findByRole("heading", { name: "Field Team" });
     await user.click(screen.getByRole("button", { name: /edit current profile/i }));
-    expect(await screen.findByDisplayValue("FIELD-LABOR")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/labor raw value 1/i)).toHaveValue("FIELD-LABOR");
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/labor-mappings" && init?.method === "PATCH")).toBe(true);

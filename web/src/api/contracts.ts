@@ -154,6 +154,7 @@ export interface LaborMappingRow {
   target_classification: string;
   notes: string;
   is_observed: boolean;
+  is_required_for_recent_processing?: boolean;
 }
 
 export interface EquipmentMappingRow {
@@ -161,6 +162,9 @@ export interface EquipmentMappingRow {
   raw_pattern?: string | null;
   target_category: string;
   is_observed: boolean;
+  is_required_for_recent_processing?: boolean;
+  prediction_target?: string | null;
+  prediction_confidence_label?: string | null;
 }
 
 export interface ClassificationSlotRow {

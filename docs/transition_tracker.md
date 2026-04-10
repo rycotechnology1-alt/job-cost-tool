@@ -44,6 +44,18 @@ Historical migration notes, retired planning sections, and older long-form chang
 
 ## Recent Meaningful Changes
 
+### [2026-04-09] Phase 2 added bulk review classification actions and prioritized mapping guidance
+- **What changed:** The web review workspace can now bulk-apply one labor classification or equipment category across compatible selected rows, and the profile-settings mapping tables now surface required unresolved observations first, support bulk target assignment, and show advisory equipment suggestions.
+- **Why:** This lands the second operator-throughput slice from the advanced-feature roadmap and reduces repetitive mapping/review work without changing lineage or published-version rules.
+- **Area:** Application services / Persistence/API / Web delivery / Tests
+- **Follow-up needed:** If later review polishing continues, consider hiding irrelevant bulk controls more aggressively for mixed selections and refine equipment-suggestion heuristics against broader pilot data.
+
+### [2026-04-09] Review workflow now supports staged PDF queueing, grouped families, totals, and bulk omit/include
+- **What changed:** The browser review launch flow now stages up to 10 PDFs in a reusable queue, review rows render grouped by family with full raw/included/omitted totals, and batch omit/include actions submit one append-only edit batch across the selected rows.
+- **Why:** This lands the first operator-throughput slice from the advanced-feature roadmap without widening into later template/model work.
+- **Area:** Web delivery / Tests
+- **Follow-up needed:** Later phases can build on the staged queue and grouped-row selection model for bulk classification/category changes and mapping-priority workflows.
+
 ### [2026-04-09] Web settings now uses a simpler current-profile edit/save flow
 - **What changed:** The browser settings workspace now presents `Edit current profile` and `Save profile settings` instead of exposing create/open/publish draft terminology. Saving batches dirty section saves and publishes in one operator-facing flow.
 - **Why:** The earlier draft lifecycle wording was correct technically but confusing operationally.

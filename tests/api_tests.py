@@ -505,6 +505,9 @@ class Phase1ApiTests(unittest.TestCase):
                 "raw_pattern": "PICKUP TRUCK",
                 "target_category": "Pick-up Truck",
                 "is_observed": False,
+                "is_required_for_recent_processing": False,
+                "prediction_target": None,
+                "prediction_confidence_label": None,
             },
         )
 
@@ -546,6 +549,9 @@ class Phase1ApiTests(unittest.TestCase):
                 "raw_pattern": "PICKUP TRUCK",
                 "target_category": "Pick-up Truck",
                 "is_observed": False,
+                "is_required_for_recent_processing": False,
+                "prediction_target": None,
+                "prediction_confidence_label": None,
             },
         )
 
@@ -651,8 +657,50 @@ class Phase1ApiTests(unittest.TestCase):
                 "target_classification": "",
                 "notes": "",
                 "is_observed": True,
+                "is_required_for_recent_processing": True,
             },
             draft_response.json()["labor_mappings"],
+        )
+
+    def test_processing_run_observation_capture_exposes_equipment_prediction_metadata_in_draft_state(self) -> None:
+        upload_response = self.client.post(
+            "/api/source-documents/uploads",
+            files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        upload_payload = upload_response.json()
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[self._make_unmapped_equipment_record(raw_description="pickup")],
+        ):
+            run_response = self.client.post(
+                "/api/runs",
+                json={
+                    "upload_id": upload_payload["upload_id"],
+                    "trusted_profile_name": "default",
+                },
+            )
+
+        self.assertEqual(run_response.status_code, 201)
+        profile_detail = self.client.get("/api/profiles/trusted-profile:org-default:default")
+        self.assertEqual(profile_detail.status_code, 200)
+        draft_id = profile_detail.json()["open_draft_id"]
+        self.assertTrue(draft_id)
+
+        draft_response = self.client.get(f"/api/profile-drafts/{draft_id}")
+        self.assertEqual(draft_response.status_code, 200)
+        self.assertIn(
+            {
+                "raw_description": "PICKUP",
+                "raw_pattern": "PICKUP",
+                "target_category": "",
+                "is_observed": True,
+                "is_required_for_recent_processing": True,
+                "prediction_target": "Pick-up Truck",
+                "prediction_confidence_label": "Likely match",
+            },
+            draft_response.json()["equipment_mappings"],
         )
 
     def test_profile_sync_export_creation_and_download_use_published_version_only(self) -> None:

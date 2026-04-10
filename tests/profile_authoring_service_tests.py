@@ -357,6 +357,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
                 "target_classification": "",
                 "notes": "",
                 "is_observed": True,
+                "is_required_for_recent_processing": True,
             },
             draft_state.labor_mappings,
         )
@@ -435,9 +436,31 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
                 "raw_pattern": "CRANE TRUCK",
                 "target_category": "",
                 "is_observed": True,
+                "is_required_for_recent_processing": True,
             },
             draft_state.equipment_mappings,
         )
+
+    def test_unmapped_equipment_rows_surface_required_priority_and_prediction_metadata(self) -> None:
+        trusted_profile_id = "trusted-profile:org-default:default"
+        processing_run_id = self._create_reference_processing_run_id()
+
+        self.service.capture_unmapped_observations(
+            trusted_profile_id,
+            processing_run_id=processing_run_id,
+            records=[self._make_unmapped_equipment_record(raw_description="pickup")],
+        )
+
+        draft = self.repository.get_open_draft(trusted_profile_id)
+        draft_state = self.service.get_draft_state(draft.trusted_profile_draft_id)
+        predicted_row = next(
+            row for row in draft_state.equipment_mappings if row["raw_description"] == "PICKUP"
+        )
+
+        self.assertTrue(predicted_row["is_observed"])
+        self.assertTrue(predicted_row["is_required_for_recent_processing"])
+        self.assertEqual(predicted_row["prediction_target"], "Pick-up Truck")
+        self.assertEqual(predicted_row["prediction_confidence_label"], "Likely match")
 
     def test_discard_draft_preserves_observations_and_future_processing_can_recreate_it(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
@@ -483,6 +506,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
                 "target_classification": "",
                 "notes": "",
                 "is_observed": True,
+                "is_required_for_recent_processing": True,
             },
             recreated_state.labor_mappings,
         )
