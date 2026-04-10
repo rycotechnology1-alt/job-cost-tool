@@ -44,6 +44,18 @@ Historical migration notes, retired planning sections, and older long-form chang
 
 ## Recent Meaningful Changes
 
+### [2026-04-10] Review export is now visible immediately when the workspace opens
+- **What changed:** The browser review sidebar now keeps the export card visible as soon as a review session loads instead of hiding export behind selected-row details.
+- **Why:** Export readiness is a workspace-level action, so gating the button behind row selection was unnecessary and confusing.
+- **Area:** Web delivery / Tests
+- **Follow-up needed:** If the sidebar keeps shrinking later, consider whether export and other workspace-level actions should stay in the sidebar or move into a dedicated header actions region.
+
+### [2026-04-10] Review vendor editing now lives in the top action bar with bulk support
+- **What changed:** The browser review workspace now applies vendor-name edits from the same top action bar used for omit/include and labor/equipment bulk edits, and the redundant right-sidebar `Edit selected row` editor has been removed.
+- **Why:** After the earlier bulk-edit work, the sidebar editor was down to a single vendor-only use case and was making the review workflow feel split and redundant.
+- **Area:** Web delivery / Tests
+- **Follow-up needed:** If row-editing polish continues later, consider hiding incompatible top-bar actions more aggressively when the current checkbox selection mixes vendor, labor, and equipment rows.
+
 ### [2026-04-09] Phase 2 added bulk review classification actions and prioritized mapping guidance
 - **What changed:** The web review workspace can now bulk-apply one labor classification or equipment category across compatible selected rows, and the profile-settings mapping tables now surface required unresolved observations first, support bulk target assignment, and show advisory equipment suggestions.
 - **Why:** This lands the second operator-throughput slice from the advanced-feature roadmap and reduces repetitive mapping/review work without changing lineage or published-version rules.

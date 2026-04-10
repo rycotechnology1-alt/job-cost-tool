@@ -6,13 +6,6 @@ import type {
   ReviewSessionResponse,
 } from "../api/contracts";
 
-export interface ReviewEditFormValue {
-  vendorNameNormalized: string;
-  recapLaborClassification: string;
-  equipmentCategory: string;
-  omissionChoice: "unchanged" | "omit" | "include";
-}
-
 export interface WorkspaceRow {
   recordKey: string;
   recordIndex: number;
@@ -28,7 +21,6 @@ interface ReviewWorkspaceProps {
   rows: WorkspaceRow[];
   selectedRow: WorkspaceRow | null;
   selectedReviewRecordKeys: string[];
-  editForm: ReviewEditFormValue;
   exportArtifact: ExportArtifactResponse | null;
   lastDownloadedFilename: string;
   exportDisabled: boolean;
@@ -36,8 +28,7 @@ interface ReviewWorkspaceProps {
   busy: boolean;
   onToggleReviewRowSelection: (recordKey: string, isSelected: boolean) => void;
   onSelectRow: (recordKey: string) => void;
-  onEditFormChange: (value: ReviewEditFormValue) => void;
-  onApplyEditBatch: () => Promise<void> | void;
+  onApplyBulkVendorName: (vendorName: string) => Promise<void> | void;
   onApplyBulkOmission: (nextOmissionState: boolean) => Promise<void> | void;
   onApplyBulkLaborClassification: (targetClassification: string) => Promise<void> | void;
   onApplyBulkEquipmentCategory: (targetCategory: string) => Promise<void> | void;
@@ -87,28 +78,6 @@ function buildAttentionSummary(row: WorkspaceRow): string {
   return "Ready";
 }
 
-function buildSelectChoices(options: string[], currentValue: string): Array<{ value: string; label: string; disabled?: boolean }> {
-  const trimmedCurrent = currentValue.trim();
-  const hasCurrentValue = trimmedCurrent.length > 0;
-  const normalizedOptions = new Set(options.map((option) => option.trim().toLocaleLowerCase()));
-  const choices: Array<{ value: string; label: string; disabled?: boolean }> = [
-    { value: "", label: "No override" },
-  ];
-
-  if (hasCurrentValue && !normalizedOptions.has(trimmedCurrent.toLocaleLowerCase())) {
-    choices.push({
-      value: trimmedCurrent,
-      label: `${trimmedCurrent} (legacy invalid value)`,
-      disabled: true,
-    });
-  }
-
-  for (const option of options) {
-    choices.push({ value: option, label: option });
-  }
-  return choices;
-}
-
 function isLaborBulkCompatibleRow(row: WorkspaceRow): boolean {
   const normalizedType = (row.record.record_type_normalized ?? row.record.record_type ?? "").trim().toLowerCase();
   return normalizedType === "labor";
@@ -117,6 +86,11 @@ function isLaborBulkCompatibleRow(row: WorkspaceRow): boolean {
 function isEquipmentBulkCompatibleRow(row: WorkspaceRow): boolean {
   const normalizedType = (row.record.record_type_normalized ?? row.record.record_type ?? "").trim().toLowerCase();
   return normalizedType === "equipment";
+}
+
+function isVendorBulkCompatibleRow(row: WorkspaceRow): boolean {
+  const normalizedType = (row.record.record_type_normalized ?? row.record.record_type ?? "").trim().toLowerCase();
+  return normalizedType !== "labor" && normalizedType !== "equipment";
 }
 
 function formatFamilyLabel(value: string | null | undefined): string {
@@ -177,7 +151,6 @@ export function ReviewWorkspace({
   rows,
   selectedRow,
   selectedReviewRecordKeys,
-  editForm,
   exportArtifact,
   lastDownloadedFilename,
   exportDisabled,
@@ -185,8 +158,7 @@ export function ReviewWorkspace({
   busy,
   onToggleReviewRowSelection,
   onSelectRow,
-  onEditFormChange,
-  onApplyEditBatch,
+  onApplyBulkVendorName,
   onApplyBulkOmission,
   onApplyBulkLaborClassification,
   onApplyBulkEquipmentCategory,
@@ -196,24 +168,6 @@ export function ReviewWorkspace({
   const aggregateBlockers = runDetail?.aggregate_blockers ?? [];
   const exportRevision = reviewSession?.current_revision ?? 0;
   const selectedReviewRecordKeySet = new Set(selectedReviewRecordKeys);
-  const laborChoices = buildSelectChoices(
-    reviewSession?.labor_classification_options ?? [],
-    editForm.recapLaborClassification,
-  );
-  const equipmentChoices = buildSelectChoices(
-    reviewSession?.equipment_classification_options ?? [],
-    editForm.equipmentCategory,
-  );
-  const hasInvalidLaborSelection =
-    editForm.recapLaborClassification.trim().length > 0 &&
-    !reviewSession?.labor_classification_options.some(
-      (option) => option.trim().toLocaleLowerCase() === editForm.recapLaborClassification.trim().toLocaleLowerCase(),
-    );
-  const hasInvalidEquipmentSelection =
-    editForm.equipmentCategory.trim().length > 0 &&
-    !reviewSession?.equipment_classification_options.some(
-      (option) => option.trim().toLocaleLowerCase() === editForm.equipmentCategory.trim().toLocaleLowerCase(),
-    );
   const reviewTotals = rows.reduce(
     (totals, row) => {
       const cost = typeof row.record.cost === "number" ? row.record.cost : 0;
@@ -236,9 +190,17 @@ export function ReviewWorkspace({
   const selectedReviewRows = rows.filter((row) => selectedReviewRecordKeySet.has(row.recordKey));
   const canBulkOmit = selectedReviewRows.some((row) => !row.record.is_omitted);
   const canBulkInclude = selectedReviewRows.some((row) => row.record.is_omitted);
+  const [bulkVendorName, setBulkVendorName] = useState("");
   const [bulkLaborClassification, setBulkLaborClassification] = useState("");
   const [bulkEquipmentCategory, setBulkEquipmentCategory] = useState("");
   const [expandedFamilies, setExpandedFamilies] = useState<Record<string, boolean>>({});
+  const vendorCompatibleSelection = selectedReviewRows.length > 0 && selectedReviewRows.every(isVendorBulkCompatibleRow);
+  const canBulkApplyVendorName =
+    vendorCompatibleSelection &&
+    bulkVendorName.trim().length > 0 &&
+    selectedReviewRows.some(
+      (row) => (row.record.vendor_name_normalized ?? row.record.vendor_name ?? "").trim() !== bulkVendorName.trim(),
+    );
   const laborCompatibleSelection = selectedReviewRows.length > 0 && selectedReviewRows.every(isLaborBulkCompatibleRow);
   const equipmentCompatibleSelection = selectedReviewRows.length > 0 && selectedReviewRows.every(isEquipmentBulkCompatibleRow);
   const canBulkApplyLaborClassification =
@@ -262,6 +224,7 @@ export function ReviewWorkspace({
 
   useEffect(() => {
     if (selectedReviewRows.length === 0) {
+      setBulkVendorName("");
       setBulkLaborClassification("");
       setBulkEquipmentCategory("");
     }
@@ -274,7 +237,7 @@ export function ReviewWorkspace({
           <p className="eyebrow">Review Workspace</p>
           <h2>{runDetail?.source_document_filename ?? "Choose a file to begin review"}</h2>
           <p className="workspace-copy">
-            Review the current row set, inspect source context, apply one append-only edit at a time, and export the
+            Review the current row set, inspect source context, use the action bar for row edits, and export the
             current revision when you trust the result.
           </p>
         </div>
@@ -342,9 +305,27 @@ export function ReviewWorkspace({
             <div className="review-bulk-bar">
               <div>
                 <strong>{selectedReviewRecordKeys.length} row{selectedReviewRecordKeys.length === 1 ? "" : "s"} selected</strong>
-                <p className="muted">Rows stay grouped by family. Use bulk omit/include or apply one shared target to the current selection.</p>
+                <p className="muted">Rows stay grouped by family. Use the action bar to update vendor names, omission state, or one shared target across the current selection.</p>
               </div>
               <div className="actions review-bulk-actions">
+                <label className="field bulk-field">
+                  <span>Vendor name</span>
+                  <input
+                    aria-label="Bulk vendor name"
+                    value={bulkVendorName}
+                    onChange={(event) => setBulkVendorName(event.target.value)}
+                    placeholder="Enter vendor name"
+                    disabled={busy || selectedReviewRecordKeys.length === 0}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => onApplyBulkVendorName(bulkVendorName)}
+                  disabled={busy || !canBulkApplyVendorName}
+                >
+                  Apply vendor name
+                </button>
                 <button
                   type="button"
                   className="secondary-button"
@@ -411,6 +392,9 @@ export function ReviewWorkspace({
                 </button>
               </div>
             </div>
+            {selectedReviewRows.length > 0 && !vendorCompatibleSelection ? (
+              <p className="muted bulk-hint">Vendor name editing works only when every selected row is a vendor row.</p>
+            ) : null}
             {selectedReviewRows.length > 0 && !laborCompatibleSelection ? (
               <p className="muted bulk-hint">Bulk labor classification works only when every selected row is a labor row.</p>
             ) : null}
@@ -557,200 +541,6 @@ export function ReviewWorkspace({
                     )}
                   </div>
 
-                  <div className="summary-card">
-                    <strong>Current values</strong>
-                    <dl className="summary-list">
-                      <div>
-                        <dt>Type</dt>
-                        <dd>{renderPrimary(selectedRow.record.record_type_normalized ?? selectedRow.record.record_type)}</dd>
-                      </div>
-                      <div>
-                        <dt>Vendor</dt>
-                        <dd>{renderPrimary(selectedRow.record.vendor_name_normalized ?? selectedRow.record.vendor_name)}</dd>
-                      </div>
-                      <div>
-                        <dt>Labor class</dt>
-                        <dd>
-                          {renderPrimary(
-                            selectedRow.record.recap_labor_classification ??
-                              selectedRow.record.labor_class_normalized ??
-                              selectedRow.record.labor_class_raw,
-                          )}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Equipment class</dt>
-                        <dd>{renderPrimary(selectedRow.record.equipment_category ?? selectedRow.record.equipment_description)}</dd>
-                      </div>
-                      <div>
-                        <dt>Cost</dt>
-                        <dd>{formatCurrency(selectedRow.record.cost)}</dd>
-                      </div>
-                      <div>
-                        <dt>Omission</dt>
-                        <dd>{selectedRow.record.is_omitted ? "Currently omitted" : "Currently included"}</dd>
-                      </div>
-                    </dl>
-                  </div>
-
-                  <div className="summary-card">
-                    <strong>Raw and parsed context</strong>
-                    <dl className="summary-list">
-                      <div>
-                        <dt>Raw description</dt>
-                        <dd>{renderPrimary(selectedRow.record.raw_description)}</dd>
-                      </div>
-                      <div>
-                        <dt>Source line</dt>
-                        <dd>{renderPrimary(selectedRow.sourceLineText ?? selectedRow.record.source_line_text)}</dd>
-                      </div>
-                      <div>
-                        <dt>Vendor parsed</dt>
-                        <dd>{renderPrimary(selectedRow.record.vendor_name ?? selectedRow.record.vendor_id_raw)}</dd>
-                      </div>
-                      <div>
-                        <dt>Labor parsed</dt>
-                        <dd>{renderPrimary(selectedRow.record.labor_class_raw)}</dd>
-                      </div>
-                      <div>
-                        <dt>Equipment parsed</dt>
-                        <dd>{renderPrimary(selectedRow.record.equipment_description)}</dd>
-                      </div>
-                      <div>
-                        <dt>Confidence</dt>
-                        <dd>{renderPrimary(selectedRow.record.confidence)}</dd>
-                      </div>
-                    </dl>
-                  </div>
-
-                  <div className="edit-card">
-                    <h3>Edit selected row</h3>
-                    <p className="muted">
-                      Labor and equipment edits must use the target classifications captured in this run&apos;s trusted
-                      profile snapshot.
-                    </p>
-                    <div className="form-grid">
-                      <label className="field">
-                        <span>Vendor</span>
-                        <input
-                          value={editForm.vendorNameNormalized}
-                          onChange={(event) =>
-                            onEditFormChange({
-                              ...editForm,
-                              vendorNameNormalized: event.target.value,
-                            })
-                          }
-                          placeholder="Vendor name"
-                        />
-                      </label>
-                      <label className="field">
-                        <span>Labor class</span>
-                        <select
-                          value={editForm.recapLaborClassification}
-                          onChange={(event) =>
-                            onEditFormChange({
-                              ...editForm,
-                              recapLaborClassification: event.target.value,
-                            })
-                          }
-                        >
-                          {laborChoices.map((choice) => (
-                            <option key={`labor-${choice.value || "blank"}`} value={choice.value} disabled={choice.disabled}>
-                              {choice.label}
-                            </option>
-                          ))}
-                        </select>
-                        {hasInvalidLaborSelection ? (
-                          <span className="field-error">
-                            This review currently contains a legacy labor classification that is outside the run&apos;s
-                            trusted profile list. Choose a configured labor classification or leave it blank.
-                          </span>
-                        ) : null}
-                      </label>
-                      <label className="field">
-                        <span>Equipment class</span>
-                        <select
-                          value={editForm.equipmentCategory}
-                          onChange={(event) =>
-                            onEditFormChange({
-                              ...editForm,
-                              equipmentCategory: event.target.value,
-                            })
-                          }
-                        >
-                          {equipmentChoices.map((choice) => (
-                            <option
-                              key={`equipment-${choice.value || "blank"}`}
-                              value={choice.value}
-                              disabled={choice.disabled}
-                            >
-                              {choice.label}
-                            </option>
-                          ))}
-                        </select>
-                        {hasInvalidEquipmentSelection ? (
-                          <span className="field-error">
-                            This review currently contains a legacy equipment classification that is outside the run&apos;s
-                            trusted profile list. Choose a configured equipment classification or leave it blank.
-                          </span>
-                        ) : null}
-                      </label>
-                      <label className="field">
-                        <span>Omission</span>
-                        <select
-                          value={editForm.omissionChoice}
-                          onChange={(event) =>
-                            onEditFormChange({
-                              ...editForm,
-                              omissionChoice: event.target.value as ReviewEditFormValue["omissionChoice"],
-                            })
-                          }
-                        >
-                          <option value="unchanged">Leave unchanged</option>
-                          <option value="omit">Mark omitted</option>
-                          <option value="include">Mark included</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div className="actions">
-                      <button type="button" onClick={onApplyEditBatch} disabled={busy}>
-                        Apply review change
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="summary-card export-card">
-                    <strong>Export workbook</strong>
-                    <p>Downloads the current review revision and keeps exact-revision lineage under the hood.</p>
-                    {exportDisabledMessage ? (
-                      <p className="field-error">{exportDisabledMessage}</p>
-                    ) : null}
-                    <dl className="summary-list compact">
-                      <div>
-                        <dt>Current revision</dt>
-                        <dd>{exportRevision}</dd>
-                      </div>
-                      <div>
-                        <dt>Historical export</dt>
-                        <dd>{reviewSession.historical_export_status.is_reproducible ? "Ready" : "Legacy only"}</dd>
-                      </div>
-                      <div>
-                        <dt>Last workbook</dt>
-                        <dd>{lastDownloadedFilename || "None yet"}</dd>
-                      </div>
-                    </dl>
-                    <div className="actions">
-                      <button type="button" onClick={onExportAndDownload} disabled={busy || exportDisabled}>
-                        Export and download workbook
-                      </button>
-                    </div>
-                    {exportArtifact ? (
-                      <p className="muted">
-                        Last export used review revision {exportArtifact.session_revision}.
-                      </p>
-                    ) : null}
-                  </div>
-
                   <details className="system-details">
                     <summary>System details</summary>
                     <dl className="summary-list">
@@ -780,6 +570,38 @@ export function ReviewWorkspace({
                   </details>
                 </>
               )}
+
+              <div className="summary-card export-card">
+                <strong>Export workbook</strong>
+                <p>Downloads the current review revision and keeps exact-revision lineage under the hood.</p>
+                {exportDisabledMessage ? (
+                  <p className="field-error">{exportDisabledMessage}</p>
+                ) : null}
+                <dl className="summary-list compact">
+                  <div>
+                    <dt>Current revision</dt>
+                    <dd>{exportRevision}</dd>
+                  </div>
+                  <div>
+                    <dt>Historical export</dt>
+                    <dd>{reviewSession.historical_export_status.is_reproducible ? "Ready" : "Legacy only"}</dd>
+                  </div>
+                  <div>
+                    <dt>Last workbook</dt>
+                    <dd>{lastDownloadedFilename || "None yet"}</dd>
+                  </div>
+                </dl>
+                <div className="actions">
+                  <button type="button" onClick={onExportAndDownload} disabled={busy || exportDisabled}>
+                    Export and download workbook
+                  </button>
+                </div>
+                {exportArtifact ? (
+                  <p className="muted">
+                    Last export used review revision {exportArtifact.session_revision}.
+                  </p>
+                ) : null}
+              </div>
             </div>
           </aside>
         </div>

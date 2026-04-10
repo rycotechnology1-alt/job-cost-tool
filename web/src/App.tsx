@@ -48,7 +48,7 @@ import {
   ProfileSettingsWorkspace,
   type ProfileSettingsLeaveGuard,
 } from "./components/ProfileSettingsWorkspace";
-import { ReviewWorkspace, type ReviewEditFormValue, type WorkspaceRow } from "./components/ReviewWorkspace";
+import { ReviewWorkspace, type WorkspaceRow } from "./components/ReviewWorkspace";
 import { UploadRunPanel } from "./components/UploadRunPanel";
 
 type DraftSyncReason =
@@ -81,13 +81,6 @@ interface StagedReportItem {
   upload: SourceUploadResponse | null;
 }
 
-const emptyEditForm: ReviewEditFormValue = {
-  vendorNameNormalized: "",
-  recapLaborClassification: "",
-  equipmentCategory: "",
-  omissionChoice: "unchanged",
-};
-
 const maxStagedReports = 10;
 
 function buildStagedReportId(): string {
@@ -114,15 +107,6 @@ function buildWorkspaceRows(
   });
 }
 
-function buildEditFormFromRow(row: WorkspaceRow): ReviewEditFormValue {
-  return {
-    vendorNameNormalized: row.record.vendor_name_normalized ?? row.record.vendor_name ?? "",
-    recapLaborClassification: row.record.recap_labor_classification ?? "",
-    equipmentCategory: row.record.equipment_category ?? "",
-    omissionChoice: "unchanged",
-  };
-}
-
 function isLaborBulkCompatibleRow(row: WorkspaceRow): boolean {
   const normalizedType = (row.record.record_type_normalized ?? row.record.record_type ?? "").trim().toLowerCase();
   return normalizedType === "labor";
@@ -131,6 +115,11 @@ function isLaborBulkCompatibleRow(row: WorkspaceRow): boolean {
 function isEquipmentBulkCompatibleRow(row: WorkspaceRow): boolean {
   const normalizedType = (row.record.record_type_normalized ?? row.record.record_type ?? "").trim().toLowerCase();
   return normalizedType === "equipment";
+}
+
+function isVendorBulkCompatibleRow(row: WorkspaceRow): boolean {
+  const normalizedType = (row.record.record_type_normalized ?? row.record.record_type ?? "").trim().toLowerCase();
+  return normalizedType !== "labor" && normalizedType !== "equipment";
 }
 
 export default function App() {
@@ -147,7 +136,6 @@ export default function App() {
   const [draftSyncToken, setDraftSyncToken] = useState<DraftSyncToken>({ reason: "reset", sequence: 0 });
   const [selectedRecordKey, setSelectedRecordKey] = useState("");
   const [selectedReviewRecordKeys, setSelectedReviewRecordKeys] = useState<string[]>([]);
-  const [editForm, setEditForm] = useState<ReviewEditFormValue>(emptyEditForm);
   const [exportArtifact, setExportArtifact] = useState<ExportArtifactResponse | null>(null);
   const [lastDownloadedFilename, setLastDownloadedFilename] = useState("");
   const [lastDownloadedProfileSyncFilename, setLastDownloadedProfileSyncFilename] = useState("");
@@ -538,7 +526,6 @@ export default function App() {
     const preferred = recordKey ? nextRows.find((row) => row.recordKey === recordKey) ?? null : null;
     const row = preferred ?? (options?.fallbackToFirst ? nextRows[0] ?? null : null);
     setSelectedRecordKey(row?.recordKey ?? "");
-    setEditForm(row ? buildEditFormFromRow(row) : emptyEditForm);
   }
 
   async function loadReviewWorkspaceFromUpload(uploadToUse: SourceUploadResponse) {
@@ -633,64 +620,6 @@ export default function App() {
     );
   }
 
-  function buildChangedFields(row: WorkspaceRow): ReviewEditFields {
-    const changedFields: ReviewEditFields = {};
-    const vendorName = editForm.vendorNameNormalized.trim();
-    const laborClass = editForm.recapLaborClassification.trim();
-    const equipmentCategory = editForm.equipmentCategory.trim();
-    const currentVendor = (row.record.vendor_name_normalized ?? row.record.vendor_name ?? "").trim();
-    const currentLabor = (row.record.recap_labor_classification ?? "").trim();
-    const currentEquipment = (row.record.equipment_category ?? "").trim();
-
-    if (vendorName && vendorName !== currentVendor) {
-      changedFields.vendor_name_normalized = vendorName;
-    }
-    if (laborClass && laborClass !== currentLabor) {
-      changedFields.recap_labor_classification = laborClass;
-    } else if (!laborClass && currentLabor) {
-      changedFields.recap_labor_classification = null;
-    }
-    if (equipmentCategory && equipmentCategory !== currentEquipment) {
-      changedFields.equipment_category = equipmentCategory;
-    } else if (!equipmentCategory && currentEquipment) {
-      changedFields.equipment_category = null;
-    }
-    if (editForm.omissionChoice === "omit" && !row.record.is_omitted) {
-      changedFields.is_omitted = true;
-    }
-    if (editForm.omissionChoice === "include" && row.record.is_omitted) {
-      changedFields.is_omitted = false;
-    }
-    return changedFields;
-  }
-
-  async function handleApplyEditBatch() {
-    await runAction("Applying review change...", async () => {
-      if (!runDetail || !reviewSession || !selectedRow) {
-        throw new Error("Open the review workspace and choose a row before applying a change.");
-      }
-
-      const changedFields = buildChangedFields(selectedRow);
-      if (Object.keys(changedFields).length === 0) {
-        throw new Error("Change at least one field or omission state before applying a review change.");
-      }
-
-      const nextReviewSession = await appendReviewEdits(runDetail.processing_run_id, [
-        {
-          record_key: selectedRow.recordKey,
-          changed_fields: changedFields,
-        },
-      ]);
-      const nextRows = buildWorkspaceRows(runDetail, nextReviewSession);
-      setReviewSession(nextReviewSession);
-      setExportArtifact(null);
-      setLastDownloadedFilename("");
-      setSelectedReviewRecordKeys((current) => current.filter((recordKey) => nextRows.some((row) => row.recordKey === recordKey)));
-      selectRow(nextRows, selectedRow.recordKey);
-      setStatusMessage(`Applied a review change and advanced the session to revision ${nextReviewSession.current_revision}.`);
-    });
-  }
-
   function handleReviewRowSelectionChange(recordKey: string, isSelected: boolean) {
     setSelectedReviewRecordKeys((current) => {
       if (isSelected) {
@@ -750,6 +679,57 @@ export default function App() {
         );
       },
     );
+  }
+
+  async function handleApplyBulkVendorName(vendorName: string) {
+    const nextVendorName = vendorName.trim();
+    await runAction("Applying vendor name...", async () => {
+      if (!runDetail || !reviewSession) {
+        throw new Error("Open the review workspace before applying a vendor name.");
+      }
+      if (!nextVendorName) {
+        throw new Error("Enter a vendor name before applying a review change.");
+      }
+
+      const selectedRows = rows.filter((row) => selectedReviewRecordKeys.includes(row.recordKey));
+      if (selectedRows.length === 0) {
+        throw new Error("Select at least one review row before applying a vendor name.");
+      }
+      if (!selectedRows.every(isVendorBulkCompatibleRow)) {
+        throw new Error("Vendor name editing only works when every selected row is a vendor row.");
+      }
+
+      const applicableRows = selectedRows.filter(
+        (row) => (row.record.vendor_name_normalized ?? row.record.vendor_name ?? "").trim() !== nextVendorName,
+      );
+      if (applicableRows.length === 0) {
+        throw new Error("The selected vendor rows already use that vendor name.");
+      }
+
+      const nextReviewSession = await appendReviewEdits(
+        runDetail.processing_run_id,
+        applicableRows.map((row) => ({
+          record_key: row.recordKey,
+          changed_fields: {
+            vendor_name_normalized: nextVendorName,
+          } satisfies ReviewEditFields,
+        })),
+      );
+      const nextRows = buildWorkspaceRows(runDetail, nextReviewSession);
+      const preferredSelectedRecordKey =
+        selectedRow && nextRows.some((row) => row.recordKey === selectedRow.recordKey)
+          ? selectedRow.recordKey
+          : applicableRows[0]?.recordKey ?? null;
+
+      setReviewSession(nextReviewSession);
+      setExportArtifact(null);
+      setLastDownloadedFilename("");
+      setSelectedReviewRecordKeys([]);
+      selectRow(nextRows, preferredSelectedRecordKey);
+      setStatusMessage(
+        `Applied vendor name ${nextVendorName} to ${applicableRows.length} selected row${applicableRows.length === 1 ? "" : "s"} and advanced the session to revision ${nextReviewSession.current_revision}.`,
+      );
+    });
   }
 
   async function handleApplyBulkLaborClassification(targetClassification: string) {
@@ -1297,20 +1277,14 @@ export default function App() {
             rows={rows}
             selectedRow={selectedRow}
             selectedReviewRecordKeys={selectedReviewRecordKeys}
-            editForm={editForm}
             exportArtifact={exportArtifact}
             lastDownloadedFilename={lastDownloadedFilename}
             exportDisabled={reviewExportInvalidated}
             exportDisabledMessage={reviewContextMessage}
             busy={busy}
             onToggleReviewRowSelection={handleReviewRowSelectionChange}
-            onSelectRow={(recordKey) => {
-              const row = rows.find((item) => item.recordKey === recordKey) ?? null;
-              setSelectedRecordKey(recordKey);
-              setEditForm(row ? buildEditFormFromRow(row) : emptyEditForm);
-            }}
-            onEditFormChange={setEditForm}
-            onApplyEditBatch={handleApplyEditBatch}
+            onSelectRow={setSelectedRecordKey}
+            onApplyBulkVendorName={handleApplyBulkVendorName}
             onApplyBulkOmission={handleApplyBulkOmission}
             onApplyBulkLaborClassification={handleApplyBulkLaborClassification}
             onApplyBulkEquipmentCategory={handleApplyBulkEquipmentCategory}

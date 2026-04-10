@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -509,7 +509,7 @@ describe("App", () => {
     URL.revokeObjectURL = originalRevokeObjectUrl;
   });
 
-  it("stages multiple PDFs, keeps review grouped by family, and lets row selection drive the edit panel", async () => {
+  it("stages multiple PDFs, keeps review grouped by family, and lets row selection drive the review sidebar", async () => {
     installFetchMock();
     const user = userEvent.setup();
     render(<App />);
@@ -527,22 +527,27 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: "report-b.pdf" })).toBeInTheDocument();
     expect(screen.getByText("No current blockers.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /export and download workbook/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /export and download workbook/i })).toBeEnabled();
+    expect(screen.getByText(/select a row to inspect its source context and apply edits/i)).toBeInTheDocument();
     expect(screen.getAllByText("$500.00").length).toBeGreaterThan(0);
     expect(screen.queryByText("Concrete delivery")).not.toBeInTheDocument();
 
     await expandFamily(user, "Show Material");
     await clickRowByText(user, "Concrete delivery");
 
-    expect(screen.getByDisplayValue("Concrete Vendor")).toBeInTheDocument();
-    expect(screen.getByText("Concrete delivery invoice")).toBeInTheDocument();
-    expect(screen.getAllByText(/Page 2/i)[0]).toBeInTheDocument();
+    expect(screen.getAllByText("Concrete Vendor").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/select a row to inspect its source context and apply edits/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Page 2/i).length).toBeGreaterThan(0);
     expect(screen.getByText("Vendor name should be confirmed")).toBeInTheDocument();
+    expect(screen.queryByText(/edit selected row/i)).not.toBeInTheDocument();
 
-    await user.clear(screen.getByLabelText(/vendor/i));
-    await user.type(screen.getByLabelText(/vendor/i), "Vendor Edited");
-    await user.click(screen.getByRole("button", { name: /apply review change/i }));
+    await user.click(screen.getByRole("checkbox", { name: /select concrete delivery/i }));
+    await user.type(screen.getByRole("textbox", { name: /bulk vendor name/i }), "Vendor Edited");
+    await user.click(screen.getByRole("button", { name: /apply vendor name/i }));
 
-    expect(await screen.findByDisplayValue("Vendor Edited")).toBeInTheDocument();
+    expect(await screen.findByText(/applied vendor name vendor edited to 1 selected row/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Vendor Edited").length).toBeGreaterThan(0);
     expect(screen.getByText(/advanced the session to revision 1/i)).toBeInTheDocument();
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
@@ -566,10 +571,9 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Material");
-    await clickRowByText(user, "Concrete delivery");
-    await user.clear(screen.getByLabelText(/vendor/i));
-    await user.type(screen.getByLabelText(/vendor/i), "Vendor Edited");
-    await user.click(screen.getByRole("button", { name: /apply review change/i }));
+    await user.click(screen.getByRole("checkbox", { name: /select concrete delivery/i }));
+    await user.type(screen.getByRole("textbox", { name: /bulk vendor name/i }), "Vendor Edited");
+    await user.click(screen.getByRole("button", { name: /apply vendor name/i }));
     await user.click(screen.getByRole("button", { name: /export and download workbook/i }));
 
     await waitFor(() => {
@@ -625,7 +629,7 @@ describe("App", () => {
     expect(JSON.parse(String(runRequests[1]?.[1]?.body)).trusted_profile_name).toBe("alternate");
   });
 
-  it("uses run-bound classification dropdowns instead of freeform review inputs", async () => {
+  it("uses run-bound classification dropdowns in the top action bar instead of sidebar review inputs", async () => {
     installFetchMock();
     const user = userEvent.setup();
     render(<App />);
@@ -636,18 +640,16 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Labor");
-    await clickRowByText(user, "Labor line");
+    await user.click(screen.getByRole("checkbox", { name: /select labor line/i }));
 
-    const editCard = screen.getByRole("heading", { name: /edit selected row/i }).closest(".edit-card");
-    expect(editCard).not.toBeNull();
-    const editScope = within(editCard as HTMLElement);
-    const laborSelect = editScope.getByRole("combobox", { name: /labor class/i });
+    const laborSelect = screen.getByRole("combobox", { name: /bulk labor classification/i });
+    expect(screen.queryByText(/edit selected row/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/recap labor class/i)).not.toBeInTheDocument();
-    expect(editScope.getByRole("option", { name: "103 Journeyman" })).toBeInTheDocument();
-    expect(editScope.getByRole("option", { name: "103 Foreman" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "103 Journeyman" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "103 Foreman" })).toBeInTheDocument();
 
     await user.selectOptions(laborSelect, "103 Foreman");
-    await user.click(screen.getByRole("button", { name: /apply review change/i }));
+    await user.click(screen.getByRole("button", { name: /apply labor class/i }));
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     const editRequest = fetchCalls.find(([url]) => url === "/api/runs/processing-run-1/review-session/edits");
@@ -669,14 +671,38 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Labor");
-    await clickRowByText(user, "Labor line");
+    await user.click(screen.getByRole("checkbox", { name: /select labor line/i }));
 
-    const editCard = screen.getByRole("heading", { name: /edit selected row/i }).closest(".edit-card");
-    expect(editCard).not.toBeNull();
-    const editScope = within(editCard as HTMLElement);
-    expect(editScope.getByRole("option", { name: "ALT Journeyman" })).toBeInTheDocument();
-    expect(editScope.queryByRole("option", { name: "103 Journeyman" })).not.toBeInTheDocument();
-    expect(editScope.getByRole("option", { name: "ALT Truck" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "ALT Journeyman" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "103 Journeyman" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "ALT Truck" })).toBeInTheDocument();
+  });
+
+  it("bulk applies one vendor name across selected vendor rows", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await expandFamily(user, "Show Material");
+    await user.click(screen.getByRole("checkbox", { name: /select material line/i }));
+    await user.click(screen.getByRole("checkbox", { name: /select concrete delivery/i }));
+    await user.type(screen.getByRole("textbox", { name: /bulk vendor name/i }), "Shared Vendor");
+    await user.click(screen.getByRole("button", { name: /apply vendor name/i }));
+
+    expect(await screen.findByText(/applied vendor name shared vendor to 2 selected rows/i)).toBeInTheDocument();
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    const editRequests = fetchCalls.filter(([url]) => url === "/api/runs/processing-run-1/review-session/edits");
+    expect(editRequests.length).toBeGreaterThan(0);
+    const edits = JSON.parse(String(editRequests[editRequests.length - 1]?.[1]?.body)).edits;
+    expect(edits).toHaveLength(2);
+    expect(edits[0].changed_fields.vendor_name_normalized).toBe("Shared Vendor");
+    expect(edits[1].changed_fields.vendor_name_normalized).toBe("Shared Vendor");
   });
 
   it("bulk applies one labor classification across selected labor rows", async () => {
