@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   ApiRequestError,
@@ -6,6 +6,7 @@ import {
   appendReviewEdits,
   createTrustedProfile,
   createOrOpenProfileDraft,
+  discardProfileDraft,
   createExportArtifact,
   createProfileSyncExport,
   createProcessingRun,
@@ -43,7 +44,10 @@ import type {
   SourceUploadResponse,
   TrustedProfileResponse,
 } from "./api/contracts";
-import { ProfileSettingsWorkspace } from "./components/ProfileSettingsWorkspace";
+import {
+  ProfileSettingsWorkspace,
+  type ProfileSettingsLeaveGuard,
+} from "./components/ProfileSettingsWorkspace";
 import { ReviewWorkspace, type ReviewEditFormValue, type WorkspaceRow } from "./components/ReviewWorkspace";
 import { UploadRunPanel } from "./components/UploadRunPanel";
 
@@ -60,6 +64,14 @@ type DraftSyncReason =
 interface DraftSyncToken {
   reason: DraftSyncReason;
   sequence: number;
+}
+
+interface LeaveSettingsPromptState {
+  destination: "review" | "profile";
+  nextProfileName?: string;
+  nextProfileDisplayName?: string;
+  dirtySections: string[];
+  profileDisplayName: string;
 }
 
 const emptyEditForm: ReviewEditFormValue = {
@@ -120,8 +132,10 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [statusMessage, setStatusMessage] = useState("Choose a trusted profile and a PDF to start reviewing.");
   const [settingsStatusMessage, setSettingsStatusMessage] = useState(
-    "Inspect the published trusted profile and open the single mutable draft when you are ready to edit.",
+    "Inspect the live trusted profile and select Edit current profile when you are ready to make changes.",
   );
+  const [leaveSettingsPrompt, setLeaveSettingsPrompt] = useState<LeaveSettingsPromptState | null>(null);
+  const settingsLeaveGuardRef = useRef<ProfileSettingsLeaveGuard | null>(null);
 
   const selectedTrustedProfile =
     trustedProfiles.find((profile) => profile.profile_name === selectedTrustedProfileName) ?? null;
@@ -156,6 +170,62 @@ export default function App() {
       reason,
       sequence: current.sequence + 1,
     }));
+  }
+
+  function registerSettingsLeaveGuard(guard: ProfileSettingsLeaveGuard | null) {
+    settingsLeaveGuardRef.current = guard;
+  }
+
+  function clearSettingsDraftView() {
+    setDraftState(null);
+  }
+
+  function completeSettingsProfileSwitch(nextProfileName: string) {
+    if (!nextProfileName || nextProfileName === selectedTrustedProfileName) {
+      return;
+    }
+    const nextProfile =
+      trustedProfiles.find((profile) => profile.profile_name === nextProfileName) ?? null;
+    setSelectedTrustedProfileName(nextProfileName);
+    setProfileDetail(null);
+    clearSettingsDraftView();
+    setLastDownloadedProfileSyncFilename("");
+    advanceDraftSync("profileSwitch");
+    setSettingsStatusMessage(
+      nextProfile
+        ? `Loading published settings for ${nextProfile.display_name}.`
+        : "Loading trusted profile settings.",
+    );
+  }
+
+  function completeLeaveSettingsToReview() {
+    clearSettingsDraftView();
+    setLeaveSettingsPrompt(null);
+    setActiveWorkspace("review");
+    setErrorMessage("");
+  }
+
+  function promptToLeaveSettings(
+    destination: "review" | "profile",
+    options?: { nextProfileName?: string; nextProfileDisplayName?: string },
+  ) {
+    const guard = settingsLeaveGuardRef.current;
+    if (!guard || !guard.hasUnsavedChanges) {
+      setLeaveSettingsPrompt(null);
+      if (destination === "review") {
+        completeLeaveSettingsToReview();
+      } else if (options?.nextProfileName) {
+        completeSettingsProfileSwitch(options.nextProfileName);
+      }
+      return;
+    }
+    setLeaveSettingsPrompt({
+      destination,
+      nextProfileName: options?.nextProfileName,
+      nextProfileDisplayName: options?.nextProfileDisplayName,
+      dirtySections: [...guard.dirtySections],
+      profileDisplayName: guard.profileDisplayName,
+    });
   }
 
   async function loadSettingsProfileDetail(trustedProfileId: string): Promise<PublishedProfileDetailResponse> {
@@ -305,7 +375,7 @@ export default function App() {
           has_open_draft: Boolean(detail.open_draft_id),
         });
         setSettingsStatusMessage(
-          `Inspecting published version v${detail.current_published_version.version_number} for ${detail.display_name}.`,
+          `Inspecting live version v${detail.current_published_version.version_number} for ${detail.display_name}.`,
         );
       } catch (error) {
         if (cancelled) {
@@ -325,17 +395,19 @@ export default function App() {
     actionLabel: string,
     action: () => Promise<void>,
     options?: { rethrow?: boolean },
-  ) {
+  ): Promise<boolean> {
     setBusyAction(actionLabel);
     setErrorMessage("");
     try {
       await action();
+      return true;
     } catch (error) {
       const normalizedError = error instanceof Error ? error : new Error("Unexpected browser workflow error.");
       setErrorMessage(normalizedError.message);
       if (options?.rethrow) {
         throw normalizedError;
       }
+      return false;
     } finally {
       setBusyAction(null);
     }
@@ -353,7 +425,7 @@ export default function App() {
         has_open_draft: Boolean(detail.open_draft_id),
       });
       setSettingsStatusMessage(
-        `Inspecting published version v${detail.current_published_version.version_number} for ${detail.display_name}.`,
+        `Inspecting live version v${detail.current_published_version.version_number} for ${detail.display_name}.`,
       );
     });
   }
@@ -362,18 +434,11 @@ export default function App() {
     if (!nextProfileName || nextProfileName === selectedTrustedProfileName) {
       return;
     }
-    const nextProfile =
-      trustedProfiles.find((profile) => profile.profile_name === nextProfileName) ?? null;
-    setSelectedTrustedProfileName(nextProfileName);
-    setProfileDetail(null);
-    setDraftState(null);
-    setLastDownloadedProfileSyncFilename("");
-    advanceDraftSync("profileSwitch");
-    setSettingsStatusMessage(
-      nextProfile
-        ? `Loading published settings for ${nextProfile.display_name}.`
-        : "Loading trusted profile settings.",
-    );
+    const nextProfile = trustedProfiles.find((profile) => profile.profile_name === nextProfileName) ?? null;
+    promptToLeaveSettings("profile", {
+      nextProfileName,
+      nextProfileDisplayName: nextProfile?.display_name ?? nextProfileName,
+    });
   }
 
   function selectRow(nextRows: WorkspaceRow[], recordKey: string | null) {
@@ -521,9 +586,9 @@ export default function App() {
   }
 
   async function handleOpenSettingsDraft() {
-    await runAction("Opening profile draft...", async () => {
+    await runAction("Opening current profile editor...", async () => {
       if (!selectedTrustedProfile) {
-        throw new Error("Choose a trusted profile before opening a draft.");
+        throw new Error("Choose a trusted profile before editing the current profile.");
       }
 
       let usedFallbackCreate = false;
@@ -556,55 +621,55 @@ export default function App() {
       });
       setSettingsStatusMessage(
         usedFallbackCreate
-          ? `Recovered from a missing current draft link and reopened draft ${draft.trusted_profile_draft_id}.`
-          : `Draft ${draft.trusted_profile_draft_id} is ready for editing.`,
+          ? `Recovered a missing unpublished-change link and continued editing ${draft.display_name}.`
+          : `Editing current profile settings for ${draft.display_name}.`,
       );
     });
   }
 
-  async function handleSaveDefaultOmit(rowsToSave: DefaultOmitRuleRow[]) {
-    await runAction("Saving default omit rules...", async () => {
+  async function handleSaveDefaultOmit(rowsToSave: DefaultOmitRuleRow[]): Promise<boolean> {
+    return runAction("Saving default omit rules...", async () => {
       if (!draftState) {
-        throw new Error("Open a draft before saving default omit rules.");
+        throw new Error("Edit the current profile before saving default omit rules.");
       }
       const nextDraft = await updateDraftDefaultOmit(draftState.trusted_profile_draft_id, rowsToSave);
       setDraftState(nextDraft);
       advanceDraftSync("defaultOmit");
-      setSettingsStatusMessage("Saved default omit rules to the current draft.");
+      setSettingsStatusMessage("Saved default omit rules into the current unpublished profile changes.");
     });
   }
 
-  async function handleSaveLaborMappings(rowsToSave: LaborMappingRow[]) {
-    await runAction("Saving labor mappings...", async () => {
+  async function handleSaveLaborMappings(rowsToSave: LaborMappingRow[]): Promise<boolean> {
+    return runAction("Saving labor mappings...", async () => {
       if (!draftState) {
-        throw new Error("Open a draft before saving labor mappings.");
+        throw new Error("Edit the current profile before saving labor mappings.");
       }
       const nextDraft = await updateDraftLaborMappings(draftState.trusted_profile_draft_id, rowsToSave);
       setDraftState(nextDraft);
       advanceDraftSync("laborMappings");
-      setSettingsStatusMessage("Saved labor mappings to the current draft.");
+      setSettingsStatusMessage("Saved labor mappings into the current unpublished profile changes.");
     });
   }
 
-  async function handleSaveEquipmentMappings(rowsToSave: EquipmentMappingRow[]) {
-    await runAction("Saving equipment mappings...", async () => {
+  async function handleSaveEquipmentMappings(rowsToSave: EquipmentMappingRow[]): Promise<boolean> {
+    return runAction("Saving equipment mappings...", async () => {
       if (!draftState) {
-        throw new Error("Open a draft before saving equipment mappings.");
+        throw new Error("Edit the current profile before saving equipment mappings.");
       }
       const nextDraft = await updateDraftEquipmentMappings(draftState.trusted_profile_draft_id, rowsToSave);
       setDraftState(nextDraft);
       advanceDraftSync("equipmentMappings");
-      setSettingsStatusMessage("Saved equipment mappings to the current draft.");
+      setSettingsStatusMessage("Saved equipment mappings into the current unpublished profile changes.");
     });
   }
 
   async function handleSaveClassifications(
     laborSlots: ClassificationSlotRow[],
     equipmentSlots: ClassificationSlotRow[],
-  ) {
-    await runAction("Saving classifications...", async () => {
+  ): Promise<boolean> {
+    return runAction("Saving classifications...", async () => {
       if (!draftState) {
-        throw new Error("Open a draft before saving classifications.");
+        throw new Error("Edit the current profile before saving classifications.");
       }
       const nextDraft = await updateDraftClassifications(
         draftState.trusted_profile_draft_id,
@@ -613,29 +678,52 @@ export default function App() {
       );
       setDraftState(nextDraft);
       advanceDraftSync("classifications");
-      setSettingsStatusMessage("Saved labor and equipment classifications to the current draft.");
+      setSettingsStatusMessage("Saved labor and equipment classifications into the current unpublished profile changes.");
     });
   }
 
-  async function handleSaveRates(laborRates: LaborRateRow[], equipmentRates: EquipmentRateRow[]) {
-    await runAction("Saving rates...", async () => {
+  async function handleSaveRates(laborRates: LaborRateRow[], equipmentRates: EquipmentRateRow[]): Promise<boolean> {
+    return runAction("Saving rates...", async () => {
       if (!draftState) {
-        throw new Error("Open a draft before saving rates.");
+        throw new Error("Edit the current profile before saving rates.");
       }
       const nextDraft = await updateDraftRates(draftState.trusted_profile_draft_id, laborRates, equipmentRates);
       setDraftState(nextDraft);
       advanceDraftSync("rates");
-      setSettingsStatusMessage("Saved rates to the current draft.");
+      setSettingsStatusMessage("Saved rates into the current unpublished profile changes.");
     });
   }
 
-  async function handlePublishDraft() {
-    await runAction("Publishing profile draft...", async () => {
-      if (!draftState) {
-        throw new Error("Open a draft before publishing.");
+  async function handleDiscardProfileDraft(trustedProfileDraftId: string): Promise<boolean> {
+    return runAction("Discarding profile changes...", async () => {
+      await discardProfileDraft(trustedProfileDraftId);
+      clearSettingsDraftView();
+      advanceDraftSync("reset");
+      setProfileDetail((current) =>
+        current
+          ? {
+              ...current,
+              open_draft_id: null,
+            }
+          : current,
+      );
+      if (selectedTrustedProfile) {
+        patchTrustedProfileSummary(selectedTrustedProfile.profile_name, {
+          has_open_draft: false,
+        });
+      }
+      setSettingsStatusMessage("Discarded unpublished profile changes. Live profile settings remain unchanged.");
+    });
+  }
+
+  async function handlePublishDraft(trustedProfileDraftId?: string): Promise<boolean> {
+    return runAction("Saving and publishing profile settings...", async () => {
+      const draftIdToPublish = trustedProfileDraftId ?? draftState?.trusted_profile_draft_id;
+      if (!draftIdToPublish) {
+        throw new Error("Edit the current profile before saving profile settings.");
       }
 
-      const publishedDetail = await publishProfileDraft(draftState.trusted_profile_draft_id);
+      const publishedDetail = await publishProfileDraft(draftIdToPublish);
       setDraftState(null);
       advanceDraftSync("reset");
 
@@ -658,8 +746,8 @@ export default function App() {
       }
       setSettingsStatusMessage(
         refreshConfirmed
-          ? `Published version v${refreshedDetail.current_published_version.version_number} for ${refreshedDetail.display_name} and reloaded the published summary.`
-          : `Published version v${publishedDetail.current_published_version.version_number} for ${publishedDetail.display_name}. The published summary is showing the publish response until the next reload.`,
+          ? `Saved profile settings and published live version v${refreshedDetail.current_published_version.version_number} for ${refreshedDetail.display_name}.`
+          : `Saved profile settings and published live version v${publishedDetail.current_published_version.version_number} for ${publishedDetail.display_name}. The summary is showing the publish response until the next reload.`,
       );
     });
   }
@@ -676,7 +764,7 @@ export default function App() {
       const filename = await downloadArtifact(syncExport.download_url);
       setLastDownloadedProfileSyncFilename(filename);
       setSettingsStatusMessage(
-        `Downloaded ${filename} for manual desktop sync from published version v${syncExport.version_number}.`,
+        `Downloaded ${filename} for manual desktop sync from live version v${syncExport.version_number}.`,
       );
     });
   }
@@ -703,7 +791,7 @@ export default function App() {
       setLastDownloadedProfileSyncFilename("");
       advanceDraftSync("reset");
       setSettingsStatusMessage(
-        `Created ${createdDetail.display_name} from published version v${seedVersionNumber} of ${seedProfile.display_name}. Open a draft when you are ready to edit it.`,
+        `Created ${createdDetail.display_name} from live version v${seedVersionNumber} of ${seedProfile.display_name}. Select Edit current profile when you are ready to change it.`,
       );
     }, { rethrow: true });
   }
@@ -739,13 +827,69 @@ export default function App() {
     });
   }
 
+  function handleStayOnSettings() {
+    setLeaveSettingsPrompt(null);
+  }
+
+  async function handleSaveAndLeaveSettings() {
+    const prompt = leaveSettingsPrompt;
+    const guard = settingsLeaveGuardRef.current;
+    if (!prompt || !guard) {
+      setLeaveSettingsPrompt(null);
+      return;
+    }
+    const saved = await guard.saveAllDirtySections();
+    if (!saved) {
+      setLeaveSettingsPrompt(null);
+      setErrorMessage((current) => current || "Could not save the profile changes. Review the highlighted sections and try again.");
+      return;
+    }
+    const published = await handlePublishDraft(guard.draftId ?? undefined);
+    if (!published) {
+      setLeaveSettingsPrompt(null);
+      setErrorMessage((current) => current || "Could not save profile settings. The live profile was not updated.");
+      return;
+    }
+    if (prompt.destination === "review") {
+      completeLeaveSettingsToReview();
+      return;
+    }
+    setLeaveSettingsPrompt(null);
+    if (prompt.nextProfileName) {
+      completeSettingsProfileSwitch(prompt.nextProfileName);
+    }
+  }
+
+  async function handleDiscardAndLeaveSettings() {
+    const prompt = leaveSettingsPrompt;
+    const guard = settingsLeaveGuardRef.current;
+    if (!prompt || !guard) {
+      setLeaveSettingsPrompt(null);
+      return;
+    }
+    const discarded = await guard.discardCurrentDraft();
+    if (!discarded) {
+      setLeaveSettingsPrompt(null);
+      setErrorMessage((current) => current || "Could not discard the unpublished profile changes. Try again from profile settings.");
+      return;
+    }
+    if (prompt.destination === "review") {
+      completeLeaveSettingsToReview();
+      return;
+    }
+    setLeaveSettingsPrompt(null);
+    if (prompt.nextProfileName) {
+      completeSettingsProfileSwitch(prompt.nextProfileName);
+    }
+  }
+
   const busy = busyAction !== null;
   const currentWorkspaceStatusMessage = activeWorkspace === "settings" ? settingsStatusMessage : statusMessage;
   const currentWorkspaceTitle = activeWorkspace === "settings" ? "Profile Settings Workspace" : "Job Cost Review Workspace";
   const currentWorkspaceEyebrow = activeWorkspace === "settings" ? "Phase 2A Settings" : "Phase 1 Pilot Review";
   const currentWorkspaceCopy =
     activeWorkspace === "settings"
-      ? "The browser remains a thin client. Published versions, draft validation, and immutable publish flow still come from the backend authoring services."
+      ? "The browser remains a thin client. Live profile versions and save rules still come from the backend authoring services."
       : "The browser stays thin. Processing, review lineage, and exact-revision export still come from the accepted backend services.";
 
   return (
@@ -773,6 +917,10 @@ export default function App() {
           type="button"
           className={activeWorkspace === "review" ? "toggle-button active" : "toggle-button"}
           onClick={() => {
+            if (activeWorkspace === "settings") {
+              promptToLeaveSettings("review");
+              return;
+            }
             setActiveWorkspace("review");
             setErrorMessage("");
           }}
@@ -796,6 +944,50 @@ export default function App() {
       {errorMessage ? (
         <div className="banner error" role="alert">
           {errorMessage}
+        </div>
+      ) : null}
+
+      {leaveSettingsPrompt ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="dialog-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="leave-settings-title"
+          >
+            <p className="eyebrow">Unsaved Profile Settings</p>
+            <h2 id="leave-settings-title">Leave profile settings with unsaved sections?</h2>
+            <p>
+              {leaveSettingsPrompt.profileDisplayName} still has {leaveSettingsPrompt.dirtySections.join(", ")} waiting
+              to be saved.
+            </p>
+            <p className="muted">
+              {leaveSettingsPrompt.destination === "review"
+                ? "Save and leave publishes these profile settings, then moves you back to the review workspace. Don't save discards the unpublished profile changes and leaves the live profile unchanged."
+                : `Save and leave publishes these profile settings, then switches to ${leaveSettingsPrompt.nextProfileDisplayName ?? "the selected trusted profile"}. Don't save discards the unpublished profile changes before switching profiles.`}
+            </p>
+            <div className="actions">
+              <button type="button" onClick={() => void handleSaveAndLeaveSettings()} disabled={busy}>
+                Save and leave
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void handleDiscardAndLeaveSettings()}
+                disabled={busy}
+              >
+                Don&apos;t save
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleStayOnSettings}
+                disabled={busy}
+              >
+                Stay here
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
 
@@ -854,10 +1046,12 @@ export default function App() {
           onSaveClassifications={handleSaveClassifications}
           onSaveRates={handleSaveRates}
           onPublishDraft={handlePublishDraft}
+          onDiscardDraft={handleDiscardProfileDraft}
           onCreateTrustedProfile={handleCreateTrustedProfile}
           onArchiveTrustedProfile={handleArchiveTrustedProfile}
           onUnarchiveTrustedProfile={handleUnarchiveTrustedProfile}
           onCreateDesktopSyncExport={handleCreateDesktopSyncExport}
+          onLeaveGuardChange={registerSettingsLeaveGuard}
           lastDownloadedProfileSyncFilename={lastDownloadedProfileSyncFilename}
         />
       )}

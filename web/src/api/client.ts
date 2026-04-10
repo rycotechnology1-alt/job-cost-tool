@@ -156,6 +156,12 @@ export async function fetchProfileDraft(
   return apiJson<DraftEditorStateResponse>(`/api/profile-drafts/${trustedProfileDraftId}`);
 }
 
+export async function discardProfileDraft(
+  trustedProfileDraftId: string,
+): Promise<void> {
+  await apiRequest(`/api/profile-drafts/${trustedProfileDraftId}`, { method: "DELETE" });
+}
+
 export async function updateDraftDefaultOmit(
   trustedProfileDraftId: string,
   defaultOmitRules: DefaultOmitRuleRow[],

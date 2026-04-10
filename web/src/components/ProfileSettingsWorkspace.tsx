@@ -29,6 +29,15 @@ interface DraftSyncToken {
   sequence: number;
 }
 
+export interface ProfileSettingsLeaveGuard {
+  hasUnsavedChanges: boolean;
+  dirtySections: string[];
+  draftId: string | null;
+  profileDisplayName: string;
+  saveAllDirtySections: () => Promise<boolean>;
+  discardCurrentDraft: () => Promise<boolean>;
+}
+
 interface ProfileSettingsWorkspaceProps {
   trustedProfiles: TrustedProfileResponse[];
   archivedTrustedProfiles: TrustedProfileResponse[];
@@ -42,19 +51,21 @@ interface ProfileSettingsWorkspaceProps {
   onTrustedProfileNameChange: (value: string) => void;
   onReloadProfileDetail: () => Promise<void> | void;
   onOpenDraft: () => Promise<void> | void;
-  onSaveDefaultOmit: (rows: DefaultOmitRuleRow[]) => Promise<void> | void;
-  onSaveLaborMappings: (rows: LaborMappingRow[]) => Promise<void> | void;
-  onSaveEquipmentMappings: (rows: EquipmentMappingRow[]) => Promise<void> | void;
+  onSaveDefaultOmit: (rows: DefaultOmitRuleRow[]) => Promise<boolean> | boolean;
+  onSaveLaborMappings: (rows: LaborMappingRow[]) => Promise<boolean> | boolean;
+  onSaveEquipmentMappings: (rows: EquipmentMappingRow[]) => Promise<boolean> | boolean;
   onSaveClassifications: (
     laborSlots: ClassificationSlotRow[],
     equipmentSlots: ClassificationSlotRow[],
-  ) => Promise<void> | void;
-  onSaveRates: (laborRates: LaborRateRow[], equipmentRates: EquipmentRateRow[]) => Promise<void> | void;
-  onPublishDraft: () => Promise<void> | void;
+  ) => Promise<boolean> | boolean;
+  onSaveRates: (laborRates: LaborRateRow[], equipmentRates: EquipmentRateRow[]) => Promise<boolean> | boolean;
+  onPublishDraft: (trustedProfileDraftId?: string) => Promise<boolean> | boolean;
+  onDiscardDraft: (trustedProfileDraftId: string) => Promise<boolean> | boolean;
   onCreateTrustedProfile: (request: CreateTrustedProfileRequest) => Promise<void> | void;
   onArchiveTrustedProfile: () => Promise<void> | void;
   onUnarchiveTrustedProfile: (trustedProfileId: string, displayName: string) => Promise<void> | void;
   onCreateDesktopSyncExport: () => Promise<void> | void;
+  onLeaveGuardChange?: (guard: ProfileSettingsLeaveGuard | null) => void;
   lastDownloadedProfileSyncFilename: string;
 }
 
@@ -431,28 +442,17 @@ function RowMessages({ messages }: { messages?: string[] }) {
   );
 }
 
-function SectionActionGroup({
+function SectionStatusPill({
   dirty,
   errorCount,
-  saveLabel,
-  saveDisabled,
-  onSave,
 }: {
   dirty: boolean;
   errorCount: number;
-  saveLabel: string;
-  saveDisabled: boolean;
-  onSave: () => void;
 }) {
   return (
-    <div className="settings-section-actions">
-      <StatusPill tone={errorCount > 0 ? "error" : dirty ? "warning" : "success"}>
-        {errorCount > 0 ? `${errorCount} issue${errorCount === 1 ? "" : "s"}` : dirty ? "Unsaved" : "Saved"}
-      </StatusPill>
-      <button type="button" onClick={onSave} disabled={saveDisabled}>
-        {saveLabel}
-      </button>
-    </div>
+    <StatusPill tone={errorCount > 0 ? "error" : dirty ? "warning" : "success"}>
+      {errorCount > 0 ? `${errorCount} issue${errorCount === 1 ? "" : "s"}` : dirty ? "Unsaved" : "Saved"}
+    </StatusPill>
   );
 }
 
@@ -475,10 +475,12 @@ export function ProfileSettingsWorkspace({
   onSaveClassifications,
   onSaveRates,
   onPublishDraft,
+  onDiscardDraft,
   onCreateTrustedProfile,
   onArchiveTrustedProfile,
   onUnarchiveTrustedProfile,
   onCreateDesktopSyncExport,
+  onLeaveGuardChange,
   lastDownloadedProfileSyncFilename,
 }: ProfileSettingsWorkspaceProps) {
   const [defaultOmitRules, setDefaultOmitRules] = useState<DefaultOmitRuleRow[]>([]);
@@ -496,6 +498,7 @@ export function ProfileSettingsWorkspace({
   const [retainedDraftStates, setRetainedDraftStates] = useState<Record<string, RetainedDraftWorkspaceState>>({});
   const [restoredDraftNotice, setRestoredDraftNotice] = useState("");
   const lastDraftIdRef = useRef<string | null>(null);
+  const hydratedDraftKeyRef = useRef<string | null>(null);
 
   function clearLocalEditorState() {
     setDefaultOmitRules([]);
@@ -533,6 +536,7 @@ export function ProfileSettingsWorkspace({
     if (!selectedTrustedProfileId || !draftState || draftState.trusted_profile_id !== selectedTrustedProfileId) {
       clearLocalEditorState();
       lastDraftIdRef.current = null;
+      hydratedDraftKeyRef.current = null;
       if (draftSyncToken.reason === "reset" || draftSyncToken.reason === "profileSwitch") {
         setRestoredDraftNotice("");
       }
@@ -659,6 +663,9 @@ export function ProfileSettingsWorkspace({
   const ratesDirty =
     draftState &&
     (!compareRows(laborRates, draftState.labor_rates) || !compareRows(equipmentRates, draftState.equipment_rates));
+  const currentDraftHydrationKey = draftState
+    ? `${draftState.trusted_profile_draft_id}:${draftState.draft_content_hash}`
+    : null;
 
   const dirtySections = [
     defaultOmitDirty ? "default omit rules" : "",
@@ -675,26 +682,27 @@ export function ProfileSettingsWorkspace({
     (classificationsDirty && classificationIssueCount > 0) ||
     (ratesDirty && ratesValidation.messages.length > 0);
 
-  const publishDisabled =
+  const saveProfileDisabled =
     busy ||
     !draftState ||
-    dirtySections.length > 0 ||
+    dirtySections.length === 0 ||
     hasLocalValidationIssues ||
     draftState.validation_errors.length > 0;
 
-  const publishReadinessLabel = !draftState
-    ? "No draft open"
+  const saveReadinessLabel = !draftState
+    ? "Select Edit current profile"
     : draftState.validation_errors.length > 0 || hasLocalValidationIssues
       ? "Fix validation issues"
-      : dirtySections.length > 0
-        ? "Save unsaved sections"
-        : "Ready to publish";
+      : dirtySections.length === 0
+        ? "Make a change to save"
+        : "Ready to save profile settings";
 
-  const publishReadinessTone =
-    !draftState || draftState.validation_errors.length > 0 || hasLocalValidationIssues
+  const saveReadinessTone = !draftState
+    ? "neutral"
+    : draftState.validation_errors.length > 0 || hasLocalValidationIssues
       ? "error"
-      : dirtySections.length > 0
-        ? "warning"
+      : dirtySections.length === 0
+        ? "neutral"
         : "success";
   const createProfileValidation = useMemo(
     () => buildCreateProfileValidation(newProfileName, newProfileDisplayName, trustedProfiles),
@@ -726,12 +734,30 @@ export function ProfileSettingsWorkspace({
     ? retainedDraftStates[selectedTrustedProfileId] ?? null
     : null;
   const workspaceViewLabel = draftState
-    ? `Viewing draft ${draftState.trusted_profile_draft_id}`
-    : "Viewing published profile";
+    ? "Editing current profile"
+    : "Viewing live profile";
   const workspaceViewTone = draftState ? "warning" : "neutral";
 
   useEffect(() => {
+    if (
+      !draftState ||
+      !selectedTrustedProfileId ||
+      draftState.trusted_profile_id !== selectedTrustedProfileId ||
+      !currentDraftHydrationKey
+    ) {
+      hydratedDraftKeyRef.current = null;
+      return;
+    }
+    if (dirtySections.length === 0) {
+      hydratedDraftKeyRef.current = currentDraftHydrationKey;
+    }
+  }, [currentDraftHydrationKey, dirtySections.length, draftState, selectedTrustedProfileId]);
+
+  useEffect(() => {
     if (!selectedTrustedProfileId || !draftState || draftState.trusted_profile_id !== selectedTrustedProfileId) {
+      return;
+    }
+    if (!currentDraftHydrationKey || hydratedDraftKeyRef.current !== currentDraftHydrationKey) {
       return;
     }
 
@@ -780,16 +806,106 @@ export function ProfileSettingsWorkspace({
     laborMappings,
     laborRates,
     laborSlots,
+    currentDraftHydrationKey,
     selectedTrustedProfileId,
   ]);
 
-  function handleResetUnsavedChanges() {
+  async function saveAllDirtySections(): Promise<boolean> {
     if (!draftState) {
-      return;
+      return true;
+    }
+    if (defaultOmitDirty && defaultOmitValidation.messages.length > 0) {
+      return false;
+    }
+    if (laborMappingsDirty && laborMappingValidation.messages.length > 0) {
+      return false;
+    }
+    if (equipmentMappingsDirty && equipmentMappingValidation.messages.length > 0) {
+      return false;
+    }
+    if (classificationsDirty && classificationIssueCount > 0) {
+      return false;
+    }
+    if (ratesDirty && ratesValidation.messages.length > 0) {
+      return false;
+    }
+    if (defaultOmitDirty && !(await onSaveDefaultOmit(defaultOmitRules))) {
+      return false;
+    }
+    if (laborMappingsDirty && !(await onSaveLaborMappings(laborMappings))) {
+      return false;
+    }
+    if (equipmentMappingsDirty && !(await onSaveEquipmentMappings(equipmentMappings))) {
+      return false;
+    }
+    if (classificationsDirty && !(await onSaveClassifications(laborSlots, equipmentSlots))) {
+      return false;
+    }
+    if (ratesDirty && !(await onSaveRates(laborRates, equipmentRates))) {
+      return false;
     }
     setRestoredDraftNotice("");
-    syncAllFromDraft(draftState);
+    return true;
   }
+
+  async function handlePrimarySettingsAction() {
+    if (!draftState) {
+      await onOpenDraft();
+      return;
+    }
+    const saved = await saveAllDirtySections();
+    if (!saved) {
+      return;
+    }
+    await onPublishDraft(draftState.trusted_profile_draft_id);
+  }
+
+  async function discardCurrentDraft(): Promise<boolean> {
+    if (!draftState) {
+      return true;
+    }
+    const discarded = await onDiscardDraft(draftState.trusted_profile_draft_id);
+    if (!discarded) {
+      return false;
+    }
+    setRestoredDraftNotice("");
+    hydratedDraftKeyRef.current = null;
+    if (selectedTrustedProfileId) {
+      setRetainedDraftStates((current) => {
+        if (!current[selectedTrustedProfileId]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[selectedTrustedProfileId];
+        return next;
+      });
+    }
+    return true;
+  }
+
+  useEffect(() => {
+    if (!onLeaveGuardChange) {
+      return;
+    }
+    onLeaveGuardChange({
+      hasUnsavedChanges: dirtySections.length > 0,
+      dirtySections: [...dirtySections],
+      draftId: draftState?.trusted_profile_draft_id ?? null,
+      profileDisplayName: selectedTrustedProfile?.display_name ?? "this trusted profile",
+      saveAllDirtySections,
+      discardCurrentDraft,
+    });
+    return () => {
+      onLeaveGuardChange(null);
+    };
+  }, [
+    dirtySections,
+    discardCurrentDraft,
+    draftState?.trusted_profile_draft_id,
+    onLeaveGuardChange,
+    saveAllDirtySections,
+    selectedTrustedProfile?.display_name,
+  ]);
 
   async function handleCreateProfile() {
     setCreateServerFieldErrors({});
@@ -816,14 +932,6 @@ export function ProfileSettingsWorkspace({
 
   function handleTrustedProfileSelection(nextProfileName: string) {
     if (!nextProfileName || nextProfileName === selectedTrustedProfileName) {
-      return;
-    }
-    if (
-      dirtySections.length > 0 &&
-      !window.confirm(
-        `Switching trusted profiles will keep the current unsaved browser edits attached only to ${selectedTrustedProfile?.display_name ?? "this profile"} in this tab. Reopen that profile's current draft to continue them later. Continue?`,
-      )
-    ) {
       return;
     }
     onTrustedProfileNameChange(nextProfileName);
@@ -861,8 +969,8 @@ export function ProfileSettingsWorkspace({
           <p className="eyebrow">Profile Settings</p>
           <h2>{selectedTrustedProfile?.display_name ?? "Choose a trusted profile"}</h2>
           <p className="workspace-copy">
-            Inspect the published trusted profile, open the single mutable draft, edit the approved Phase 2A settings
-            slice, and publish a new immutable version for future processing.
+            Inspect the live trusted profile, edit the approved Phase 2A settings slice, and save profile settings when
+            you are ready to publish a new live version for future processing.
           </p>
         </div>
         <div className="summary-card">
@@ -883,21 +991,16 @@ export function ProfileSettingsWorkspace({
             </select>
           </label>
           <div className="actions">
-            <button type="button" onClick={onOpenDraft} disabled={busy || !selectedTrustedProfile}>
-              {openDraftId ? "Open current draft" : "Create draft from published version"}
-            </button>
             <button
               type="button"
-              className="secondary-button"
-              onClick={onPublishDraft}
-              disabled={publishDisabled}
+              onClick={() => void handlePrimarySettingsAction()}
+              disabled={draftState ? saveProfileDisabled : busy || !selectedTrustedProfile}
             >
-              Publish draft
+              {draftState ? "Save profile settings" : "Edit current profile"}
             </button>
           </div>
           <p className="muted">
-            Published versions are processable. Drafts remain non-processable until publish creates a new immutable
-            version.
+            Live profile settings drive processing. Changes stay in this editor until you save profile settings.
           </p>
           {selectedTrustedProfile ? (
             <div className="workspace-callout">
@@ -908,16 +1011,16 @@ export function ProfileSettingsWorkspace({
                   {selectedProfileSourceLabel}
                 </StatusPill>
                 <StatusPill tone={selectedTrustedProfile.has_open_draft ? "warning" : "success"}>
-                  {selectedTrustedProfile.has_open_draft ? "Open draft" : "No open draft"}
+                  {selectedTrustedProfile.has_open_draft ? "Unpublished changes" : "Live only"}
                 </StatusPill>
-                <StatusPill tone="neutral">Published v{selectedTrustedProfile.current_published_version_number}</StatusPill>
+                <StatusPill tone="neutral">Live v{selectedTrustedProfile.current_published_version_number}</StatusPill>
                 <StatusPill tone={workspaceViewTone}>{workspaceViewLabel}</StatusPill>
                 {selectedRetainedDraftState ? <StatusPill tone="warning">Local unsaved edits retained</StatusPill> : null}
                 {selectedTrustedProfile.is_active_profile ? <StatusPill tone="neutral">Desktop active</StatusPill> : null}
               </div>
               <p className="muted">
-                The selected profile controls both the seed for new profile creation and the draft you open below.
-                Local unsaved browser edits stay scoped to one profile and one draft in this tab.
+                The selected profile controls both the live profile view and any unpublished changes you continue in
+                this tab. Local unsaved browser edits stay scoped to one profile at a time.
               </p>
             </div>
           ) : null}
@@ -942,7 +1045,7 @@ export function ProfileSettingsWorkspace({
                     <div className="settings-inline-status">
                       <StatusPill tone={profileSourceTone(profile.source_kind)}>{profileSourceLabel(profile.source_kind)}</StatusPill>
                       <StatusPill tone="neutral">v{profile.current_published_version_number}</StatusPill>
-                      {profile.has_open_draft ? <StatusPill tone="warning">Open draft</StatusPill> : null}
+                      {profile.has_open_draft ? <StatusPill tone="warning">Unpublished changes</StatusPill> : null}
                       {retainedDraftStates[profile.trusted_profile_id] ? <StatusPill tone="warning">Local unsaved edits</StatusPill> : null}
                       {profile.profile_name === selectedTrustedProfileName ? <StatusPill tone="success">Selected</StatusPill> : null}
                     </div>
@@ -954,8 +1057,8 @@ export function ProfileSettingsWorkspace({
           <div className="workspace-callout">
             <strong>Create another trusted profile</strong>
             <p>
-              New profiles start from the currently selected profile&apos;s published version only. Open drafts and
-              unsaved browser edits are not copied.
+              New profiles start from the currently selected profile&apos;s live version only. Unpublished profile
+              changes and browser-only edits are not copied.
             </p>
             {createServerMessage ? (
               <div className="banner warning" role="status">
@@ -965,7 +1068,7 @@ export function ProfileSettingsWorkspace({
             ) : null}
             {selectedTrustedProfile ? (
               <p className="muted">
-                Seed source: {selectedTrustedProfile.display_name} ({selectedProfileSourceLabel}), published version v
+                Seed source: {selectedTrustedProfile.display_name} ({selectedProfileSourceLabel}), live version v
                 {currentPublishedVersionNumber ?? selectedTrustedProfile.current_published_version_number}.
               </p>
             ) : null}
@@ -1044,15 +1147,15 @@ export function ProfileSettingsWorkspace({
               {selectedTrustedProfile?.source_kind !== "published_clone"
                 ? "Default and filesystem-backed profiles stay managed through the existing desktop/filesystem path."
                 : openDraftId
-                  ? "Publish the open draft before archiving this profile."
+                  ? "Save or discard the unpublished profile changes before archiving this profile."
                   : "Archiving hides the profile from active selectors but preserves its versions, runs, and sync-export audit history."}
             </p>
           </div>
           <div className="workspace-callout">
             <strong>Archived profiles</strong>
             <p className="muted">
-              Archived profiles remain in lineage history, stay out of active review/profile selectors, and cannot open
-              drafts until they are restored.
+              Archived profiles remain in lineage history, stay out of active review/profile selectors, and cannot be
+              edited until they are restored.
             </p>
             {archivedTrustedProfiles.length === 0 ? (
               <p className="empty-state">No archived trusted profiles are currently stored for this organization.</p>
@@ -1088,7 +1191,7 @@ export function ProfileSettingsWorkspace({
 
       {!selectedTrustedProfile ? (
         <div className="panel empty-workspace">
-          <p className="empty-state">Choose a trusted profile to inspect the published configuration and open a draft.</p>
+          <p className="empty-state">Choose a trusted profile to inspect the live configuration and edit the current profile.</p>
         </div>
       ) : null}
 
@@ -1097,20 +1200,20 @@ export function ProfileSettingsWorkspace({
           <strong>Settings workflow needs attention</strong>
           <p>{settingsErrorMessage}</p>
           {draftState ? (
-            <p className="muted">Unsaved browser edits remain on screen while you retry or continue adjusting the draft.</p>
+            <p className="muted">Unsaved browser edits remain on screen while you retry or continue adjusting the current profile.</p>
           ) : null}
           <div className="actions">
             {!profileDetail ? (
               <button type="button" className="secondary-button" onClick={() => void onReloadProfileDetail()} disabled={busy}>
-                Retry loading published profile
+                Retry loading live profile
               </button>
             ) : !draftState ? (
               <button type="button" className="secondary-button" onClick={() => void onOpenDraft()} disabled={busy}>
-                {openDraftId ? "Retry opening current draft" : "Retry creating draft"}
+                Retry editing current profile
               </button>
             ) : (
               <button type="button" className="secondary-button" onClick={() => void onReloadProfileDetail()} disabled={busy}>
-                Reload published summary
+                Reload live summary
               </button>
             )}
           </div>
@@ -1121,8 +1224,8 @@ export function ProfileSettingsWorkspace({
         <div className="settings-grid">
           <div className="panel settings-main">
             <SectionHeader
-              title="Published Profile Summary"
-              description="Published versions are read-only. Open the single draft to edit the approved Phase 2A domains."
+              title="Live Profile Summary"
+              description="Live profile settings are read-only here. Select Edit current profile to change the approved Phase 2A domains."
               action={
                 <button
                   type="button"
@@ -1156,28 +1259,16 @@ export function ProfileSettingsWorkspace({
                 <dd>{profileDetail.version_label ?? "-"}</dd>
               </div>
               <div>
-                <dt>Published version</dt>
+                <dt>Live version</dt>
                 <dd>v{profileDetail.current_published_version.version_number}</dd>
-              </div>
-              <div>
-                <dt>Content hash</dt>
-                <dd className="hash-text">{profileDetail.current_published_version.content_hash}</dd>
               </div>
               <div>
                 <dt>Template reference</dt>
                 <dd>{profileDetail.current_published_version.template_artifact_ref ?? "-"}</dd>
               </div>
-              <div>
-                <dt>Template file hash</dt>
-                <dd className="hash-text">{profileDetail.current_published_version.template_file_hash ?? "-"}</dd>
-              </div>
-              <div>
-                <dt>Open draft</dt>
-                <dd>{profileDetail.open_draft_id ?? "None"}</dd>
-              </div>
             </dl>
             <p className="muted">
-              Desktop sync archives always come from the current published version only. Drafts are never exported.
+              Desktop sync archives always come from the current live version only. Unpublished changes are never exported.
             </p>
             {lastDownloadedProfileSyncFilename ? (
               <div className="workspace-callout success">
@@ -1188,38 +1279,37 @@ export function ProfileSettingsWorkspace({
 
             <div className="settings-status-strip">
               <div className="status-block settings-status-card">
-                <strong>Published state</strong>
-                <p>Published version v{profileDetail.current_published_version.version_number} remains the live web-processing source.</p>
+                <strong>Live profile</strong>
+                <p>Live version v{profileDetail.current_published_version.version_number} remains the web-processing source.</p>
               </div>
               <div className="status-block settings-status-card">
-                <strong>Workspace view</strong>
-                <p>{draftState ? `Editing draft ${draftState.trusted_profile_draft_id}.` : "Viewing published profile data only."}</p>
+                <strong>Editing state</strong>
+                <p>{draftState ? "Editing current profile settings." : "Viewing live profile settings only."}</p>
               </div>
               <div className="status-block settings-status-card">
-                <strong>Unsaved browser changes</strong>
+                <strong>Browser changes</strong>
                 <p>
                   {draftState
                     ? dirtySections.length > 0
                       ? `${dirtySections.length} section(s) still need saving.`
-                      : "All browser edits match the saved draft."
+                      : "All browser edits match the current unpublished profile changes."
                     : selectedRetainedDraftState
-                      ? `Retained for draft ${selectedRetainedDraftState.trusted_profile_draft_id}. Reopen the current draft to continue them.`
-                      : "No local draft edits are currently retained in this tab."}
+                      ? "Unpublished profile changes are retained in this tab. Select Edit current profile to keep working."
+                      : "No local profile edits are currently retained in this tab."}
                 </p>
               </div>
               <div className="status-block settings-status-card">
-                <strong>Publish readiness</strong>
-                <p>{publishReadinessLabel}</p>
+                <strong>Save status</strong>
+                <p>{saveReadinessLabel}</p>
               </div>
             </div>
 
             {!draftState && selectedRetainedDraftState ? (
               <div className="workspace-callout">
-                <strong>Unsaved browser edits are retained for this profile.</strong>
+                <strong>Unpublished profile changes are retained for this profile.</strong>
                 <p>
-                  This tab kept {selectedRetainedDraftState.dirty_sections.join(", ")} for draft{" "}
-                  {selectedRetainedDraftState.trusted_profile_draft_id}. Use <em>Open current draft</em> to keep working
-                  with those profile-scoped browser edits.
+                  This tab kept {selectedRetainedDraftState.dirty_sections.join(", ")} ready to continue the next time
+                  you select <em>Edit current profile</em>.
                 </p>
               </div>
             ) : null}
@@ -1228,7 +1318,7 @@ export function ProfileSettingsWorkspace({
               <>
                 {draftState.validation_errors.length > 0 ? (
                   <div className="banner warning">
-                    <strong>Draft validation issues</strong>
+                    <strong>Profile settings need attention before saving.</strong>
                     <ul className="message-list">
                       {draftState.validation_errors.map((issue) => (
                         <li key={issue}>{issue}</li>
@@ -1239,54 +1329,52 @@ export function ProfileSettingsWorkspace({
 
                 {observedDraftNote ? (
                   <div className="banner warning" role="status">
-                    <strong>Observed placeholders remain in this draft.</strong>
+                    <strong>Observed placeholders remain in these profile changes.</strong>
                     <p>
                       Rows tagged <ObservedBadge /> were auto-added from unmapped values seen during processing. They
-                      may remain blank and still be published.
+                      may remain blank and still be saved.
                     </p>
                   </div>
                 ) : null}
 
                 <div className="workspace-callout success">
-                  <strong>Editing draft {draftState.trusted_profile_draft_id}</strong>
+                  <strong>Editing current profile</strong>
                   <p>
-                    Based on published version v{draftState.current_published_version.version_number}. Draft content
-                    hash: <span className="hash-text">{draftState.draft_content_hash}</span>
+                    Based on live version v{draftState.current_published_version.version_number}. Saving profile
+                    settings publishes these changes for future processing.
                   </p>
                   <div className="settings-inline-status">
-                    <StatusPill tone="neutral">Published v{draftState.current_published_version.version_number}</StatusPill>
+                    <StatusPill tone="neutral">Live v{draftState.current_published_version.version_number}</StatusPill>
                     <StatusPill tone={dirtySections.length > 0 ? "warning" : "success"}>
                       {dirtySections.length > 0 ? `${dirtySections.length} unsaved section(s)` : "No unsaved browser changes"}
                     </StatusPill>
-                    <StatusPill tone={publishReadinessTone}>{publishReadinessLabel}</StatusPill>
+                    <StatusPill tone={saveReadinessTone}>{saveReadinessLabel}</StatusPill>
                   </div>
                   {restoredDraftNotice ? (
                     <p className="muted">{restoredDraftNotice}</p>
                   ) : null}
-                  {dirtySections.length > 0 ? (
-                    <div className="actions">
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={handleResetUnsavedChanges}
-                        disabled={busy}
-                      >
-                        Discard unsaved browser changes
-                      </button>
-                    </div>
-                  ) : null}
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void discardCurrentDraft()}
+                      disabled={busy}
+                    >
+                      Discard profile changes
+                    </button>
+                  </div>
                 </div>
 
                 {dirtySections.length > 0 ? (
                   <div className="workspace-callout">
-                    <strong>Publish is waiting on unsaved sections.</strong>
-                    <p>Save {dirtySections.join(", ")} before publishing this draft.</p>
+                    <strong>Profile settings are waiting on unsaved sections.</strong>
+                    <p>Save profile settings to apply {dirtySections.join(", ")} to the live profile.</p>
                   </div>
                 ) : null}
 
                 {hasLocalValidationIssues ? (
                   <div className="banner warning" role="status">
-                    <strong>Fix inline issues before saving or publishing.</strong>
+                    <strong>Fix inline issues before saving profile settings.</strong>
                     <p>The affected fields are marked directly in the editable Phase 2A sections below.</p>
                   </div>
                 ) : null}
@@ -1296,12 +1384,9 @@ export function ProfileSettingsWorkspace({
                     title="Default Omit Rules"
                     description="Edit the phase codes that start omitted by default for future runs."
                     action={
-                      <SectionActionGroup
+                      <SectionStatusPill
                         dirty={defaultOmitDirty}
                         errorCount={defaultOmitValidation.messages.length}
-                        saveLabel="Save default omit rules"
-                        saveDisabled={busy || !defaultOmitDirty || defaultOmitValidation.messages.length > 0}
-                        onSave={() => void onSaveDefaultOmit(defaultOmitRules)}
                       />
                     }
                   />
@@ -1394,12 +1479,9 @@ export function ProfileSettingsWorkspace({
                     title="Labor Mappings"
                     description="Raw-first labor mappings remain editable, including blank observed placeholders."
                     action={
-                      <SectionActionGroup
+                      <SectionStatusPill
                         dirty={laborMappingsDirty}
                         errorCount={laborMappingValidation.messages.length}
-                        saveLabel="Save labor mappings"
-                        saveDisabled={busy || !laborMappingsDirty || laborMappingValidation.messages.length > 0}
-                        onSave={() => void onSaveLaborMappings(laborMappings)}
                       />
                     }
                   />
@@ -1514,12 +1596,9 @@ export function ProfileSettingsWorkspace({
                     title="Equipment Mappings"
                     description="Equipment raw keys stay separate from the resolved recap category."
                     action={
-                      <SectionActionGroup
+                      <SectionStatusPill
                         dirty={equipmentMappingsDirty}
                         errorCount={equipmentMappingValidation.messages.length}
-                        saveLabel="Save equipment mappings"
-                        saveDisabled={busy || !equipmentMappingsDirty || equipmentMappingValidation.messages.length > 0}
-                        onSave={() => void onSaveEquipmentMappings(equipmentMappings)}
                       />
                     }
                   />
@@ -1629,12 +1708,9 @@ export function ProfileSettingsWorkspace({
                     title="Classifications"
                     description="Edit slot labels and active state only. Slot ids remain stable and backend validation handles dependent updates."
                     action={
-                      <SectionActionGroup
+                      <SectionStatusPill
                         dirty={Boolean(classificationsDirty)}
                         errorCount={classificationIssueCount}
-                        saveLabel="Save classifications"
-                        saveDisabled={busy || !classificationsDirty || classificationIssueCount > 0}
-                        onSave={() => void onSaveClassifications(laborSlots, equipmentSlots)}
                       />
                     }
                   />
@@ -1756,14 +1832,11 @@ export function ProfileSettingsWorkspace({
                 <div className="settings-section">
                   <SectionHeader
                     title="Rates"
-                    description="Rates stay backend-validated. Unmapped observed rows do not block editing or publish on their own."
+                    description="Rates stay backend-validated. Unmapped observed rows do not block editing or saving on their own."
                     action={
-                      <SectionActionGroup
+                      <SectionStatusPill
                         dirty={Boolean(ratesDirty)}
                         errorCount={ratesValidation.messages.length}
-                        saveLabel="Save rates"
-                        saveDisabled={busy || !ratesDirty || ratesValidation.messages.length > 0}
-                        onSave={() => void onSaveRates(laborRates, equipmentRates)}
                       />
                     }
                   />
@@ -1892,10 +1965,10 @@ export function ProfileSettingsWorkspace({
               </>
             ) : (
               <div className="workspace-callout">
-                <strong>No draft is open for this profile.</strong>
+                <strong>You are viewing the live profile only.</strong>
                 <p>
-                  Inspect the published version below, then create or open the single mutable draft to edit the
-                  approved Phase 2A settings slice.
+                  Inspect the live version below, then select Edit current profile to change the approved Phase 2A
+                  settings slice.
                 </p>
               </div>
             )}
@@ -1907,7 +1980,7 @@ export function ProfileSettingsWorkspace({
                 title="Read-only Deferred Domains"
                 description="These domains remain non-editable in Phase 2A."
               />
-              <p className="muted">Read only in Phase 2A. Template identity is still part of the published version.</p>
+              <p className="muted">Read only in Phase 2A. Template identity is still part of the live version.</p>
               {deferredDomains ? (
                 <>
                   <DeferredDomainCard title="Vendor Normalization" payload={deferredDomains.vendor_normalization} />

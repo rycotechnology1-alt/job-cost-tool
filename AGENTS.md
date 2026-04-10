@@ -1,97 +1,58 @@
 # AGENTS.md
 
-## Project context
-This repository contains a Python application that currently delivers a working desktop recap tool through PySide6. Its purpose is to automate T&M recap creation from Vista/Viewpoint-style job cost reports.
+## Project Context
+This repository is now a web-first job cost recap product built around a shared Python engine and service layer.
 
-The desktop app is not throwaway code. It is:
-- a working MVP
-- a valuable internal production tool
-- the current production fallback during migration
-- a reference implementation for the workflow and rules that define the product
+Current delivery model:
+- `web/` is the primary operator-facing delivery shell.
+- `api/` is the primary backend boundary for browser workflows.
+- `app/` remains a valuable desktop fallback and reference implementation.
 
-At the same time, this repository is now in an active, controlled migration toward a web-based delivery model.
+The desktop app is not throwaway code. It still matters as:
+- a production fallback when needed
+- a reference for hardened workflow behavior
+- a secondary delivery shell that should remain stable when touched
 
-This repo should be treated as:
-
-- a **reusable product engine and workflow core**
-- with a **desktop delivery shell that must remain stable during migration**
-- while future **web delivery layers** are introduced in controlled phases
+At the same time, the repo is no longer in an early migration stance where web/API work is assumed out of scope. Web and API work are normal in-scope parts of the product now.
 
 ---
 
-## Current migration direction
-The approved migration direction is:
+## Current Working Stance
+Treat this repo as:
+- a reusable product engine in `core/`
+- a reusable orchestration layer in `services/`
+- a web-first delivery system with desktop fallback
 
-- preserve `core/` as the product engine
-- use a strangler approach
-- extract non-Qt application services before rebuilding delivery interfaces
-- keep the desktop app alive until web parity is accepted
-- keep desktop as the production fallback until the parity corpus passes
-- move in safe, reviewable slices rather than broad platform buildout
-- phase 1 targets one deployed customer / one organization, not full multi-tenant SaaS
-- remain organization-ready, but do not introduce unnecessary multi-tenant provisioning/billing/org-management complexity in phase 1
+Default assumptions:
+- prefer reusable engine/service logic over delivery-specific logic
+- preserve current lineage and immutability rules
+- keep desktop stable when desktop code is touched
+- avoid unnecessary platform sprawl or speculative infrastructure
+- treat one-organization internal use as the default unless the task explicitly expands scope
 
-Unless the user explicitly asks for a later migration phase, do **not** assume broad backend/web platform implementation is in scope.
-
----
-
-## Current approved implementation scope
-The current default approved implementation slice is:
-
-1. extract plain Python application services from `ReviewViewModel` and `SettingsViewModel`
-2. keep workflow orchestration and business-state shaping out of Qt
-3. add non-Qt application-service tests proving extracted services preserve current desktop behavior
-
-By default, the following are **out of scope** unless the user explicitly requests them in the current task:
-
-- PostgreSQL persistence/schema implementation
-- FastAPI route buildout
-- React/frontend scaffolding
-- worker infrastructure / background job queue
-- broad API contract implementation
-- full profile/admin web tooling
-- true multi-tenant behavior
-- broad rewrites outside the currently approved slice
+Avoid assuming that the right answer is to build broad multi-tenant provisioning, billing, background-worker infrastructure, or other platform-heavy features unless the current task clearly asks for them.
 
 ---
 
-## Product rules that must be preserved
-Meaningful development work must preserve these product realities:
+## Product Rules That Must Be Preserved
+Meaningful work should preserve these product realities:
 
 - raw report fidelity and traceability matter
-- if a line is confidently part of the report body, it should survive as a record unless intentionally omitted
+- valid report-body lines should survive as records unless intentionally omitted or clearly non-body noise
 - phase context matters heavily
-- family/type separation must remain intentional
-- export-only behavior must stay in export, not leak into parsing/normalization
+- family/type separation is intentional
+- export-only behavior should stay in export, not leak backward into parsing or normalization
 - raw mapping source and resolved recap/export classification must stay separate
-- hardened desktop behavior is the baseline that migration must preserve
+- profile/config behavior should remain data-driven
+- current hardened desktop behavior is still a useful correctness reference when shared logic is touched
 
 ---
 
-## Primary development objective
-When making changes, prioritize work that strengthens the following platform-independent product capabilities:
-
-- parsing logic
-- normalization logic
-- validation logic
-- profile/config abstractions
-- classification/rate/template modeling
-- export mapping and export generation behavior
-- workflow/domain edit behavior
-- application/service orchestration
-- terminology consistency
-- tests, fixtures, and edge-case coverage
-- parity acceptance support
-
-Avoid over-investing in desktop-only polish when the same effort could improve the reusable engine or service boundary.
-
----
-
-## Architecture expectations
-Prefer a clean separation between these layers:
+## Architecture Expectations
+Prefer a clean separation between these layers.
 
 ### 1. Core domain / product engine
-Reusable logic that should remain portable across delivery models:
+Reusable logic that should stay portable:
 - record models
 - parsing
 - normalization
@@ -102,123 +63,69 @@ Reusable logic that should remain portable across delivery models:
 - workflow rules
 
 ### 2. Application / service layer
-Orchestration logic that coordinates the workflow:
+Workflow orchestration and behavior shaping:
 - document ingest/open
 - profile resolution
-- parse/normalize/validate pipeline execution
-- application of edits/overrides
-- recalculation of blocker/warning state
+- processing-run creation and lineage capture
+- review edit application and revision behavior
+- profile authoring/edit orchestration
+- blocker/warning shaping
 - export-readiness decisions
 - export generation orchestration
-- issue/blocker shaping
-- options loading
 
-### 3. Delivery / interface layer
-Interface-specific concerns:
-- PySide windows, dialogs, tables, panels, view-models, widget refreshes
-- future HTTP/API delivery concerns
-- future browser/frontend delivery concerns
+### 3. Delivery layers
+Interface-specific behavior:
+- FastAPI routes and schemas
+- React/browser UI
+- PySide windows, dialogs, tables, and widget refreshes
 
-Business logic should not be added directly to PySide widgets, window classes, or UI glue unless absolutely necessary. Prefer to keep interface code thin and delegate workflow logic to reusable services/domain modules.
+Keep business logic out of UI glue when a service or core location is cleaner.
 
 ---
 
-## Service extraction guidance
-When refactoring current desktop code, treat these as likely application/service logic candidates:
-
-- workflow orchestration
-- correction application
-- validation/blocker state changes
-- export readiness rules
-- profile resolution
-- option loading
-- issue/blocker shaping
-
-Treat these as desktop UI glue unless there is a strong reason otherwise:
-
-- Qt signals
-- widget refreshes
-- row coloring
-- dialogs
-- screen-management behavior
-- PySide-only mechanics
-
-If logic is being moved, prefer moving it downward into reusable services/modules rather than sideways into more UI code.
-
----
-
-## Parity and migration guardrails
-Migration work must preserve the current business result of the desktop app.
-
-### Phase-1 parity definition
-For phase 1, parity means the web workflow must produce the same usable business result as desktop for the same input report and trusted profile. At minimum that means:
-
-- the same surviving review records
-- the same normalized family/type outcomes
-- the same blockers/warnings
-- the same correction results
-- materially the same export workbook output
-
-Full browser-native profile/admin parity is deferred unless a narrow subset is explicitly required for go-live.
-
-### Fallback rule
-Desktop remains the production system of record until the parity corpus passes and the user explicitly approves broader cutover.
-
-Do not treat desktop retirement as implied.
-
----
-
-## Immutability and lineage expectations
-Any migration-related design or implementation must respect these rules:
-
-- once a report is processed, that `ProcessingRun` is a fixed snapshot
-- reprocessing with new logic or new settings creates a new `ProcessingRun`
-- a `ReviewSession` belongs to one specific `ProcessingRun`
-- edits are stored as overlays/deltas, never as destructive overwrites of run records
-- every run captures the exact profile/config snapshot and engine build/version used at process time
-- later profile/config changes do not affect old runs, review sessions, exports, or prior results
-- rerunning with new settings creates a new run whose export reflects the new settings
-
-Do not implement migration-related persistence, API, or review behavior in a way that violates these rules.
-
----
-
-## Desktop-vs-web decision rule
-When implementing a feature, bug fix, or migration step, prefer the approach that best fits this order:
+## Implementation Guidance
+When multiple valid approaches exist, prefer this order:
 
 1. correctness
 2. maintainability
 3. preservation of hardened product behavior
-4. portability to the approved migration model
-5. desktop-specific polish
-
-This does **not** mean avoiding useful desktop improvements. It means desktop-specific implementation details should not contaminate core or service logic when a cleaner boundary is possible.
-
----
-
-## Change strategy
-Keep changes targeted, reviewable, and phase-appropriate.
+4. clear reusable boundaries
+5. delivery-shell polish
 
 Prefer:
 - small focused changes
 - explicit reasoning
-- clear boundaries
 - stable interfaces
-- tests for meaningful behavior changes
-- minimal blast radius
-- migration slices that can be reviewed independently
+- regression tests for meaningful behavior
+- shared helpers/services for business behavior
 
 Avoid:
 - broad rewrites unless requested
-- mixing refactor + feature + UI redesign in one step
-- embedding configuration or business rules in UI code
-- hard-coded assumptions that reduce portability
-- using migration as an excuse to scaffold major backend/web infrastructure too early
+- mixing unrelated refactor + feature + UI redesign in one change
+- embedding business rules directly in browser widgets or PySide UI code
+- speculative platform buildout that is not needed for the task
+
+Web/API work is normal in-scope, but it should still be thin over the accepted service and product rules rather than turning into infrastructure sprawl.
 
 ---
 
-## Testing expectations
-For any non-trivial change, include or update tests when appropriate.
+## Lineage And Immutability Rules
+Any work touching processing, review, profile authoring, or export should preserve these rules:
+
+- each `ProcessingRun` is a fixed snapshot
+- reprocessing with new logic or settings creates a new `ProcessingRun`
+- a `ReviewSession` belongs to one specific `ProcessingRun`
+- review edits are append-only overlays/deltas, not destructive rewrites of run records
+- every run captures the exact profile/config snapshot and engine context used at process time
+- later profile/config changes do not mutate old runs, review sessions, exports, or prior results
+- profile authoring changes become processable only through the published-version path, not through mutable in-progress state
+
+Do not introduce persistence, API, or UI behavior that weakens these boundaries.
+
+---
+
+## Testing Expectations
+For non-trivial changes, add or update tests where appropriate.
 
 Especially protect:
 - parsing behavior
@@ -227,138 +134,86 @@ Especially protect:
 - mapping behavior
 - export generation behavior
 - workflow-level edit behavior
-- bug fixes for previously observed edge cases
-- service extraction parity against current desktop behavior
+- review lineage behavior
+- trusted-profile authoring behavior
+- browser workflow regressions
+- bug fixes for previously observed trust-eroding issues
 
-If a bug is fixed, prefer adding a regression test that would have caught it.
-
-If a behavior change is intentional, make the tests clearly reflect the intended new behavior.
-
-When working in the current migration phase, prefer tests that prove extracted services behave the same as the existing desktop workflow.
+If a bug is fixed, prefer a regression test that would have caught it.
 
 ---
 
-## Configuration and profile expectations
-This product is configuration-driven and should remain so.
+## Desktop And Web Guidance
+The web product is the primary delivery path, but desktop still matters.
 
-Prefer:
-- data-driven mappings
-- profile-based behavior
-- reusable abstractions
-- terminology consistency across config, code, and UI
-- minimizing hard-coded customer-specific assumptions
+When touching desktop code:
+- preserve stability
+- keep UI glue thin
+- avoid reintroducing desktop-only ownership of shared workflow logic
 
-Avoid:
-- baking one company’s exact workflow too deeply into core logic
-- forcing future customers into current naming conventions if a cleaner abstraction is possible
-
-During the current migration phase:
-- web v1 must use trusted profiles correctly
-- labor/equipment classification behavior is mandatory in v1
-- browser-native profile editing/admin is deferred unless explicitly required for go-live
+When touching web/API code:
+- treat the existing web/API stack as a real product surface, not scaffolding
+- keep behavior anchored in shared services/helpers when possible
+- avoid widening into unrelated platform/admin work unless requested
 
 ---
 
-## Migration phase decision rule
-Before implementing meaningful work, explicitly ask:
-
-- Is this inside the currently approved migration slice?
-- Does this preserve desktop MVP stability?
-- Does this strengthen reusable engine/service behavior?
-- Does this improve or preserve parity readiness?
-- Does this prematurely introduce backend/web platform complexity?
-
-If the work goes beyond the currently approved migration phase, do not assume it is allowed. Only proceed if the user explicitly requests that later phase.
-
----
-
-## Required tracker workflow
-This repo should maintain a living migration/design tracker at:
+## Tracker Workflow
+The live tracker is:
 
 `docs/transition_tracker.md`
 
-When making any meaningful change, read that file first and update it if the task changes any of the following:
+The historical archive is:
 
-- architecture
+`docs/transition_tracker_archive.md`
+
+For meaningful work:
+1. read `AGENTS.md`
+2. read the previous day's entries in `docs/transition_tracker.md` by default
+3. widen to older live-tracker entries or the archive only when the task depends on older decisions, architecture, or historical context
+
+Update the live tracker when a task changes:
+- architecture or delivery boundaries
 - workflow behavior
-- parsing/normalization/validation behavior
-- export behavior
-- profile/config abstractions
-- desktop coupling
-- service extraction status
-- migration readiness
-- parity readiness
-- known migration risks
-- major technical debt
-- deferred work
-- recommended next steps
+- parsing/normalization/validation/export behavior
+- profile/config behavior
+- current product stance
+- active risks or priorities
+- meaningful technical debt or follow-up guidance
 
-Do **not** update the tracker for trivial edits unless they affect architecture, workflow, or migration readiness.
+Do not update the tracker for trivial edits or purely local cleanup with no behavior or architecture impact.
 
-Tracker updates should be concise and useful, not verbose.
+Tracker updates should stay concise and current-state oriented.
 
 ---
 
-## What to record in the tracker
-When appropriate, update the tracker with:
-- what changed
-- why it changed
-- whether it improved core engine quality
-- whether it affected the service boundary
-- whether it increased or reduced desktop coupling
-- whether it improved future web portability
-- whether it changed parity readiness
-- any migration risks introduced
-- any important follow-up work
-- whether the change is considered stable, provisional, or deferred
-
----
-
-## Output expectations for coding tasks
+## Output Expectations For Coding Tasks
 After meaningful code changes, provide a concise summary that includes:
 
 - files changed
-- why each file changed
+- why each changed file changed
 - whether the change primarily affected:
   - core logic
   - application/services
-  - desktop shell
-  - persistence/API prep
+  - persistence/API
   - web delivery
+  - desktop shell
   - tests
-  - config
+  - config/docs
 - test impact
-- migration impact
-- any risks or follow-up items
+- desktop/web impact when relevant
+- any notable risks or follow-up items
 
 If the tracker was updated, say so.
 
-If the tracker was intentionally not updated because the change was trivial, do not force an update.
-
 ---
 
-## Preferred mindset
-Treat the current desktop app as:
-- a valuable production tool
-- the current fallback during migration
-- a proving ground for the workflow
-- a reference implementation for the future product engine and service layer
-
-Do not treat the current desktop UI as the final architectural destination.
-Do not treat the current desktop app as disposable.
-Do not treat future web delivery as permission for uncontrolled platform buildout.
-
-Build the product so that the **workflow, rules, configurations, service boundaries, and export behaviors** become increasingly portable, testable, and reliable over time.
-
----
-
-## Success condition
+## Success Condition
 This file is being followed correctly when:
 
-- the desktop app remains stable and usable
-- the repo progresses through migration in controlled slices
-- `core/` and reusable workflow behavior stay protected
-- meaningful architectural decisions are documented
-- desktop-only lock-in is visible rather than accidental
-- the transition tracker remains concise, current, and useful
-- work does not prematurely jump ahead of the approved migration phase
+- the web product continues to improve without unnecessary platform sprawl
+- shared engine/service behavior stays protected
+- desktop remains stable when touched
+- lineage and published-version rules stay intact
+- guidance docs stay aligned with the real repo state
+- the live tracker remains short, current, and useful

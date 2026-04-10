@@ -375,6 +375,10 @@ class ProfileAuthoringService:
             open_draft_id=None,
         )
 
+    def discard_draft(self, trusted_profile_draft_id: str) -> None:
+        """Discard one mutable draft without changing any published version."""
+        self._repository.discard_draft(trusted_profile_draft_id)
+
     def create_desktop_sync_export(
         self,
         trusted_profile_version_id: str,

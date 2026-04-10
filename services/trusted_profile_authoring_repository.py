@@ -466,6 +466,11 @@ class TrustedProfileAuthoringRepository:
         self._lineage_store.delete_trusted_profile_draft(trusted_profile_draft_id)
         return equivalent_version
 
+    def discard_draft(self, trusted_profile_draft_id: str) -> None:
+        """Discard one mutable draft without affecting published lineage."""
+        self.get_draft(trusted_profile_draft_id)
+        self._lineage_store.delete_trusted_profile_draft(trusted_profile_draft_id)
+
     def upsert_observation(
         self,
         observation: TrustedProfileObservation,

@@ -276,6 +276,27 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.repository.get_draft(draft_state.trusted_profile_draft_id)
 
+    def test_discard_draft_removes_open_draft_without_changing_current_published_version(self) -> None:
+        trusted_profile_id = "trusted-profile:org-default:default"
+        original_detail = self.service.get_profile_detail(trusted_profile_id)
+        draft_state = self.service.create_or_open_draft(trusted_profile_id)
+
+        self.service.discard_draft(draft_state.trusted_profile_draft_id)
+
+        refreshed_detail = self.service.get_profile_detail(trusted_profile_id)
+
+        self.assertEqual(
+            refreshed_detail.current_published_version_id,
+            original_detail.current_published_version_id,
+        )
+        self.assertEqual(
+            refreshed_detail.current_published_version_number,
+            original_detail.current_published_version_number,
+        )
+        self.assertIsNone(refreshed_detail.open_draft_id)
+        with self.assertRaises(KeyError):
+            self.repository.get_draft(draft_state.trusted_profile_draft_id)
+
     def test_draft_changes_do_not_affect_processing_until_publish(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
         draft_state = self.service.create_or_open_draft(trusted_profile_id)
@@ -416,6 +437,54 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
                 "is_observed": True,
             },
             draft_state.equipment_mappings,
+        )
+
+    def test_discard_draft_preserves_observations_and_future_processing_can_recreate_it(self) -> None:
+        trusted_profile_id = "trusted-profile:org-default:default"
+        first_processing_run_id = self._create_reference_processing_run_id()
+        record = self._make_unmapped_labor_record(
+            raw_description="Labor line",
+            union_code="104",
+            labor_class_raw="EO",
+        )
+
+        self.service.capture_unmapped_observations(
+            trusted_profile_id,
+            processing_run_id=first_processing_run_id,
+            records=[record],
+        )
+        initial_draft = self.repository.get_open_draft(trusted_profile_id)
+
+        self.service.discard_draft(initial_draft.trusted_profile_draft_id)
+
+        observations_after_discard = self.repository.list_observations(
+            trusted_profile_id,
+            observation_domain="labor_mapping",
+        )
+        self.assertEqual(len(observations_after_discard), 1)
+        self.assertFalse(observations_after_discard[0].is_resolved)
+        with self.assertRaises(KeyError):
+            self.repository.get_open_draft(trusted_profile_id)
+
+        second_processing_run_id = self._create_reference_processing_run_id()
+        self.service.capture_unmapped_observations(
+            trusted_profile_id,
+            processing_run_id=second_processing_run_id,
+            records=[record],
+        )
+
+        recreated_draft = self.repository.get_open_draft(trusted_profile_id)
+        recreated_state = self.service.get_draft_state(recreated_draft.trusted_profile_draft_id)
+
+        self.assertEqual(recreated_draft.trusted_profile_draft_id, initial_draft.trusted_profile_draft_id)
+        self.assertIn(
+            {
+                "raw_value": "104/EO",
+                "target_classification": "",
+                "notes": "",
+                "is_observed": True,
+            },
+            recreated_state.labor_mappings,
         )
 
     def test_future_observations_do_not_recreate_blank_row_after_mapping_is_published(self) -> None:

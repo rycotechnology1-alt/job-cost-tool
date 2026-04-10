@@ -558,6 +558,29 @@ class Phase1ApiTests(unittest.TestCase):
         draft_detail_response = self.client.get(f"/api/profile-drafts/{draft_id}")
         self.assertEqual(draft_detail_response.status_code, 404)
 
+    def test_profile_draft_delete_discards_open_draft_without_changing_published_version(self) -> None:
+        detail_before = self.client.get("/api/profiles/trusted-profile:org-default:default")
+        self.assertEqual(detail_before.status_code, 200)
+        version_before = detail_before.json()["current_published_version"]["trusted_profile_version_id"]
+
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_id = draft_response.json()["trusted_profile_draft_id"]
+
+        discard_response = self.client.delete(f"/api/profile-drafts/{draft_id}")
+        self.assertEqual(discard_response.status_code, 204)
+
+        detail_after = self.client.get("/api/profiles/trusted-profile:org-default:default")
+        missing_draft = self.client.get(f"/api/profile-drafts/{draft_id}")
+
+        self.assertEqual(detail_after.status_code, 200)
+        self.assertEqual(
+            detail_after.json()["current_published_version"]["trusted_profile_version_id"],
+            version_before,
+        )
+        self.assertIsNone(detail_after.json()["open_draft_id"])
+        self.assertEqual(missing_draft.status_code, 404)
+
     def test_profile_detail_repairs_default_profile_missing_current_published_version(self) -> None:
         organization = self.lineage_store.ensure_organization(
             organization_id="org-default",

@@ -118,6 +118,19 @@ def get_profile_draft(
         raise to_http_exception(exc) from exc
 
 
+@profile_drafts_router.delete("/{trusted_profile_draft_id}", status_code=status.HTTP_204_NO_CONTENT)
+def discard_profile_draft(
+    trusted_profile_draft_id: str,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> Response:
+    """Discard one trusted-profile draft without changing published lineage."""
+    try:
+        runtime.profile_authoring_service.discard_draft(trusted_profile_draft_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
 @profile_drafts_router.patch("/{trusted_profile_draft_id}/default-omit", response_model=DraftEditorStateResponse)
 def patch_default_omit(
     trusted_profile_draft_id: str,

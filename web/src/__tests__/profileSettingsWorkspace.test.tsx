@@ -192,6 +192,11 @@ function installSettingsFetchMock(options?: {
       });
     }
 
+    if (url === "/api/profile-drafts/draft-1" && method === "DELETE") {
+      state.publishedDetail.open_draft_id = null;
+      return new Response(null, { status: 204 });
+    }
+
     if (url === "/api/profile-drafts/draft-1/default-omit" && method === "PATCH") {
       const payload = JSON.parse(String(init?.body));
       state.draftState.default_omit_rules = payload.default_omit_rules;
@@ -419,9 +424,23 @@ function installSecondProfileCreationFetchMock() {
       });
     }
 
+    if (url === "/api/profile-drafts/draft-default" && method === "DELETE") {
+      state.defaultDetail.open_draft_id = null;
+      return new Response(null, { status: 204 });
+    }
+
     if (url === "/api/profile-drafts/draft-default/default-omit" && method === "PATCH") {
       const payload = JSON.parse(String(init?.body));
       state.defaultDraft.default_omit_rules = payload.default_omit_rules;
+      return new Response(JSON.stringify(state.defaultDraft), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "/api/profile-drafts/draft-default/labor-mappings" && method === "PATCH") {
+      const payload = JSON.parse(String(init?.body));
+      state.defaultDraft.labor_mappings = payload.labor_mappings;
       return new Response(JSON.stringify(state.defaultDraft), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -450,9 +469,23 @@ function installSecondProfileCreationFetchMock() {
       });
     }
 
+    if (url === "/api/profile-drafts/draft-field-team" && method === "DELETE") {
+      state.secondDetail.open_draft_id = null;
+      return new Response(null, { status: 204 });
+    }
+
     if (url === "/api/profile-drafts/draft-field-team/default-omit" && method === "PATCH") {
       const payload = JSON.parse(String(init?.body));
       state.secondDraft.default_omit_rules = payload.default_omit_rules;
+      return new Response(JSON.stringify(state.secondDraft), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "/api/profile-drafts/draft-field-team/labor-mappings" && method === "PATCH") {
+      const payload = JSON.parse(String(init?.body));
+      state.secondDraft.labor_mappings = payload.labor_mappings;
       return new Response(JSON.stringify(state.secondDraft), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -544,7 +577,7 @@ describe("Profile settings workspace", () => {
     vi.restoreAllMocks();
   });
 
-  it("inspects the published profile, edits the five Phase 2A domains, marks observed rows, and publishes", async () => {
+  it("inspects the live profile, edits the five Phase 2A domains, and saves profile settings in one action", async () => {
     const user = userEvent.setup();
     installSettingsFetchMock();
     render(<App />);
@@ -552,11 +585,15 @@ describe("Profile settings workspace", () => {
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
 
-    expect(await screen.findByText("Published Profile Summary")).toBeInTheDocument();
-    expect(screen.getByText("Read only in Phase 2A. Template identity is still part of the published version.")).toBeInTheDocument();
+    expect(await screen.findByText("Live Profile Summary")).toBeInTheDocument();
+    expect(screen.getByText("Read only in Phase 2A. Template identity is still part of the live version.")).toBeInTheDocument();
     expect(screen.getByText("Vendor Normalization")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edit current profile/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create draft from published version/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /open current draft/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /publish draft/i })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /create draft from published version/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
 
     expect(await screen.findByText("Default Omit Rules")).toBeInTheDocument();
     expect(screen.getByText("Labor Mappings")).toBeInTheDocument();
@@ -564,40 +601,36 @@ describe("Profile settings workspace", () => {
     expect(screen.getByText("Classifications")).toBeInTheDocument();
     expect(screen.getByText("Rates")).toBeInTheDocument();
     expect(screen.getAllByText("Observed").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("button", { name: /save profile settings/i })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: /add default omit rule/i }));
     await user.type(screen.getByLabelText(/default omit phase code 2/i), "50 .1");
-    await user.click(screen.getByRole("button", { name: /save default omit rules/i }));
 
     await user.selectOptions(screen.getByLabelText(/labor target classification 1/i), "Journeyman");
     await user.clear(screen.getByLabelText(/equipment rate 1/i));
     await user.type(screen.getByLabelText(/equipment rate 1/i), "130");
-    expect(screen.getByRole("button", { name: /publish draft/i })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: /save labor mappings/i }));
     expect(screen.getByDisplayValue("130")).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText(/equipment target category 1/i), "Excavator");
-    await user.click(screen.getByRole("button", { name: /save equipment mappings/i }));
 
-    await user.clear(screen.getByLabelText(/labor classification label 1/i));
-    await user.type(screen.getByLabelText(/labor classification label 1/i), "Lead Labor");
-    await user.click(screen.getByRole("button", { name: /save classifications/i }));
+    await user.clear(screen.getByLabelText(/labor classification label 2/i));
+    await user.type(screen.getByLabelText(/labor classification label 2/i), "Lead Labor");
 
     await user.clear(screen.getByLabelText(/equipment rate 1/i));
     await user.type(screen.getByLabelText(/equipment rate 1/i), "130");
-    await user.click(screen.getByRole("button", { name: /save rates/i }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /publish draft/i })).toBeEnabled();
+      expect(screen.getByRole("button", { name: /save profile settings/i })).toBeEnabled();
     });
 
-    await user.click(screen.getByRole("button", { name: /publish draft/i }));
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("No draft is open for this profile.")).toBeInTheDocument();
+      expect(screen.getByText(/saved profile settings and published live version v2 for default profile/i)).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: /create draft from published version/i })).toBeInTheDocument();
-    expect(screen.getByText("profile-hash-v2")).toBeInTheDocument();
-    expect(screen.getByText(/published version v2 for default profile/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edit current profile/i })).toBeInTheDocument();
+    expect(screen.getByText(/viewing live profile settings only/i)).toBeInTheDocument();
+    expect(screen.queryByText("profile-hash-v2")).not.toBeInTheDocument();
+    expect(screen.queryByText("draft-1")).not.toBeInTheDocument();
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:default" && (!init || !init.method || init.method === "GET"))).toBe(true);
@@ -615,7 +648,7 @@ describe("Profile settings workspace", () => {
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it("loads an existing open draft and shows publish failure clearly", async () => {
+  it("loads existing unpublished profile changes and shows save failure clearly", async () => {
     const user = userEvent.setup();
     installSettingsFetchMock({ openDraftId: "draft-1", publishFails: true });
     render(<App />);
@@ -623,11 +656,13 @@ describe("Profile settings workspace", () => {
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
 
-    expect(await screen.findByRole("button", { name: /open current draft/i })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /open current draft/i }));
-    expect(await screen.findByText("Observed placeholders remain in this draft.")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /edit current profile/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    expect(await screen.findByText("Observed placeholders remain in these profile changes.")).toBeInTheDocument();
+    await user.clear(screen.getByLabelText(/labor raw value 2/i));
+    await user.type(screen.getByLabelText(/labor raw value 2/i), "UPDATED-LABOR");
 
-    await user.click(screen.getByRole("button", { name: /publish draft/i }));
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
 
     expect((await screen.findAllByText("Draft validation failed before publish.")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole("alert").length).toBeGreaterThanOrEqual(1);
@@ -645,14 +680,114 @@ describe("Profile settings workspace", () => {
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
 
-    await user.click(screen.getByRole("button", { name: /open current draft/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
 
     expect(await screen.findByText("Default Omit Rules")).toBeInTheDocument();
-    expect(screen.getByText(/recovered from a missing current draft link/i)).toBeInTheDocument();
+    expect(screen.getByText(/recovered a missing unpublished-change link/i)).toBeInTheDocument();
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1" && (!init || !init.method || init.method === "GET"))).toBe(true);
     expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:default/draft" && init?.method === "POST")).toBe(true);
+  });
+
+  it("does not restore a false empty retained draft after leaving settings and reopening current profile editing", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock({ openDraftId: "draft-1" });
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(await screen.findByRole("button", { name: /edit current profile/i }));
+    expect(await screen.findByText("Labor Mappings")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /review workspace/i }));
+    expect(screen.getByText("Open a report in the review workspace to inspect rows and apply corrections.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    expect(await screen.findByText("Live Profile Summary")).toBeInTheDocument();
+    expect(screen.queryByText(/restored .* from unsaved browser edits/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+
+    expect(await screen.findByDisplayValue("CARPENTER")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("125")).toBeInTheDocument();
+    expect(screen.queryByText(/restored .* from unsaved browser edits/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no labor mappings are saved yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no equipment mappings are saved yet/i)).not.toBeInTheDocument();
+  });
+
+  it("prompts before leaving settings and stays put when the user chooses to keep editing", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Labor Mappings");
+    await user.clear(screen.getByLabelText(/labor raw value 2/i));
+    await user.type(screen.getByLabelText(/labor raw value 2/i), "CHANGED-LABOR");
+
+    await user.click(screen.getByRole("button", { name: /review workspace/i }));
+
+    expect(await screen.findByRole("dialog", { name: /leave profile settings with unsaved sections/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /stay here/i }));
+
+    expect(screen.getByRole("heading", { name: "Default Profile" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("CHANGED-LABOR")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /leave profile settings with unsaved sections/i })).not.toBeInTheDocument();
+  });
+
+  it("saves and publishes profile changes before leaving settings when the user chooses save and leave", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Labor Mappings");
+    await user.clear(screen.getByLabelText(/labor raw value 2/i));
+    await user.type(screen.getByLabelText(/labor raw value 2/i), "SAVED-LABOR");
+
+    await user.click(screen.getByRole("button", { name: /review workspace/i }));
+    await user.click(await screen.findByRole("button", { name: /save and leave/i }));
+
+    expect(await screen.findByText("Open a report in the review workspace to inspect rows and apply corrections.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    expect(await screen.findByRole("button", { name: /edit current profile/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+
+    expect(await screen.findByDisplayValue("SAVED-LABOR")).toBeInTheDocument();
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/publish" && init?.method === "POST")).toBe(true);
+  });
+
+  it("discards unpublished profile changes when the user leaves settings without saving", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Labor Mappings");
+    await user.clear(screen.getByLabelText(/labor raw value 2/i));
+    await user.type(screen.getByLabelText(/labor raw value 2/i), "DISCARDED-LABOR");
+
+    await user.click(screen.getByRole("button", { name: /review workspace/i }));
+    await user.click(await screen.findByRole("button", { name: /don't save/i }));
+
+    expect(await screen.findByText("Open a report in the review workspace to inspect rows and apply corrections.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    expect(await screen.findByRole("button", { name: /edit current profile/i })).toBeInTheDocument();
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "DELETE")).toBe(true);
   });
 
   it("creates and downloads a manual desktop-sync archive from the published version summary", async () => {
@@ -669,7 +804,7 @@ describe("Profile settings workspace", () => {
 
       await screen.findByText("Trusted profiles loaded.");
       await user.click(screen.getByRole("button", { name: /profile settings/i }));
-      expect(await screen.findByText("Published Profile Summary")).toBeInTheDocument();
+      expect(await screen.findByText("Live Profile Summary")).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: /create desktop sync archive/i }));
 
@@ -692,14 +827,14 @@ describe("Profile settings workspace", () => {
     }
   });
 
-  it("creates a second profile, opens its draft, saves it, and publishes it without affecting default profile flow", async () => {
+  it("creates a second profile and saves its settings through the simplified current-profile flow", async () => {
     const user = userEvent.setup();
     installSecondProfileCreationFetchMock();
     render(<App />);
 
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
-    expect(await screen.findByText("Published Profile Summary")).toBeInTheDocument();
+    expect(await screen.findByText("Live Profile Summary")).toBeInTheDocument();
 
     await user.type(screen.getByLabelText(/new profile key/i), "field-team");
     await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
@@ -707,27 +842,22 @@ describe("Profile settings workspace", () => {
     await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
 
     expect(await screen.findByRole("heading", { name: "Field Team" })).toBeInTheDocument();
-    expect(screen.getByText("field-profile-hash-v1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edit current profile/i })).toBeInTheDocument();
+    expect(screen.queryByText("field-profile-hash-v1")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /create draft from published version/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
     expect(await screen.findByText("Default Omit Rules")).toBeInTheDocument();
-    expect(screen.getAllByText(/editing draft draft-field-team/i).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/published version v1 remains the live web-processing source/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/editing current profile/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /add default omit rule/i }));
     await user.type(screen.getByLabelText(/default omit phase code 1/i), "50");
-    await user.click(screen.getByRole("button", { name: /save default omit rules/i }));
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /publish draft/i })).toBeEnabled();
+      expect(screen.getByText(/saved profile settings and published live version v2 for field team/i)).toBeInTheDocument();
     });
-
-    await user.click(screen.getByRole("button", { name: /publish draft/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText("field-profile-hash-v2")).toBeInTheDocument();
-    });
-    expect(screen.getByText(/published version v2 for field team/i)).toBeInTheDocument();
-    expect(screen.getByText(/viewing published profile data only/i)).toBeInTheDocument();
+    expect(screen.queryByText("field-profile-hash-v2")).not.toBeInTheDocument();
+    expect(screen.getByText(/viewing live profile settings only/i)).toBeInTheDocument();
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profiles" && init?.method === "POST")).toBe(true);
@@ -736,9 +866,8 @@ describe("Profile settings workspace", () => {
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/publish" && init?.method === "POST")).toBe(true);
   });
 
-  it("blocks duplicate local profile creation input and protects profile switching when unsaved browser edits exist", async () => {
+  it("blocks duplicate local profile creation input and protects profile switching when the user stays on unsaved edits", async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     installSecondProfileCreationFetchMock();
     render(<App />);
 
@@ -757,21 +886,21 @@ describe("Profile settings workspace", () => {
     await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
     await screen.findByRole("heading", { name: "Field Team" });
 
-    await user.click(screen.getByRole("button", { name: /create draft from published version/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
     await screen.findByText("Default Omit Rules");
     await user.click(screen.getByRole("button", { name: /add default omit rule/i }));
     await user.type(await screen.findByLabelText(/default omit phase code 1/i), "50");
 
     await user.click(screen.getByRole("button", { name: "Default Profile" }));
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("dialog", { name: /leave profile settings with unsaved sections/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /stay here/i }));
     expect(screen.getByRole("heading", { name: "Field Team" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("50")).toBeInTheDocument();
   });
 
-  it("keeps unsaved browser edits isolated per profile and restores them only when that profile's draft is reopened", async () => {
+  it("saves and publishes profile changes before switching trusted profiles when the user chooses save and leave", async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     installSecondProfileCreationFetchMock();
     render(<App />);
 
@@ -782,38 +911,23 @@ describe("Profile settings workspace", () => {
     await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
     await screen.findByRole("heading", { name: "Field Team" });
 
-    await user.click(screen.getByRole("button", { name: /create draft from published version/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
     await screen.findByText("Default Omit Rules");
     await user.clear(screen.getByLabelText(/labor raw value 1/i));
     await user.type(screen.getByLabelText(/labor raw value 1/i), "FIELD-LABOR");
-    await waitFor(() => {
-      expect(screen.getAllByText(/local unsaved edits/i).length).toBeGreaterThanOrEqual(1);
-    });
 
     await user.click(screen.getByRole("button", { name: "Default Profile" }));
+    await user.click(await screen.findByRole("button", { name: /save and leave/i }));
+
     await screen.findByRole("heading", { name: "Default Profile" });
-    expect(screen.queryByText(/unsaved browser edits are retained for this profile/i)).not.toBeInTheDocument();
-    expect(screen.getAllByText(/local unsaved edits/i).length).toBeGreaterThanOrEqual(1);
-
-    await user.click(screen.getByRole("button", { name: /create draft from published version/i }));
-    await screen.findByText("Default Omit Rules");
-    await user.clear(screen.getByLabelText(/labor raw value 2/i));
-    await user.type(screen.getByLabelText(/labor raw value 2/i), "DEFAULT-LABOR");
-
     await user.click(screen.getByRole("button", { name: "Field Team" }));
     await screen.findByRole("heading", { name: "Field Team" });
-    expect(screen.getByText(/unsaved browser edits are retained for this profile/i)).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /open current draft/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
     expect(await screen.findByDisplayValue("FIELD-LABOR")).toBeInTheDocument();
-    expect(screen.queryByDisplayValue("DEFAULT-LABOR")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Default Profile" }));
-    await screen.findByRole("heading", { name: "Default Profile" });
-    expect(screen.getByText(/unsaved browser edits are retained for this profile/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /open current draft/i }));
-    expect(await screen.findByDisplayValue("DEFAULT-LABOR")).toBeInTheDocument();
-    expect(screen.queryByDisplayValue("FIELD-LABOR")).not.toBeInTheDocument();
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/labor-mappings" && init?.method === "PATCH")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/publish" && init?.method === "POST")).toBe(true);
   });
 
   it("archives a published user-created profile and removes it from the active selector list", async () => {
@@ -865,7 +979,7 @@ describe("Profile settings workspace", () => {
     expect(screen.getByText(/restored field team to the active trusted profile lists/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Field Team" }));
     expect(await screen.findByRole("heading", { name: "Field Team" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /create draft from published version/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edit current profile/i })).toBeInTheDocument();
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:field-team/unarchive" && init?.method === "POST")).toBe(true);
