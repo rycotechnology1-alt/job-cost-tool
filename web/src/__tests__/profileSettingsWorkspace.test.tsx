@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -806,6 +806,7 @@ describe("Profile settings workspace", () => {
     expect(await screen.findByText("Labor Mappings")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /review workspace/i }));
+    await user.click(await screen.findByRole("button", { name: /don't save/i }));
     expect(screen.getByText("Open a report in the review workspace to inspect rows and apply corrections.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
@@ -835,12 +836,33 @@ describe("Profile settings workspace", () => {
 
     await user.click(screen.getByRole("button", { name: /review workspace/i }));
 
-    expect(await screen.findByRole("dialog", { name: /leave profile settings with unsaved sections/i })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: /leave profile settings with unpublished changes/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /stay here/i }));
 
     expect(screen.getByRole("heading", { name: "Default Profile" })).toBeInTheDocument();
     expect(screen.getByLabelText(/labor raw value 2/i)).toHaveValue("CHANGED-LABOR");
-    expect(screen.queryByRole("dialog", { name: /leave profile settings with unsaved sections/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /leave profile settings with unpublished changes/i })).not.toBeInTheDocument();
+  });
+
+  it("prompts before leaving settings even when the draft only has unpublished changes and no local dirty sections", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Labor Mappings");
+
+    await user.click(screen.getByRole("button", { name: /review workspace/i }));
+
+    expect(await screen.findByRole("dialog", { name: /leave profile settings with unpublished changes/i })).toBeInTheDocument();
+    expect(screen.getByText(/still has unpublished profile changes open/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /don't save/i }));
+    expect(await screen.findByText("Open a report in the review workspace to inspect rows and apply corrections.")).toBeInTheDocument();
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "DELETE")).toBe(true);
   });
 
   it("saves and publishes profile changes before leaving settings when the user chooses save and leave", async () => {
@@ -918,7 +940,6 @@ describe("Profile settings workspace", () => {
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
     expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText(/new profile key/i), "field-team");
     await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
     await user.type(screen.getByLabelText(/new profile description/i), "Second trusted profile");
     await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
@@ -948,6 +969,40 @@ describe("Profile settings workspace", () => {
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/publish" && init?.method === "POST")).toBe(true);
   });
 
+  it("renders active profiles as compact selector rows with minimal inline status while preserving switching behavior", async () => {
+    const user = userEvent.setup();
+    installSecondProfileCreationFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
+    await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
+
+    const defaultRow = await screen.findByRole("button", { name: "Default Profile" });
+    const fieldTeamRow = await screen.findByRole("button", { name: "Field Team" });
+    expect(defaultRow).toHaveAttribute("aria-pressed", "false");
+    expect(fieldTeamRow).toHaveAttribute("aria-pressed", "true");
+    expect(within(fieldTeamRow).getByText("v1")).toBeInTheDocument();
+    expect(within(fieldTeamRow).queryByText("Selected")).not.toBeInTheDocument();
+    expect(within(fieldTeamRow).queryByText("Local unsaved edits")).not.toBeInTheDocument();
+    expect(within(fieldTeamRow).queryByText("Web-created")).not.toBeInTheDocument();
+
+    await user.click(defaultRow);
+    expect(await screen.findByRole("heading", { name: "Default Profile" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Field Team" }));
+    expect(await screen.findByRole("heading", { name: "Field Team" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Default Omit Rules");
+    expect(within(screen.getByRole("button", { name: "Field Team" })).getByText("Unpublished changes")).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText(/labor raw value 1/i));
+    await user.type(screen.getByLabelText(/labor raw value 1/i), "FIELD-LABOR");
+    expect(screen.getByText("Local unsaved edits retained")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: "Field Team" })).queryByText("Local unsaved edits")).not.toBeInTheDocument();
+  });
+
   it("blocks duplicate local profile creation input and protects profile switching when the user stays on unsaved edits", async () => {
     const user = userEvent.setup();
     installSecondProfileCreationFetchMock();
@@ -956,13 +1011,10 @@ describe("Profile settings workspace", () => {
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
 
-    await user.type(screen.getByLabelText(/new profile key/i), "default");
     await user.type(screen.getByLabelText(/new profile display name/i), "Default Profile");
     expect(await screen.findAllByText(/already in use/i)).not.toHaveLength(0);
     expect(screen.getByRole("button", { name: /create profile from published version/i })).toBeDisabled();
 
-    await user.clear(screen.getByLabelText(/new profile key/i));
-    await user.type(screen.getByLabelText(/new profile key/i), "field-team");
     await user.clear(screen.getByLabelText(/new profile display name/i));
     await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
     await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
@@ -975,7 +1027,7 @@ describe("Profile settings workspace", () => {
 
     await user.click(screen.getByRole("button", { name: "Default Profile" }));
 
-    expect(await screen.findByRole("dialog", { name: /leave profile settings with unsaved sections/i })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: /leave profile settings with unpublished changes/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /stay here/i }));
     expect(screen.getByRole("heading", { name: "Field Team" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("50")).toBeInTheDocument();
@@ -988,7 +1040,6 @@ describe("Profile settings workspace", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
-    await user.type(screen.getByLabelText(/new profile key/i), "field-team");
     await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
     await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
     await screen.findByRole("heading", { name: "Field Team" });
@@ -1020,7 +1071,6 @@ describe("Profile settings workspace", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
-    await user.type(screen.getByLabelText(/new profile key/i), "field-team");
     await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
     await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
     await screen.findByRole("heading", { name: "Field Team" });
@@ -1045,7 +1095,6 @@ describe("Profile settings workspace", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
-    await user.type(screen.getByLabelText(/new profile key/i), "field-team");
     await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
     await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
     await screen.findByRole("heading", { name: "Field Team" });
@@ -1075,13 +1124,46 @@ describe("Profile settings workspace", () => {
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
 
-    await user.type(screen.getByLabelText(/new profile key/i), "future-team");
     await user.type(screen.getByLabelText(/new profile display name/i), "Future Team");
     await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
 
     expect(await screen.findByText(/trusted profile key 'future-team' already exists/i)).toBeInTheDocument();
     expect(screen.getByText(/display name 'future team' is already in use/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/new profile key/i)).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByLabelText(/new profile display name/i)).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("best-effort discards an open profile draft on page exit so unpublished changes do not survive browser navigation", async () => {
+    const user = userEvent.setup();
+    const state = installSettingsFetchMock();
+    const view = render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Labor Mappings");
+
+    window.dispatchEvent(new Event("pagehide"));
+
+    await waitFor(() => {
+      expect(
+        vi
+          .mocked(globalThis.fetch)
+          .mock.calls.some(
+            ([url, init]) =>
+              url === "/api/profile-drafts/draft-1" &&
+              init?.method === "DELETE" &&
+              init?.keepalive === true,
+          ),
+      ).toBe(true);
+    });
+    expect(state.publishedDetail.open_draft_id).toBeNull();
+
+    view.unmount();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
+    expect(screen.queryByText("Unpublished changes")).not.toBeInTheDocument();
   });
 });

@@ -470,11 +470,16 @@ th {
   margin-top: 0.9rem;
 }
 
+.profile-list-selector {
+  max-height: min(22rem, 45vh);
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+
 .profile-list-item {
   width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.9rem;
   text-align: left;
   border-radius: 1rem;
@@ -482,6 +487,43 @@ th {
   background: rgba(255, 255, 255, 0.95);
   border: 1px solid #cad9dc;
   color: #17333a;
+}
+
+.profile-list-selector .profile-list-item {
+  align-items: start;
+  gap: 0.4rem 0.65rem;
+  padding: 0.62rem 0.72rem;
+}
+
+.profile-list-item-summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.profile-list-item-name {
+  display: block;
+  font-size: 0.82rem;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-list-item-version {
+  justify-self: end;
+  align-self: start;
+}
+
+.profile-list-item-badges {
+  grid-column: 1 / -1;
+  gap: 0.4rem;
+  justify-content: flex-start;
+}
+
+.profile-list-selector .status-pill {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.46rem;
 }
 
 .profile-list-item.active {
@@ -1538,6 +1580,20 @@ th {
   background: rgba(16, 14, 14, 0.98);
   border-color: #3b3331;
   color: #f1e8df;
+}
+
+.app-shell-settings .profile-list-selector {
+  max-height: min(24rem, 48vh);
+}
+
+.app-shell-settings .profile-list-selector .profile-list-item {
+  padding: 0.58rem 0.72rem;
+  border-radius: 0.4rem;
+}
+
+.app-shell-settings .profile-list-item-name {
+  font-size: 0.83rem;
+  letter-spacing: 0.02em;
 }
 
 .app-shell-settings .profile-list-item.active {

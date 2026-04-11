@@ -7,6 +7,7 @@ import {
   createTrustedProfile,
   createOrOpenProfileDraft,
   discardProfileDraft,
+  discardProfileDraftBestEffort,
   createExportArtifact,
   createProfileSyncExport,
   createProcessingRun,
@@ -150,10 +151,12 @@ export default function App() {
   );
   const [leaveSettingsPrompt, setLeaveSettingsPrompt] = useState<LeaveSettingsPromptState | null>(null);
   const settingsLeaveGuardRef = useRef<ProfileSettingsLeaveGuard | null>(null);
+  const pageExitCleanupDraftIdRef = useRef<string | null>(null);
 
   const selectedTrustedProfile =
     trustedProfiles.find((profile) => profile.profile_name === selectedTrustedProfileName) ?? null;
   const selectedTrustedProfileId = selectedTrustedProfile?.trusted_profile_id ?? "";
+  const activeProfileDraftId = draftState?.trusted_profile_draft_id ?? profileDetail?.open_draft_id ?? null;
   const activeStagedReport =
     stagedReports.find((report) => report.stagedReportId === activeStagedReportId) ?? stagedReports[0] ?? null;
   const rows = buildWorkspaceRows(runDetail, reviewSession);
@@ -226,7 +229,7 @@ export default function App() {
     options?: { nextProfileName?: string; nextProfileDisplayName?: string },
   ) {
     const guard = settingsLeaveGuardRef.current;
-    if (!guard || !guard.hasUnsavedChanges) {
+    if (!guard || !guard.hasUnpublishedChanges) {
       setLeaveSettingsPrompt(null);
       if (destination === "review") {
         completeLeaveSettingsToReview();
@@ -243,6 +246,34 @@ export default function App() {
       profileDisplayName: guard.profileDisplayName,
     });
   }
+
+  useEffect(() => {
+    if (!activeProfileDraftId) {
+      pageExitCleanupDraftIdRef.current = null;
+    }
+  }, [activeProfileDraftId]);
+
+  useEffect(() => {
+    if (!activeProfileDraftId) {
+      return;
+    }
+    const draftId = activeProfileDraftId;
+
+    function discardDraftOnPageExit() {
+      if (pageExitCleanupDraftIdRef.current === draftId) {
+        return;
+      }
+      pageExitCleanupDraftIdRef.current = draftId;
+      discardProfileDraftBestEffort(draftId);
+    }
+
+    window.addEventListener("pagehide", discardDraftOnPageExit);
+    window.addEventListener("beforeunload", discardDraftOnPageExit);
+    return () => {
+      window.removeEventListener("pagehide", discardDraftOnPageExit);
+      window.removeEventListener("beforeunload", discardDraftOnPageExit);
+    };
+  }, [activeProfileDraftId]);
 
   async function loadSettingsProfileDetail(trustedProfileId: string): Promise<PublishedProfileDetailResponse> {
     return fetchProfileDetail(trustedProfileId);
@@ -1261,11 +1292,12 @@ export default function App() {
             aria-modal="true"
             aria-labelledby="leave-settings-title"
           >
-            <p className="eyebrow">Unsaved Profile Settings</p>
-            <h2 id="leave-settings-title">Leave profile settings with unsaved sections?</h2>
+            <p className="eyebrow">Unpublished Profile Changes</p>
+            <h2 id="leave-settings-title">Leave profile settings with unpublished changes?</h2>
             <p>
-              {leaveSettingsPrompt.profileDisplayName} still has {leaveSettingsPrompt.dirtySections.join(", ")} waiting
-              to be saved.
+              {leaveSettingsPrompt.dirtySections.length > 0
+                ? `${leaveSettingsPrompt.profileDisplayName} still has ${leaveSettingsPrompt.dirtySections.join(", ")} waiting to be saved.`
+                : `${leaveSettingsPrompt.profileDisplayName} still has unpublished profile changes open.`}
             </p>
             <p className="muted">
               {leaveSettingsPrompt.destination === "review"

@@ -44,6 +44,18 @@ Historical migration notes, retired planning sections, and older long-form chang
 
 ## Recent Meaningful Changes
 
+### [2026-04-11] Profile settings now forces open drafts to resolve before leaving and auto-discards them on browser exit
+- **What changed:** The browser settings workspace now treats any open profile draft as a blocking unpublished change, even when no local sections are currently dirty. Leaving settings for review or another trusted profile now always forces `Save and leave`, `Don't save`, or `Stay here`, and browser/tab exit uses a keepalive draft-discard request so unpublished badges do not survive normal browser navigation away from the page.
+- **Why:** Operators could previously leave settings with a clean-but-open draft still attached to the profile, which let the `Unpublished changes` badge linger and undermined trust in whether profile edits were truly resolved.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** Browser-exit discard remains best-effort because it depends on the platform delivering the keepalive request, so keep future workflow changes explicit about save/discard resolution before leaving settings.
+
+### [2026-04-11] Active trusted-profile switching rows and creation flow now center display names in settings
+- **What changed:** The browser settings sidebar now renders `Profiles in this organization` as denser two-row quick-pick cards: row one shows display name plus version, row two shows only remaining status badges like `Unpublished changes`, and the previous source badge was removed. Profile creation now asks operators only for a display name; the browser derives the stable backend key from that name by replacing spaces with hyphens and stripping unsupported characters.
+- **Why:** The earlier full-card treatment scaled poorly once an organization had many trusted profiles, and exposing backend-style profile keys in the create flow added clutter without helping operators.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** If later settings polish continues, revisit whether the top trusted-profile dropdown is still useful once the compact row selector has been exercised with broader operator data.
+
 ### [2026-04-11] Clean unpublished profile drafts can now be explicitly saved away
 - **What changed:** The browser settings workspace now keeps `Save profile settings` available for a valid open draft even when the on-screen editor matches the live/unpublished baseline again, so operators can clear the lingering `Unpublished changes` state without making a throwaway edit. Added a browser regression covering edit-then-revert followed by no-op publish.
 - **Why:** The prior dirty-section gating could strand a valid open draft with the unpublished badge still visible after an operator reverted their edits before saving, which undermined trust in the settings workflow.

@@ -30,7 +30,7 @@ interface DraftSyncToken {
 }
 
 export interface ProfileSettingsLeaveGuard {
-  hasUnsavedChanges: boolean;
+  hasUnpublishedChanges: boolean;
   dirtySections: string[];
   draftId: string | null;
   profileDisplayName: string;
@@ -321,35 +321,44 @@ function buildTargetOptions(currentValue: string, validTargets: string[]) {
   return [trimmedCurrentValue, ...validTargets];
 }
 
+const MAX_PROFILE_DISPLAY_NAME_LENGTH = 32;
+
+function buildProfileNameFromDisplayName(displayName: string): string {
+  return displayName
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^A-Za-z0-9_-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+    .toLowerCase();
+}
+
 function buildCreateProfileValidation(
-  profileName: string,
   displayName: string,
   trustedProfiles: TrustedProfileResponse[],
 ): ValidationResult {
   const result = createValidationResult();
-  const trimmedProfileName = profileName.trim();
   const trimmedDisplayName = displayName.trim();
-
-  if (!trimmedProfileName) {
-    appendRowError(result, 0, "A stable profile key is required.");
-  } else if (!/^[A-Za-z0-9_-]+$/.test(trimmedProfileName)) {
-    appendRowError(result, 0, "Profile keys may only use letters, numbers, underscores, and hyphens.");
-  }
-  if (
-    trimmedProfileName &&
-    trustedProfiles.some((profile) => profile.profile_name.trim().toUpperCase() === trimmedProfileName.toUpperCase())
-  ) {
-    appendRowError(result, 0, "That profile key is already in use.");
-  }
+  const generatedProfileName = buildProfileNameFromDisplayName(trimmedDisplayName);
 
   if (!trimmedDisplayName) {
-    appendRowError(result, 1, "A display name is required.");
+    appendRowError(result, 0, "A display name is required.");
+  } else if (trimmedDisplayName.length > MAX_PROFILE_DISPLAY_NAME_LENGTH) {
+    appendRowError(result, 0, `Display names must stay within ${MAX_PROFILE_DISPLAY_NAME_LENGTH} characters.`);
+  } else if (!generatedProfileName) {
+    appendRowError(result, 0, "Display names must include letters or numbers.");
   }
   if (
     trimmedDisplayName &&
     trustedProfiles.some((profile) => profile.display_name.trim().toUpperCase() === trimmedDisplayName.toUpperCase())
   ) {
-    appendRowError(result, 1, "That display name is already in use by another active trusted profile.");
+    appendRowError(result, 0, "That display name is already in use by another active trusted profile.");
+  }
+  if (
+    generatedProfileName &&
+    trustedProfiles.some((profile) => profile.profile_name.trim().toUpperCase() === generatedProfileName.toUpperCase())
+  ) {
+    appendRowError(result, 0, "That display name resolves to a profile key already in use.");
   }
 
   return result;
@@ -508,7 +517,6 @@ export function ProfileSettingsWorkspace({
   const [equipmentSlots, setEquipmentSlots] = useState<ClassificationSlotRow[]>([]);
   const [laborRates, setLaborRates] = useState<LaborRateRow[]>([]);
   const [equipmentRates, setEquipmentRates] = useState<EquipmentRateRow[]>([]);
-  const [newProfileName, setNewProfileName] = useState("");
   const [newProfileDisplayName, setNewProfileDisplayName] = useState("");
   const [newProfileDescription, setNewProfileDescription] = useState("");
   const [createServerFieldErrors, setCreateServerFieldErrors] = useState<Record<string, string[]>>({});
@@ -622,7 +630,6 @@ export function ProfileSettingsWorkspace({
   }, [draftState, draftSyncToken, selectedTrustedProfileId]);
 
   useEffect(() => {
-    setNewProfileName("");
     setNewProfileDisplayName("");
     setNewProfileDescription("");
     setCreateServerFieldErrors({});
@@ -632,7 +639,7 @@ export function ProfileSettingsWorkspace({
   useEffect(() => {
     setCreateServerFieldErrors({});
     setCreateServerMessage("");
-  }, [newProfileName, newProfileDisplayName, newProfileDescription]);
+  }, [newProfileDisplayName, newProfileDescription]);
 
   useEffect(() => {
     if (draftSyncToken.reason !== "reset" || !selectedTrustedProfileId || draftState) {
@@ -767,15 +774,16 @@ export function ProfileSettingsWorkspace({
       ? "error"
       : "success";
   const createProfileValidation = useMemo(
-    () => buildCreateProfileValidation(newProfileName, newProfileDisplayName, trustedProfiles),
-    [newProfileDisplayName, newProfileName, trustedProfiles],
+    () => buildCreateProfileValidation(newProfileDisplayName, trustedProfiles),
+    [newProfileDisplayName, trustedProfiles],
   );
-  const createProfileNameMessages = mergeMessages(
-    createProfileValidation.rowErrors[0],
-    createServerFieldErrors.profile_name,
+  const generatedProfileName = useMemo(
+    () => buildProfileNameFromDisplayName(newProfileDisplayName),
+    [newProfileDisplayName],
   );
   const createProfileDisplayMessages = mergeMessages(
-    createProfileValidation.rowErrors[1],
+    createProfileValidation.rowErrors[0],
+    createServerFieldErrors.profile_name,
     createServerFieldErrors.display_name,
   );
   const currentPublishedVersionNumber =
@@ -1013,10 +1021,10 @@ export function ProfileSettingsWorkspace({
   }
 
   async function discardCurrentDraft(): Promise<boolean> {
-    if (!draftState) {
+    if (!openDraftId) {
       return true;
     }
-    const discarded = await onDiscardDraft(draftState.trusted_profile_draft_id);
+    const discarded = await onDiscardDraft(openDraftId);
     if (!discarded) {
       return false;
     }
@@ -1040,9 +1048,9 @@ export function ProfileSettingsWorkspace({
       return;
     }
     onLeaveGuardChange({
-      hasUnsavedChanges: dirtySections.length > 0,
+      hasUnpublishedChanges: Boolean(openDraftId),
       dirtySections: [...dirtySections],
-      draftId: draftState?.trusted_profile_draft_id ?? null,
+      draftId: openDraftId,
       profileDisplayName: selectedTrustedProfile?.display_name ?? "this trusted profile",
       saveAllDirtySections,
       discardCurrentDraft,
@@ -1053,7 +1061,7 @@ export function ProfileSettingsWorkspace({
   }, [
     dirtySections,
     discardCurrentDraft,
-    draftState?.trusted_profile_draft_id,
+    openDraftId,
     onLeaveGuardChange,
     saveAllDirtySections,
     selectedTrustedProfile?.display_name,
@@ -1064,11 +1072,10 @@ export function ProfileSettingsWorkspace({
     setCreateServerMessage("");
     try {
       await onCreateTrustedProfile({
-        profile_name: newProfileName.trim(),
+        profile_name: generatedProfileName,
         display_name: newProfileDisplayName.trim(),
         description: newProfileDescription.trim(),
       });
-      setNewProfileName("");
       setNewProfileDisplayName("");
       setNewProfileDescription("");
     } catch (error) {
@@ -1152,7 +1159,7 @@ export function ProfileSettingsWorkspace({
             {trustedProfiles.length > 0 ? (
               <div className="workspace-callout">
               <strong>Profiles in this organization</strong>
-              <div className="profile-list">
+              <div className="profile-list profile-list-selector">
                 {trustedProfiles.map((profile) => (
                   <button
                     key={profile.trusted_profile_id}
@@ -1163,17 +1170,17 @@ export function ProfileSettingsWorkspace({
                     onClick={() => handleTrustedProfileSelection(profile.profile_name)}
                     disabled={busy}
                   >
-                    <div>
-                      <strong>{profile.display_name}</strong>
-                      <p className="muted">{profile.profile_name}</p>
+                    <div className="profile-list-item-summary">
+                      <strong className="profile-list-item-name">{profile.display_name}</strong>
                     </div>
-                    <div className="settings-inline-status">
-                      <StatusPill tone={profileSourceTone(profile.source_kind)}>{profileSourceLabel(profile.source_kind)}</StatusPill>
+                    <div className="profile-list-item-version">
                       <StatusPill tone="neutral">v{profile.current_published_version_number}</StatusPill>
-                      {profile.has_open_draft ? <StatusPill tone="warning">Unpublished changes</StatusPill> : null}
-                      {retainedDraftStates[profile.trusted_profile_id] ? <StatusPill tone="warning">Local unsaved edits</StatusPill> : null}
-                      {profile.profile_name === selectedTrustedProfileName ? <StatusPill tone="success">Selected</StatusPill> : null}
                     </div>
+                    {profile.has_open_draft ? (
+                      <div className="settings-inline-status profile-list-item-badges">
+                      {profile.has_open_draft ? <StatusPill tone="warning">Unpublished changes</StatusPill> : null}
+                      </div>
+                    ) : null}
                   </button>
                 ))}
               </div>
@@ -1197,34 +1204,19 @@ export function ProfileSettingsWorkspace({
                 {currentPublishedVersionNumber ?? selectedTrustedProfile.current_published_version_number}.
               </p>
             ) : null}
-            <div className="settings-create-grid">
-              <label className="field">
-                <span>New profile key</span>
-                <input
-                  aria-label="New profile key"
-                  aria-invalid={createProfileNameMessages.length > 0 ? "true" : "false"}
-                  className={createProfileNameMessages.length > 0 ? "field-invalid" : undefined}
-                  value={newProfileName}
-                  onChange={(event) => setNewProfileName(event.target.value)}
-                  placeholder="alternate-profile"
-                  disabled={busy || !selectedTrustedProfile}
-                />
-                <RowMessages messages={createProfileNameMessages} />
-              </label>
-              <label className="field">
-                <span>Display name</span>
-                <input
-                  aria-label="New profile display name"
-                  aria-invalid={createProfileDisplayMessages.length > 0 ? "true" : "false"}
-                  className={createProfileDisplayMessages.length > 0 ? "field-invalid" : undefined}
-                  value={newProfileDisplayName}
-                  onChange={(event) => setNewProfileDisplayName(event.target.value)}
-                  placeholder="Alternate Profile"
-                  disabled={busy || !selectedTrustedProfile}
-                />
-                <RowMessages messages={createProfileDisplayMessages} />
-              </label>
-            </div>
+            <label className="field">
+              <span>Display name</span>
+              <input
+                aria-label="New profile display name"
+                aria-invalid={createProfileDisplayMessages.length > 0 ? "true" : "false"}
+                className={createProfileDisplayMessages.length > 0 ? "field-invalid" : undefined}
+                value={newProfileDisplayName}
+                onChange={(event) => setNewProfileDisplayName(event.target.value.slice(0, MAX_PROFILE_DISPLAY_NAME_LENGTH))}
+                placeholder="Alternate Profile"
+                disabled={busy || !selectedTrustedProfile}
+              />
+              <RowMessages messages={createProfileDisplayMessages} />
+            </label>
             <label className="field">
               <span>Description</span>
               <textarea
@@ -1239,12 +1231,11 @@ export function ProfileSettingsWorkspace({
             {createProfileValidation.messages.length > 0 &&
             createProfileValidation.messages.some(
               (message) =>
-                !createProfileNameMessages.includes(message) && !createProfileDisplayMessages.includes(message),
+                !createProfileDisplayMessages.includes(message),
             ) ? (
               <RowMessages
                 messages={createProfileValidation.messages.filter(
-                  (message) =>
-                    !createProfileNameMessages.includes(message) && !createProfileDisplayMessages.includes(message),
+                  (message) => !createProfileDisplayMessages.includes(message),
                 )}
               />
             ) : null}
