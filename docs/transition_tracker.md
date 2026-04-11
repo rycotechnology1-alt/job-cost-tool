@@ -44,6 +44,30 @@ Historical migration notes, retired planning sections, and older long-form chang
 
 ## Recent Meaningful Changes
 
+### [2026-04-11] Review header now uses a single seven-block summary row
+- **What changed:** The browser review header no longer shows the extra descriptive sentence beneath the source filename. Instead, the filename/workspace label now occupies the first tile in a single seven-block top summary row, with the existing raw total, included total, omitted total, total records, blockers, and trusted profile tiles staying alongside it.
+- **Why:** The prior stacked header was consuming more vertical space than needed and pushed useful review canvas space downward without adding much operator value.
+- **Area:** Web delivery / Config/docs
+- **Follow-up needed:** If more review-shell compression happens later, keep the top summary row readable and avoid reintroducing secondary helper copy that competes with the actual metrics.
+
+### [2026-04-11] Review export now invalidates when the selected staged PDF changes after processing
+- **What changed:** The browser review workspace now treats queued source-PDF selection changes the same way it already treats trusted-profile changes for export safety. If an operator processes one staged PDF and then clicks a different staged report, export is immediately disabled, the workspace explains that the loaded review still belongs to the prior source document, and the operator must reprocess before exporting.
+- **Why:** Operators could previously process one queued report, switch the selected staged PDF in the left rail, and still export the earlier run, which made the export action look like it followed the newly selected source file when it did not.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** If future review-shell polish adds more queue actions, keep export invalidation tied to whichever staged PDF and trusted profile were actually used for the loaded processing run.
+
+### [2026-04-11] Review export moved into the left staging rail and the review canvas now uses more horizontal space
+- **What changed:** The browser review shell now places the export action directly beneath `Process Source PDF` in the left rail, shortens the label to `Export and Download`, removes the separate right-rail export card, and narrows the row-details rail so the bulk action bar and grouped review table can stretch farther across the workspace.
+- **Why:** Export is a workspace-level action that pairs more naturally with processing/staging than with selected-row inspection, and the old right-side export card was consuming space that made the review canvas feel tighter than necessary.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** If later review-shell polishing continues, keep workspace-level actions grouped in the left rail and avoid rebuilding a second competing export surface in the row-details area.
+
+### [2026-04-11] Profile settings now retires inactive-classification rates before classification save while keeping mapping cleanup explicit
+- **What changed:** The browser settings workspace now treats rates as part of the same retirement flow when a labor or equipment classification is marked inactive. Save batches now send `/rates` before `/classifications`, and the rates payload automatically omits rows for slots that were just marked inactive. The UI also warns that those rates will be retired on save, while mappings remain untouched and must still be cleared or reassigned manually.
+- **Why:** Operators could previously deactivate a classification, clear or intend to clear its rates locally, and still hit a backend `Update rates first` blocker because the browser was persisting classifications before rates. That made the profile draft effectively unsavable for a common cleanup workflow.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** If later settings polish revisits the rates table, keep inactive-slot retirement behavior explicit and do not silently erase semantic mappings during the same save flow.
+
 ### [2026-04-11] Merge-readiness cleanup now keeps legacy review sessions open, drops tracked runtime artifacts, and aligns repo docs with the web-first product
 - **What changed:** Review sessions for legacy runs without captured template artifacts now still open and expose `historical_export_status`, while exact historical export continues to fail closed. The Python regression suite was realigned with current equipment-observation behavior, tracked `runtime/api` outputs were removed from the repo path, and repo guidance like `README.md` now reflects the actual web-first plus desktop-fallback stance.
 - **Why:** The branch was functionally ready to become the new baseline, but legacy review openness, stale runtime artifacts, and outdated top-level docs were still undermining merge confidence.

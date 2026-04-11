@@ -14,11 +14,13 @@ interface UploadRunPanelProps {
   stagedReports: StagedReportSummary[];
   activeStagedReportId: string;
   busy: boolean;
+  exportDisabled: boolean;
   onTrustedProfileNameChange: (value: string) => void;
   onStageFiles: (files: File[]) => void;
   onSelectStagedReport: (stagedReportId: string) => void;
   onRemoveStagedReport: (stagedReportId: string) => void;
   onLaunchReviewWorkspace: () => void;
+  onExportAndDownload: () => void;
 }
 
 export function UploadRunPanel({
@@ -27,11 +29,13 @@ export function UploadRunPanel({
   stagedReports,
   activeStagedReportId,
   busy,
+  exportDisabled,
   onTrustedProfileNameChange,
   onStageFiles,
   onSelectStagedReport,
   onRemoveStagedReport,
   onLaunchReviewWorkspace,
+  onExportAndDownload,
 }: UploadRunPanelProps) {
   const activeStagedReport =
     stagedReports.find((report) => report.stagedReportId === activeStagedReportId) ?? stagedReports[0] ?? null;
@@ -100,6 +104,16 @@ export function UploadRunPanel({
           >
             Process source PDF
           </button>
+          <div className="review-export-stack">
+            <button
+              type="button"
+              className="review-launch-button"
+              onClick={onExportAndDownload}
+              disabled={busy || exportDisabled}
+          >
+            Export and Download
+          </button>
+          </div>
         </div>
 
         <div className="setup-summary staged-report-summary">
@@ -127,11 +141,10 @@ export function UploadRunPanel({
                       disabled={busy}
                     >
                       <strong>{report.filename}</strong>
-                      <small>{report.upload ? "Cached upload ready" : "Ready to upload when opened"}</small>
                     </button>
                     <button
                       type="button"
-                      className="tertiary-button"
+                      className="tertiary-button staged-report-remove"
                       onClick={() => onRemoveStagedReport(report.stagedReportId)}
                       disabled={busy}
                     >

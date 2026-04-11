@@ -22,8 +22,6 @@ interface ReviewWorkspaceProps {
   selectedRow: WorkspaceRow | null;
   selectedReviewRecordKeys: string[];
   exportArtifact: ExportArtifactResponse | null;
-  lastDownloadedFilename: string;
-  exportDisabled: boolean;
   exportDisabledMessage: string;
   busy: boolean;
   onToggleReviewRowSelection: (recordKey: string, isSelected: boolean) => void;
@@ -32,7 +30,6 @@ interface ReviewWorkspaceProps {
   onApplyBulkOmission: (nextOmissionState: boolean) => Promise<void> | void;
   onApplyBulkLaborClassification: (targetClassification: string) => Promise<void> | void;
   onApplyBulkEquipmentCategory: (targetCategory: string) => Promise<void> | void;
-  onExportAndDownload: () => Promise<void> | void;
 }
 
 interface ReviewFamilyGroup {
@@ -152,8 +149,6 @@ export function ReviewWorkspace({
   selectedRow,
   selectedReviewRecordKeys,
   exportArtifact,
-  lastDownloadedFilename,
-  exportDisabled,
   exportDisabledMessage,
   busy,
   onToggleReviewRowSelection,
@@ -162,11 +157,9 @@ export function ReviewWorkspace({
   onApplyBulkOmission,
   onApplyBulkLaborClassification,
   onApplyBulkEquipmentCategory,
-  onExportAndDownload,
 }: ReviewWorkspaceProps) {
   const currentBlockers = reviewSession?.blocking_issues ?? [];
   const aggregateBlockers = runDetail?.aggregate_blockers ?? [];
-  const exportRevision = reviewSession?.current_revision ?? 0;
   const blockerCount = currentBlockers.length;
   const selectedReviewRecordKeySet = new Set(selectedReviewRecordKeys);
   const reviewTotals = rows.reduce(
@@ -234,13 +227,9 @@ export function ReviewWorkspace({
   return (
     <section className="workspace-shell review-workspace-shell">
       <div className="workspace-header">
-        <div>
+        <div className="metric-card review-title-card">
           <p className="eyebrow">Review Workspace</p>
           <h2>{runDetail?.source_document_filename ?? "Choose a file to begin review"}</h2>
-          <p className="workspace-copy">
-            Review the current row set, inspect source context, use the action bar for row edits, and export the
-            current revision when you trust the result.
-          </p>
         </div>
         <dl className="summary-list compact workspace-metrics">
           <div className="metric-card metric-card-primary">
@@ -568,37 +557,6 @@ export function ReviewWorkspace({
                 </>
               )}
 
-              <div className="summary-card export-card">
-                <strong>Export workbook</strong>
-                <p>Downloads the current review revision and keeps exact-revision lineage under the hood.</p>
-                {exportDisabledMessage ? (
-                  <p className="field-error">{exportDisabledMessage}</p>
-                ) : null}
-                <dl className="summary-list compact">
-                  <div>
-                    <dt>Current revision</dt>
-                    <dd>{exportRevision}</dd>
-                  </div>
-                  <div>
-                    <dt>Historical export</dt>
-                    <dd>{reviewSession.historical_export_status.is_reproducible ? "Ready" : "Legacy only"}</dd>
-                  </div>
-                  <div>
-                    <dt>Last workbook</dt>
-                    <dd>{lastDownloadedFilename || "None yet"}</dd>
-                  </div>
-                </dl>
-                <div className="actions">
-                  <button type="button" onClick={onExportAndDownload} disabled={busy || exportDisabled}>
-                    Export and download workbook
-                  </button>
-                </div>
-                {exportArtifact ? (
-                  <p className="muted">
-                    Last export used review revision {exportArtifact.session_revision}.
-                  </p>
-                ) : null}
-              </div>
             </div>
           </aside>
         </div>

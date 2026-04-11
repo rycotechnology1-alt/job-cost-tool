@@ -528,8 +528,8 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "report-b.pdf" })).toBeInTheDocument();
     expect(screen.getByText("No current blockers.")).toBeInTheDocument();
     expect(screen.queryByText(/profile key/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /export and download workbook/i })).toBeVisible();
-    expect(screen.getByRole("button", { name: /export and download workbook/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeEnabled();
     expect(screen.getByText(/select a row to inspect its source context and apply edits/i)).toBeInTheDocument();
     expect(screen.getAllByText("$500.00").length).toBeGreaterThan(0);
     expect(screen.queryByText("Concrete delivery")).not.toBeInTheDocument();
@@ -575,13 +575,13 @@ describe("App", () => {
     await user.click(screen.getByRole("checkbox", { name: /select concrete delivery/i }));
     await user.type(screen.getByRole("textbox", { name: /bulk vendor name/i }), "Vendor Edited");
     await user.click(screen.getByRole("button", { name: /apply vendor name/i }));
-    await user.click(screen.getByRole("button", { name: /export and download workbook/i }));
+    await user.click(screen.getByRole("button", { name: /export and download/i }));
 
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith("/api/exports/export-artifact-1/download", undefined);
     });
 
-    expect(await screen.findByText("report-recap-rev-1.xlsx")).toBeInTheDocument();
+    expect(await screen.findByText(/downloaded report-recap-rev-1\.xlsx from review revision 1/i)).toBeInTheDocument();
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     const exportRequest = fetchCalls.find(([url]) => url === "/api/runs/processing-run-1/exports");
@@ -604,7 +604,7 @@ describe("App", () => {
     await expandFamily(user, "Show Material");
     await clickRowByText(user, "Concrete delivery");
 
-    const exportButton = screen.getByRole("button", { name: /export and download workbook/i });
+    const exportButton = screen.getByRole("button", { name: /export and download/i });
     expect(exportButton).toBeEnabled();
 
     await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "alternate");
@@ -622,12 +622,48 @@ describe("App", () => {
     expect(screen.queryByText(/review context is stale for export/i)).not.toBeInTheDocument();
     await expandFamily(user, "Show Material");
     await clickRowByText(user, "Concrete delivery");
-    expect(screen.getByRole("button", { name: /export and download workbook/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeEnabled();
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     const runRequests = fetchCalls.filter(([url]) => url === "/api/runs");
     expect(runRequests).toHaveLength(2);
     expect(JSON.parse(String(runRequests[1]?.[1]?.body)).trusted_profile_name).toBe("alternate");
+  });
+
+  it("forces a reprocess before export when the selected staged source PDF changes after a run", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report-a.pdf", "report-b.pdf"]);
+    await user.click(screen.getByRole("button", { name: /report-a\.pdf/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report-a.pdf" });
+
+    const exportButton = screen.getByRole("button", { name: /export and download/i });
+    expect(exportButton).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /report-b\.pdf/i }));
+
+    expect(await screen.findByText(/staged source pdf changed to report-b\.pdf/i)).toBeInTheDocument();
+    expect(screen.getByText(/must be reprocessed before export is allowed/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "report-a.pdf" })).toBeInTheDocument();
+    expect(exportButton).toBeDisabled();
+
+    const fetchCallsBeforeRerun = vi.mocked(globalThis.fetch).mock.calls.length;
+    await user.click(exportButton);
+    expect(vi.mocked(globalThis.fetch).mock.calls).toHaveLength(fetchCallsBeforeRerun);
+
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report-b.pdf" });
+    expect(screen.queryByText(/staged source pdf changed to report-b\.pdf/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeEnabled();
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    const runRequests = fetchCalls.filter(([url]) => url === "/api/runs");
+    expect(runRequests).toHaveLength(2);
+    expect(JSON.parse(String(runRequests[1]?.[1]?.body)).upload_id).toBe("upload-2");
   });
 
   it("uses run-bound classification dropdowns in the top action bar instead of sidebar review inputs", async () => {

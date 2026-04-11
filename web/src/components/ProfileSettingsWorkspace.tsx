@@ -313,6 +313,101 @@ function buildRatesValidation(laborRates: LaborRateRow[], equipmentRates: Equipm
   return result;
 }
 
+function hasConfiguredLaborRate(row: LaborRateRow): boolean {
+  return [row.standard_rate, row.overtime_rate, row.double_time_rate].some((value) => value.trim().length > 0);
+}
+
+function hasConfiguredEquipmentRate(row: EquipmentRateRow): boolean {
+  return row.rate.trim().length > 0;
+}
+
+function buildCurrentSlotStateByPreviousLabel(previousSlots: ClassificationSlotRow[], currentSlots: ClassificationSlotRow[]) {
+  const currentSlotsById = new Map(currentSlots.map((slot) => [slot.slot_id, slot]));
+  const previousLabelState = new Map<string, { active: boolean }>();
+
+  previousSlots.forEach((slot) => {
+    const labelKey = normalizeKey(slot.label);
+    if (!labelKey) {
+      return;
+    }
+    previousLabelState.set(labelKey, {
+      active: Boolean(currentSlotsById.get(slot.slot_id)?.active),
+    });
+  });
+
+  return previousLabelState;
+}
+
+function filterLaborRatesForCurrentSlots(
+  laborRates: LaborRateRow[],
+  previousSlots: ClassificationSlotRow[],
+  currentSlots: ClassificationSlotRow[],
+): LaborRateRow[] {
+  const previousLabelState = buildCurrentSlotStateByPreviousLabel(previousSlots, currentSlots);
+  const activeCurrentLabels = new Set(
+    currentSlots.filter((slot) => slot.active).map((slot) => normalizeKey(slot.label)).filter(Boolean),
+  );
+
+  return laborRates.filter((row) => {
+    const labelKey = normalizeKey(row.classification);
+    const previousState = previousLabelState.get(labelKey);
+    if (previousState) {
+      return previousState.active;
+    }
+    return activeCurrentLabels.has(labelKey);
+  });
+}
+
+function filterEquipmentRatesForCurrentSlots(
+  equipmentRates: EquipmentRateRow[],
+  previousSlots: ClassificationSlotRow[],
+  currentSlots: ClassificationSlotRow[],
+): EquipmentRateRow[] {
+  const previousLabelState = buildCurrentSlotStateByPreviousLabel(previousSlots, currentSlots);
+  const activeCurrentLabels = new Set(
+    currentSlots.filter((slot) => slot.active).map((slot) => normalizeKey(slot.label)).filter(Boolean),
+  );
+
+  return equipmentRates.filter((row) => {
+    const labelKey = normalizeKey(row.category);
+    const previousState = previousLabelState.get(labelKey);
+    if (previousState) {
+      return previousState.active;
+    }
+    return activeCurrentLabels.has(labelKey);
+  });
+}
+
+function buildRetiredLaborRateLabels(
+  laborRates: LaborRateRow[],
+  previousSlots: ClassificationSlotRow[],
+  currentSlots: ClassificationSlotRow[],
+): string[] {
+  const previousLabelState = buildCurrentSlotStateByPreviousLabel(previousSlots, currentSlots);
+  return laborRates
+    .filter((row) => {
+      const previousState = previousLabelState.get(normalizeKey(row.classification));
+      return Boolean(previousState && !previousState.active && hasConfiguredLaborRate(row));
+    })
+    .map((row) => row.classification.trim())
+    .filter(Boolean);
+}
+
+function buildRetiredEquipmentRateLabels(
+  equipmentRates: EquipmentRateRow[],
+  previousSlots: ClassificationSlotRow[],
+  currentSlots: ClassificationSlotRow[],
+): string[] {
+  const previousLabelState = buildCurrentSlotStateByPreviousLabel(previousSlots, currentSlots);
+  return equipmentRates
+    .filter((row) => {
+      const previousState = previousLabelState.get(normalizeKey(row.category));
+      return Boolean(previousState && !previousState.active && hasConfiguredEquipmentRate(row));
+    })
+    .map((row) => row.category.trim())
+    .filter(Boolean);
+}
+
 function buildTargetOptions(currentValue: string, validTargets: string[]) {
   const trimmedCurrentValue = currentValue.trim();
   if (!trimmedCurrentValue || validTargets.includes(trimmedCurrentValue)) {
@@ -722,6 +817,28 @@ export function ProfileSettingsWorkspace({
     () => buildClassificationValidation(equipmentSlots, "equipment"),
     [equipmentSlots],
   );
+  const effectiveLaborRates = useMemo(
+    () => (draftState ? filterLaborRatesForCurrentSlots(laborRates, draftState.labor_slots, laborSlots) : laborRates),
+    [draftState, laborRates, laborSlots],
+  );
+  const effectiveEquipmentRates = useMemo(
+    () =>
+      draftState
+        ? filterEquipmentRatesForCurrentSlots(equipmentRates, draftState.equipment_slots, equipmentSlots)
+        : equipmentRates,
+    [draftState, equipmentRates, equipmentSlots],
+  );
+  const retiredLaborRateLabels = useMemo(
+    () => (draftState ? buildRetiredLaborRateLabels(laborRates, draftState.labor_slots, laborSlots) : []),
+    [draftState, laborRates, laborSlots],
+  );
+  const retiredEquipmentRateLabels = useMemo(
+    () =>
+      draftState
+        ? buildRetiredEquipmentRateLabels(equipmentRates, draftState.equipment_slots, equipmentSlots)
+        : [],
+    [draftState, equipmentRates, equipmentSlots],
+  );
   const classificationIssueCount =
     laborClassificationValidation.messages.length + equipmentClassificationValidation.messages.length;
   const ratesValidation = useMemo(() => buildRatesValidation(laborRates, equipmentRates), [equipmentRates, laborRates]);
@@ -732,9 +849,14 @@ export function ProfileSettingsWorkspace({
   const classificationsDirty =
     draftState &&
     (!compareRows(laborSlots, draftState.labor_slots) || !compareRows(equipmentSlots, draftState.equipment_slots));
-  const ratesDirty =
+  const localRatesDirty =
     draftState &&
     (!compareRows(laborRates, draftState.labor_rates) || !compareRows(equipmentRates, draftState.equipment_rates));
+  const retiredRatesDirty =
+    draftState &&
+    (!compareRows(effectiveLaborRates, draftState.labor_rates) ||
+      !compareRows(effectiveEquipmentRates, draftState.equipment_rates));
+  const ratesDirty = Boolean(localRatesDirty || retiredRatesDirty);
   const currentDraftHydrationKey = draftState
     ? `${draftState.trusted_profile_draft_id}:${draftState.draft_content_hash}`
     : null;
@@ -998,10 +1120,10 @@ export function ProfileSettingsWorkspace({
     if (equipmentMappingsDirty && !(await onSaveEquipmentMappings(equipmentMappings))) {
       return false;
     }
-    if (classificationsDirty && !(await onSaveClassifications(laborSlots, equipmentSlots))) {
+    if (ratesDirty && !(await onSaveRates(effectiveLaborRates, effectiveEquipmentRates))) {
       return false;
     }
-    if (ratesDirty && !(await onSaveRates(laborRates, equipmentRates))) {
+    if (classificationsDirty && !(await onSaveClassifications(laborSlots, equipmentSlots))) {
       return false;
     }
     setRestoredDraftNotice("");
@@ -1935,6 +2057,10 @@ export function ProfileSettingsWorkspace({
                       ]}
                     />
                   ) : null}
+                  <p className="muted">
+                    Marking a classification inactive retires its configured rates on save, but mappings still need to
+                    be cleared or reassigned manually before that classification can be retired.
+                  </p>
                   <div className="settings-two-column">
                     <div className="table-wrap">
                       <table>
@@ -2051,6 +2177,21 @@ export function ProfileSettingsWorkspace({
                       />
                     }
                   />
+                  <p className="muted">
+                    Rates follow active classifications. If you mark a classification inactive, its configured rates are
+                    removed from the draft on save.
+                  </p>
+                  {retiredLaborRateLabels.length > 0 || retiredEquipmentRateLabels.length > 0 ? (
+                    <div className="workspace-callout">
+                      <strong>Inactive classifications will retire their rates on save.</strong>
+                      {retiredLaborRateLabels.length > 0 ? (
+                        <p>Labor rates to retire: {retiredLaborRateLabels.join(", ")}.</p>
+                      ) : null}
+                      {retiredEquipmentRateLabels.length > 0 ? (
+                        <p>Equipment rates to retire: {retiredEquipmentRateLabels.join(", ")}.</p>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {ratesValidation.messages.length > 0 ? <RowMessages messages={ratesValidation.messages} /> : null}
                   <div className="settings-two-column">
                     <div className="table-wrap">

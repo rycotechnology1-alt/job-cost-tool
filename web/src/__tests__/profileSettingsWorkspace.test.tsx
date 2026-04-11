@@ -137,6 +137,11 @@ function buildDraftState() {
         label: "Excavator",
         active: true,
       },
+      {
+        slot_id: "equipment_2",
+        label: "Bucket Truck",
+        active: true,
+      },
     ],
     labor_rates: [
       {
@@ -145,11 +150,21 @@ function buildDraftState() {
         overtime_rate: "67.5",
         double_time_rate: "90",
       },
+      {
+        classification: "Foreman",
+        standard_rate: "55",
+        overtime_rate: "82.5",
+        double_time_rate: "110",
+      },
     ],
     equipment_rates: [
       {
         category: "Excavator",
         rate: "125",
+      },
+      {
+        category: "Bucket Truck",
+        rate: "210",
       },
     ],
     deferred_domains: buildPublishedDetail().deferred_domains,
@@ -157,10 +172,66 @@ function buildDraftState() {
   };
 }
 
+function normalizeKey(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+function hasConfiguredLaborRate(row: { standard_rate: string; overtime_rate: string; double_time_rate: string }): boolean {
+  return [row.standard_rate, row.overtime_rate, row.double_time_rate].some((value) => value.trim().length > 0);
+}
+
+function hasConfiguredEquipmentRate(row: { rate: string }): boolean {
+  return row.rate.trim().length > 0;
+}
+
+function validateClassificationReferences(
+  draftState: ReturnType<typeof buildDraftState>,
+  laborSlots: Array<{ label: string; active: boolean }>,
+  equipmentSlots: Array<{ label: string; active: boolean }>,
+): string | null {
+  const activeLaborLabels = new Set(
+    laborSlots.map((slot) => (slot.active ? normalizeKey(slot.label) : "")).filter(Boolean),
+  );
+  const activeEquipmentLabels = new Set(
+    equipmentSlots.map((slot) => (slot.active ? normalizeKey(slot.label) : "")).filter(Boolean),
+  );
+
+  for (const row of draftState.labor_mappings) {
+    const target = row.target_classification.trim();
+    if (target && !activeLaborLabels.has(normalizeKey(target))) {
+      return `Labor classification '${target}' is still referenced by labor mapping '${row.raw_value}'. Update mappings first.`;
+    }
+  }
+
+  for (const row of draftState.labor_rates) {
+    const classification = row.classification.trim();
+    if (classification && !activeLaborLabels.has(normalizeKey(classification)) && hasConfiguredLaborRate(row)) {
+      return `Labor classification '${classification}' is still referenced by configured labor rates. Update rates first.`;
+    }
+  }
+
+  for (const row of draftState.equipment_mappings) {
+    const target = row.target_category.trim();
+    if (target && !activeEquipmentLabels.has(normalizeKey(target))) {
+      return `Equipment classification '${target}' is still referenced by equipment mapping '${row.raw_description}'. Update mappings first.`;
+    }
+  }
+
+  for (const row of draftState.equipment_rates) {
+    const category = row.category.trim();
+    if (category && !activeEquipmentLabels.has(normalizeKey(category)) && hasConfiguredEquipmentRate(row)) {
+      return `Equipment classification '${category}' is still referenced by configured equipment rates. Update rates first.`;
+    }
+  }
+
+  return null;
+}
+
 function installSettingsFetchMock(options?: {
   openDraftId?: string | null;
   publishFails?: boolean;
   draftGetNotFoundOnce?: boolean;
+  enforceClassificationReferenceValidation?: boolean;
 }) {
   const baselineDraftState = buildDraftState();
   const state = {
@@ -245,6 +316,19 @@ function installSettingsFetchMock(options?: {
 
     if (url === "/api/profile-drafts/draft-1/classifications" && method === "PATCH") {
       const payload = JSON.parse(String(init?.body));
+      if (options?.enforceClassificationReferenceValidation) {
+        const validationError = validateClassificationReferences(
+          state.draftState,
+          payload.labor_slots,
+          payload.equipment_slots,
+        );
+        if (validationError) {
+          return new Response(JSON.stringify({ detail: validationError }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
       state.draftState.labor_slots = payload.labor_slots;
       state.draftState.equipment_slots = payload.equipment_slots;
       return new Response(JSON.stringify(state.draftState), {
@@ -751,6 +835,129 @@ describe("Profile settings workspace", () => {
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/publish" && init?.method === "POST")).toBe(true);
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH")).toBe(false);
+  });
+
+  it("retires labor rates before classifications when a labor slot is marked inactive", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock({ enforceClassificationReferenceValidation: true });
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Classifications");
+
+    const foremanRow = screen.getByLabelText(/labor classification label 2/i).closest("tr");
+    expect(foremanRow).not.toBeNull();
+    await user.click(within(foremanRow as HTMLTableRowElement).getByRole("checkbox"));
+
+    expect(await screen.findByText(/labor rates to retire: foreman\./i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/saved profile settings and published live version v2 for default profile/i)).toBeInTheDocument();
+    });
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    const ratesCallIndex = fetchCalls.findIndex(
+      ([url, init]) => url === "/api/profile-drafts/draft-1/rates" && init?.method === "PATCH",
+    );
+    const classificationsCallIndex = fetchCalls.findIndex(
+      ([url, init]) => url === "/api/profile-drafts/draft-1/classifications" && init?.method === "PATCH",
+    );
+
+    expect(ratesCallIndex).toBeGreaterThanOrEqual(0);
+    expect(classificationsCallIndex).toBeGreaterThanOrEqual(0);
+    expect(ratesCallIndex).toBeLessThan(classificationsCallIndex);
+
+    const ratesPayload = JSON.parse(String(fetchCalls[ratesCallIndex]?.[1]?.body));
+    expect(ratesPayload.labor_rates).toEqual([
+      {
+        classification: "Journeyman",
+        standard_rate: "45",
+        overtime_rate: "67.5",
+        double_time_rate: "90",
+      },
+    ]);
+  });
+
+  it("retires equipment rates before classifications when an equipment slot is marked inactive", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock({ enforceClassificationReferenceValidation: true });
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Classifications");
+
+    const bucketTruckRow = screen.getByLabelText(/equipment classification label 2/i).closest("tr");
+    expect(bucketTruckRow).not.toBeNull();
+    await user.click(within(bucketTruckRow as HTMLTableRowElement).getByRole("checkbox"));
+
+    expect(await screen.findByText(/equipment rates to retire: bucket truck\./i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/saved profile settings and published live version v2 for default profile/i)).toBeInTheDocument();
+    });
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    const ratesCallIndex = fetchCalls.findIndex(
+      ([url, init]) => url === "/api/profile-drafts/draft-1/rates" && init?.method === "PATCH",
+    );
+    const classificationsCallIndex = fetchCalls.findIndex(
+      ([url, init]) => url === "/api/profile-drafts/draft-1/classifications" && init?.method === "PATCH",
+    );
+
+    expect(ratesCallIndex).toBeGreaterThanOrEqual(0);
+    expect(classificationsCallIndex).toBeGreaterThanOrEqual(0);
+    expect(ratesCallIndex).toBeLessThan(classificationsCallIndex);
+
+    const ratesPayload = JSON.parse(String(fetchCalls[ratesCallIndex]?.[1]?.body));
+    expect(ratesPayload.equipment_rates).toEqual([
+      {
+        category: "Excavator",
+        rate: "125",
+      },
+    ]);
+  });
+
+  it("keeps mapping cleanup explicit when a deactivated classification is still referenced by a mapping", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock({ enforceClassificationReferenceValidation: true });
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Classifications");
+
+    const journeymanRow = screen.getByLabelText(/labor classification label 1/i).closest("tr");
+    expect(journeymanRow).not.toBeNull();
+    await user.click(within(journeymanRow as HTMLTableRowElement).getByRole("checkbox"));
+
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
+
+    const alerts = await screen.findAllByRole("alert");
+    expect(
+      alerts.some((alert) =>
+        new RegExp("labor classification 'journeyman' is still referenced by labor mapping 'carpenter'", "i").test(
+          alert.textContent ?? "",
+        ),
+      ),
+    ).toBe(true);
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH")).toBe(
+      false,
+    );
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/rates" && init?.method === "PATCH")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/publish" && init?.method === "POST")).toBe(
+      false,
+    );
   });
 
   it("loads existing unpublished profile changes and shows save failure clearly", async () => {

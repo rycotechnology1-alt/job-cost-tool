@@ -248,6 +248,11 @@ th {
   width: 100%;
 }
 
+.review-export-stack {
+  display: grid;
+  gap: 0.65rem;
+}
+
 .field {
   display: grid;
   gap: 0.35rem;
@@ -324,10 +329,10 @@ th {
 .staged-report-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.7rem;
+  gap: 0.55rem;
   align-items: center;
-  padding: 0.7rem 0.75rem;
-  border-radius: 0.95rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.75rem;
   border: 1px solid #cad9dc;
   background: rgba(255, 255, 255, 0.96);
 }
@@ -338,9 +343,8 @@ th {
 }
 
 .staged-report-select {
-  display: grid;
-  gap: 0.15rem;
-  justify-items: start;
+  display: block;
+  min-width: 0;
   padding: 0;
   border: 0;
   background: transparent;
@@ -349,13 +353,24 @@ th {
   box-shadow: none;
 }
 
+.staged-report-select strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staged-report-remove {
+  padding: 0.34rem 0.6rem;
+  font-size: 0.72rem;
+  min-height: 0;
+  line-height: 1.1;
+}
+
 .staged-report-select:hover:not(:disabled) {
   transform: none;
   box-shadow: none;
-}
-
-.staged-report-select small {
-  color: #5d7480;
 }
 
 .dialog-backdrop {
@@ -1010,7 +1025,7 @@ th {
 .review-console {
   display: grid;
   gap: 1rem;
-  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
   align-items: start;
   padding: 0 1.1rem;
 }
@@ -1085,7 +1100,30 @@ th {
 
 .app-shell-review .staged-report-item.active {
   border-color: #a60909;
-  background: rgba(41, 18, 18, 0.98);
+  background: rgba(27, 20, 20, 0.98);
+}
+
+.app-shell-review .staged-report-select {
+  background: transparent;
+  border: 0;
+  color: #f5ede4;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 0;
+  min-height: 0;
+}
+
+.app-shell-review .staged-report-select:hover:not(:disabled) {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.app-shell-review .staged-report-remove {
+  padding: 0.28rem 0.52rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  min-height: 0;
 }
 
 .app-shell-review .status-pill {
@@ -1114,15 +1152,9 @@ th {
 }
 
 .app-shell-review .workspace-header {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.9rem;
-}
-
-.app-shell-review .workspace-header > div:first-child {
-  padding: 1rem 1.1rem;
-  border-radius: 0.5rem;
-  background: rgba(24, 21, 20, 0.98);
-  border: 1px solid #2f2a28;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-items: stretch;
 }
 
 .app-shell-review .workspace-header h2,
@@ -1137,14 +1169,35 @@ th {
   margin-top: 0;
   display: grid;
   gap: 0.75rem;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-column: span 6;
 }
 
+.app-shell-review .review-title-card,
 .app-shell-review .workspace-metrics .metric-card {
   padding: 1rem 1.05rem;
   border-radius: 0.45rem;
   border: 1px solid #302927;
   background: rgba(28, 25, 24, 0.98);
+}
+
+.app-shell-review .review-title-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.app-shell-review .review-title-card .eyebrow {
+  margin-bottom: 0.3rem;
+}
+
+.app-shell-review .review-title-card h2 {
+  margin: 0;
+  font-size: clamp(1.1rem, 1.4vw, 1.45rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .app-shell-review .workspace-metrics .metric-card dd {
@@ -1169,7 +1222,7 @@ th {
 
 .app-shell-review .workspace-grid {
   gap: 1rem;
-  grid-template-columns: minmax(0, 1fr) minmax(310px, 360px);
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 285px);
 }
 
 .app-shell-review .workspace-main {
@@ -1297,11 +1350,6 @@ th {
 
 .app-shell-review .sidebar-section {
   border-bottom-color: #342d2a;
-}
-
-.app-shell-review .export-card {
-  background: rgba(30, 20, 20, 0.98);
-  border-color: #5a2323;
 }
 
 .app-shell-review .system-details summary {

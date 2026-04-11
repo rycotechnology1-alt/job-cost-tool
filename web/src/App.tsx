@@ -140,7 +140,7 @@ export default function App() {
   const [exportArtifact, setExportArtifact] = useState<ExportArtifactResponse | null>(null);
   const [lastDownloadedFilename, setLastDownloadedFilename] = useState("");
   const [lastDownloadedProfileSyncFilename, setLastDownloadedProfileSyncFilename] = useState("");
-  const [reviewContextInvalidated, setReviewContextInvalidated] = useState(false);
+  const [reviewContextInvalidationMessage, setReviewContextInvalidationMessage] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [statusMessage, setStatusMessage] = useState(
@@ -174,14 +174,14 @@ export default function App() {
           runDetail.trusted_profile_name !== selectedTrustedProfile.profile_name)
       ),
   );
-  const reviewExportInvalidated = reviewContextInvalidated || activeReviewProfileMismatch;
+  const reviewExportInvalidated = Boolean(reviewContextInvalidationMessage) || activeReviewProfileMismatch;
   const activeReviewProfileLabel =
     runDetail?.trusted_profile_name ?? selectedTrustedProfile?.display_name ?? "the prior trusted profile";
   const reviewContextMessage =
     runDetail && reviewSession && reviewExportInvalidated
       ? activeReviewProfileMismatch
         ? `This loaded review was processed under ${activeReviewProfileLabel}, but the current trusted profile selection is ${selectedTrustedProfile?.display_name ?? "different"}. Reprocess under the selected profile before export is allowed.`
-        : `This loaded review was processed under ${activeReviewProfileLabel}, and the trusted profile selection changed afterward. This review is now stale for export and must be reprocessed before export is allowed.`
+        : reviewContextInvalidationMessage
       : "";
 
   function advanceDraftSync(reason: DraftSyncReason) {
@@ -331,17 +331,47 @@ export default function App() {
   }
 
   function handleSelectStagedReport(stagedReportId: string) {
+    if (!stagedReportId || stagedReportId === activeStagedReportId) {
+      return;
+    }
+    const nextReport = stagedReports.find((report) => report.stagedReportId === stagedReportId) ?? null;
     setActiveStagedReportId(stagedReportId);
     setErrorMessage("");
+    if (!runDetail || !reviewSession || !nextReport) {
+      return;
+    }
+    setReviewContextInvalidationMessage(
+      `Staged source PDF changed to ${nextReport.filename}. The loaded review is still showing ${runDetail.source_document_filename} and must be reprocessed before export is allowed.`,
+    );
+    setExportArtifact(null);
+    setLastDownloadedFilename("");
+    setStatusMessage(
+      `Selected staged report ${nextReport.filename}. Reprocess before export because the loaded review still reflects ${runDetail.source_document_filename}.`,
+    );
   }
 
   function handleRemoveStagedReport(stagedReportId: string) {
     const remaining = stagedReports.filter((report) => report.stagedReportId !== stagedReportId);
+    const nextActiveReport =
+      activeStagedReportId === stagedReportId
+        ? remaining[0] ?? null
+        : remaining.find((report) => report.stagedReportId === activeStagedReportId) ?? null;
     setStagedReports(remaining);
     if (activeStagedReportId === stagedReportId) {
-      setActiveStagedReportId(remaining[0]?.stagedReportId ?? "");
+      setActiveStagedReportId(nextActiveReport?.stagedReportId ?? "");
     }
     setErrorMessage("");
+    if (!runDetail || !reviewSession || activeStagedReportId !== stagedReportId || !nextActiveReport) {
+      return;
+    }
+    setReviewContextInvalidationMessage(
+      `Staged source PDF changed to ${nextActiveReport.filename}. The loaded review is still showing ${runDetail.source_document_filename} and must be reprocessed before export is allowed.`,
+    );
+    setExportArtifact(null);
+    setLastDownloadedFilename("");
+    setStatusMessage(
+      `Selected staged report ${nextActiveReport.filename}. Reprocess before export because the loaded review still reflects ${runDetail.source_document_filename}.`,
+    );
   }
 
   function applyTrustedProfiles(profiles: TrustedProfileResponse[], preferredProfileName?: string) {
@@ -579,7 +609,7 @@ export default function App() {
     setReviewSession(nextReviewSession);
     setExportArtifact(null);
     setLastDownloadedFilename("");
-    setReviewContextInvalidated(false);
+    setReviewContextInvalidationMessage("");
     setSelectedReviewRecordKeys([]);
     selectRow(nextRows, null);
     setStatusMessage(nextStatusMessage);
@@ -643,7 +673,9 @@ export default function App() {
       return;
     }
 
-    setReviewContextInvalidated(true);
+    setReviewContextInvalidationMessage(
+      `This loaded review was processed under ${activeReviewProfileLabel}, and the trusted profile selection changed afterward. This review is now stale for export and must be reprocessed before export is allowed.`,
+    );
     setExportArtifact(null);
     setLastDownloadedFilename("");
     setStatusMessage(
@@ -1338,11 +1370,13 @@ export default function App() {
             stagedReports={stagedReports}
             activeStagedReportId={activeStagedReport?.stagedReportId ?? ""}
             busy={busy}
+            exportDisabled={!reviewSession || reviewExportInvalidated}
             onTrustedProfileNameChange={handleReviewTrustedProfileNameChange}
             onStageFiles={handleStageFiles}
             onSelectStagedReport={handleSelectStagedReport}
             onRemoveStagedReport={handleRemoveStagedReport}
             onLaunchReviewWorkspace={() => void handleLaunchReviewWorkspace()}
+            onExportAndDownload={() => void handleExportAndDownload()}
           />
         </div>
 
@@ -1354,8 +1388,6 @@ export default function App() {
               selectedRow={selectedRow}
               selectedReviewRecordKeys={selectedReviewRecordKeys}
               exportArtifact={exportArtifact}
-              lastDownloadedFilename={lastDownloadedFilename}
-              exportDisabled={reviewExportInvalidated}
               exportDisabledMessage={reviewContextMessage}
               busy={busy}
               onToggleReviewRowSelection={handleReviewRowSelectionChange}
@@ -1364,7 +1396,6 @@ export default function App() {
               onApplyBulkOmission={handleApplyBulkOmission}
               onApplyBulkLaborClassification={handleApplyBulkLaborClassification}
               onApplyBulkEquipmentCategory={handleApplyBulkEquipmentCategory}
-              onExportAndDownload={handleExportAndDownload}
             />
           </div>
         </section>
