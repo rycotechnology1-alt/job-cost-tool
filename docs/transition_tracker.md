@@ -44,6 +44,12 @@ Historical migration notes, retired planning sections, and older long-form chang
 
 ## Recent Meaningful Changes
 
+### [2026-04-11] Clean unpublished profile drafts can now be explicitly saved away
+- **What changed:** The browser settings workspace now keeps `Save profile settings` available for a valid open draft even when the on-screen editor matches the live/unpublished baseline again, so operators can clear the lingering `Unpublished changes` state without making a throwaway edit. Added a browser regression covering edit-then-revert followed by no-op publish.
+- **Why:** The prior dirty-section gating could strand a valid open draft with the unpublished badge still visible after an operator reverted their edits before saving, which undermined trust in the settings workflow.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** Keep future settings-status copy explicit about the difference between local unsaved browser edits and persisted unpublished draft state.
+
 ### [2026-04-10] Profile settings now shares the review workspace console-style shell
 - **What changed:** The browser profile-settings page now uses the same dark console-style shell language as review, with a persistent settings side rail for profile controls and lifecycle cards while the existing authoring sections remain in the main content column.
 - **Why:** The old settings layout was functionally complete but visually disconnected from the newer review workspace and harder to scan as one product surface.

@@ -162,9 +162,11 @@ function installSettingsFetchMock(options?: {
   publishFails?: boolean;
   draftGetNotFoundOnce?: boolean;
 }) {
+  const baselineDraftState = buildDraftState();
   const state = {
     publishedDetail: buildPublishedDetail(options?.openDraftId ?? null),
-    draftState: buildDraftState(),
+    draftState: clone(baselineDraftState),
+    baselineDraftState: clone(baselineDraftState),
     publishFails: options?.publishFails ?? false,
     draftGetNotFoundOnce: options?.draftGetNotFoundOnce ?? false,
   };
@@ -268,7 +270,10 @@ function installSettingsFetchMock(options?: {
           headers: { "Content-Type": "application/json" },
         });
       }
-      state.publishedDetail = buildPublishedDetail(null, 2, "profile-hash-v2");
+      const isEquivalentPublish = JSON.stringify(state.draftState) === JSON.stringify(state.baselineDraftState);
+      state.publishedDetail = isEquivalentPublish
+        ? buildPublishedDetail(null, 1, "profile-hash-v1")
+        : buildPublishedDetail(null, 2, "profile-hash-v2");
       return new Response(JSON.stringify(state.publishedDetail), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -618,7 +623,8 @@ describe("Profile settings workspace", () => {
     expect(screen.getByText("Classifications")).toBeInTheDocument();
     expect(screen.getByText("Rates")).toBeInTheDocument();
     expect(screen.getAllByText("Observed").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByRole("button", { name: /save profile settings/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /save profile settings/i })).toBeEnabled();
+    expect(screen.getAllByText("Save to clear unpublished changes").length).toBeGreaterThanOrEqual(1);
 
     await user.click(screen.getByRole("button", { name: /add default omit rule/i }));
     await user.type(screen.getByLabelText(/default omit phase code 2/i), "50 .1");
@@ -708,6 +714,43 @@ describe("Profile settings workspace", () => {
     await user.click(screen.getAllByRole("button", { name: /use suggestion/i })[0]);
 
     expect(screen.getByLabelText(/equipment target category 1/i)).toHaveValue("Excavator");
+  });
+
+  it("keeps save available after a local edit is reverted back to the live unpublished baseline", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+
+    const laborInput = await screen.findByLabelText(/labor raw value 2/i);
+    await user.clear(laborInput);
+    await user.type(laborInput, "TEMP-LABOR");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /save profile settings/i })).toBeEnabled();
+      expect(screen.getAllByText("Ready to save profile settings").length).toBeGreaterThanOrEqual(1);
+    });
+
+    await user.clear(laborInput);
+    await user.type(laborInput, "CARPENTER");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /save profile settings/i })).toBeEnabled();
+      expect(screen.getAllByText("Save to clear unpublished changes").length).toBeGreaterThanOrEqual(1);
+    });
+
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/saved profile settings and published live version v1 for default profile/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: /edit current profile/i })).toBeInTheDocument();
+    expect(screen.queryByText("Unpublished changes")).not.toBeInTheDocument();
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/publish" && init?.method === "POST")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH")).toBe(false);
   });
 
   it("loads existing unpublished profile changes and shows save failure clearly", async () => {

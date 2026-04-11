@@ -750,7 +750,6 @@ export function ProfileSettingsWorkspace({
   const saveProfileDisabled =
     busy ||
     !draftState ||
-    dirtySections.length === 0 ||
     hasLocalValidationIssues ||
     draftState.validation_errors.length > 0;
 
@@ -759,16 +758,14 @@ export function ProfileSettingsWorkspace({
     : draftState.validation_errors.length > 0 || hasLocalValidationIssues
       ? "Fix validation issues"
       : dirtySections.length === 0
-        ? "Make a change to save"
+        ? "Save to clear unpublished changes"
         : "Ready to save profile settings";
 
   const saveReadinessTone = !draftState
     ? "neutral"
     : draftState.validation_errors.length > 0 || hasLocalValidationIssues
       ? "error"
-      : dirtySections.length === 0
-        ? "neutral"
-        : "success";
+      : "success";
   const createProfileValidation = useMemo(
     () => buildCreateProfileValidation(newProfileName, newProfileDisplayName, trustedProfiles),
     [newProfileDisplayName, newProfileName, trustedProfiles],
