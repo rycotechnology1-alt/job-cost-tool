@@ -2,9 +2,9 @@
 
 ## Overview
 
-Job Cost Tool is a Python desktop recap tool for turning Vista/Viewpoint-style T&M job cost PDF reports into reviewed, export-ready Excel recap workbooks.
+Job Cost Tool is a web-first job cost recap product for turning Vista/Viewpoint-style T&M job cost PDF reports into reviewed, export-ready Excel recap workbooks.
 
-The current product is a hardened internal desktop MVP built with PySide6. It is not a generic OCR pipeline or a one-click "trust everything" converter. The tool parses report-body lines, preserves traceability back to the source PDF, applies config-driven normalization and validation, supports human review/correction, and then exports into a template-driven recap workbook.
+The primary operator workflow now runs through `api/` + `web/`, backed by shared Python engine and service layers. `app/` still matters as a stable desktop fallback and reference implementation. This is not a generic OCR pipeline or a one-click "trust everything" converter. The product preserves report-body fidelity and traceability, applies config-driven normalization and validation, supports review/correction, and exports through a template-driven workbook flow.
 
 ## What The Tool Does
 
@@ -81,9 +81,9 @@ Typical blockers include:
 
 ### 4. Review And Correct
 
-The desktop UI is a review-assisted workflow, not just a fire-and-forget batch converter.
+The product is a review-assisted workflow, not just a fire-and-forget batch converter.
 
-The review layer supports:
+The primary review surface is the browser workspace, with desktop retained as a fallback/reference shell. The review layer supports:
 - filtering records
 - inspecting record details and warnings
 - correcting recap labor classification
@@ -99,7 +99,7 @@ Export behavior is intentionally separate from parsing/normalization behavior.
 
 ## Architecture Overview
 
-The repo is organized around a reusable product core plus a desktop delivery layer.
+The repo is organized around a reusable product core, shared orchestration services, and two delivery shells.
 
 - `core/`
   Domain and product-engine code:
@@ -111,14 +111,30 @@ The repo is organized around a reusable product core plus a desktop delivery lay
   - record models and supporting helpers
 
 - `services/`
-  Thin orchestration layer for the main pipeline:
-  - parse PDF
-  - normalize records
-  - validate records
-  - export reviewed records
+  Workflow orchestration and lineage-aware behavior:
+  - processing runs
+  - review sessions and append-only edits
+  - trusted-profile authoring
+  - export orchestration
+  - runtime storage and persistence seams
+
+- `api/`
+  Thin FastAPI contracts over shared services:
+  - uploads
+  - processing runs
+  - review sessions
+  - exports
+  - trusted profiles and profile drafts
+
+- `web/`
+  Primary browser delivery shell:
+  - staged upload and processing
+  - grouped review workflow
+  - export actions
+  - trusted-profile settings and authoring
 
 - `app/`
-  PySide6 desktop UI:
+  PySide6 desktop fallback/reference shell:
   - main window
   - review workflow widgets
   - settings dialog
@@ -238,6 +254,20 @@ Launch the desktop app:
 python -m app.main
 ```
 
+Launch the API locally:
+
+```powershell
+python -m uvicorn api.asgi:app --reload
+```
+
+Launch the web app locally:
+
+```powershell
+cd web
+npm install
+npm run dev
+```
+
 ## Testing
 
 Run the full test suite:
@@ -253,42 +283,49 @@ python -m unittest tests.report_parser_tests tests.tokenizer_tests tests.normali
 python -m unittest tests.profile_config_tests
 ```
 
+Run the browser test/build checks:
+
+```powershell
+cd web
+npm test
+npm run build
+```
+
 ## Current Status
 
-This repository is no longer an early scaffold. It is a working, hardened desktop MVP with substantial real-world parser, normalization, validation, review, and export behavior.
+This repository is no longer an early scaffold. It is a working internal product with substantial real-world parser, normalization, validation, review, lineage, and export behavior.
 
 Current status in plain terms:
-- desktop-first internal tool
+- web-first internal product
+- browser review/export/profile-settings workflows are active product surfaces
+- desktop fallback/reference shell remains supported
 - review-assisted rather than fully automatic
 - heavily config-driven
 - template-driven Excel export
 - actively hardened against real report edge cases
-- not migrated to a web product
 
 ## Current Limitations
 
 - The tool still depends on report text quality from PDF extraction.
 - Human review is still an intentional part of the workflow.
 - Export is designed around configured recap templates, not arbitrary workbook discovery.
-- The long-term web direction is still future-facing; the current product is a desktop application.
+- Runtime storage and deployment assumptions should stay explicit as the web footprint evolves.
 - Some cleanup/refactor opportunities may remain, but the supported runtime model is the modern raw-first/slot-based model reflected in the current configs and tests.
 
 ## Development Notes
 
-- Prefer changes in `core/` and `services/` when behavior should remain portable to a future web architecture.
-- Keep PySide widget code thin; business rules belong in domain/config/service layers where possible.
+- Prefer changes in `core/` and `services/` when behavior should stay portable across web and desktop.
+- Keep API and UI layers thin; business rules belong in domain/config/service layers where possible.
+- Keep PySide widget code thin when desktop code is touched.
 - Add regression tests for parser, normalization, validation, export, and config-loading changes.
 - Keep `docs/transition_tracker.md` current for meaningful architecture/workflow changes.
 
 ## Future Direction
 
-This repo should be treated as a valuable desktop delivery layer around a reusable product engine.
+This repo should be treated as a shared product engine plus a web-first delivery system with desktop fallback.
 
-The current desktop tool remains the production focus, but future work should continue improving:
-- parsing reliability
-- config/profile abstractions
-- normalization and validation coverage
-- export portability
-- separation between domain logic, orchestration, and UI
-
-The future web direction is aspirational, not already implemented.
+Future work should continue improving:
+- web review, export, and profile-settings reliability
+- shared parsing, normalization, validation, and lineage behavior
+- export portability and traceability
+- desktop stability when desktop code is touched

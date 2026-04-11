@@ -72,7 +72,7 @@ class _MaterializedSnapshotBundle:
 
     config_dir: Path
     legacy_config_dir: Path
-    template_path: Path
+    template_path: Path | None
 
 
 class HistoricalExportUnavailableError(RuntimeError):
@@ -137,7 +137,10 @@ class ReviewSessionService:
             reviewed_record_edits=reviewed_record_edits,
         )
         validated_records, blocking_issues = validate_records(effective_records)
-        with self._materialized_snapshot_bundle(context.profile_snapshot) as snapshot_bundle:
+        with self._materialized_snapshot_bundle(
+            context.profile_snapshot,
+            require_template_artifact=False,
+        ) as snapshot_bundle:
             labor_options, equipment_options = load_edit_options(
                 config_dir=snapshot_bundle.config_dir,
                 legacy_config_dir=snapshot_bundle.legacy_config_dir,
@@ -228,6 +231,8 @@ class ReviewSessionService:
             with self._materialized_snapshot_bundle(
                 review_session_state.profile_snapshot,
             ) as snapshot_bundle:
+                if snapshot_bundle.template_path is None:
+                    raise HistoricalExportUnavailableError(review_session_state.historical_export_status)
                 export_records_to_recap(
                     review_session_state.records,
                     str(snapshot_bundle.template_path),
@@ -319,6 +324,8 @@ class ReviewSessionService:
     def _materialized_snapshot_bundle(
         self,
         profile_snapshot: ProfileSnapshot,
+        *,
+        require_template_artifact: bool = True,
     ) -> Iterator[_MaterializedSnapshotBundle]:
         """Materialize one immutable behavioral bundle into a temporary config directory."""
         with TemporaryDirectory(prefix="job-cost-snapshot-config-") as config_tmp, TemporaryDirectory(
@@ -333,9 +340,11 @@ class ReviewSessionService:
                 behavioral_bundle=behavioral_bundle,
                 traceability=traceability,
             )
-            template_artifact = self._load_template_artifact(profile_snapshot)
-            template_path = (config_dir / template_artifact.original_filename).resolve()
-            template_path.write_bytes(template_artifact.content_bytes)
+            template_path: Path | None = None
+            if require_template_artifact:
+                template_artifact = self._load_template_artifact(profile_snapshot)
+                template_path = (config_dir / template_artifact.original_filename).resolve()
+                template_path.write_bytes(template_artifact.content_bytes)
             (legacy_config_dir / "phase_catalog.json").write_text('{"phases":[]}', encoding="utf-8")
             yield _MaterializedSnapshotBundle(
                 config_dir=config_dir,
@@ -403,6 +412,8 @@ class ReviewSessionService:
             with self._materialized_snapshot_bundle(
                 review_session_state.profile_snapshot,
             ) as snapshot_bundle:
+                if snapshot_bundle.template_path is None:
+                    raise HistoricalExportUnavailableError(review_session_state.historical_export_status)
                 export_records_to_recap(
                     review_session_state.records,
                     str(snapshot_bundle.template_path),

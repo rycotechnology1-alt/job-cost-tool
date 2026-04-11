@@ -437,6 +437,8 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
                 "target_category": "",
                 "is_observed": True,
                 "is_required_for_recent_processing": True,
+                "prediction_target": "Pick-up Truck",
+                "prediction_confidence_label": "Likely match",
             },
             draft_state.equipment_mappings,
         )
@@ -460,7 +462,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.assertTrue(predicted_row["is_observed"])
         self.assertTrue(predicted_row["is_required_for_recent_processing"])
         self.assertEqual(predicted_row["prediction_target"], "Pick-up Truck")
-        self.assertEqual(predicted_row["prediction_confidence_label"], "Likely match")
+        self.assertEqual(predicted_row["prediction_confidence_label"], "High confidence")
 
     def test_discard_draft_preserves_observations_and_future_processing_can_recreate_it(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
@@ -762,7 +764,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             source_page=1,
             source_line_text="line one",
             record_type_normalized="equipment",
-            equipment_mapping_key="CRANE TRUCK" if "crane truck" in raw_description.lower() else None,
+            equipment_mapping_key=raw_description,
         )
 
     def _create_reference_processing_run_id(self) -> str:

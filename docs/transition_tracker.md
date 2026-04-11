@@ -44,6 +44,12 @@ Historical migration notes, retired planning sections, and older long-form chang
 
 ## Recent Meaningful Changes
 
+### [2026-04-11] Merge-readiness cleanup now keeps legacy review sessions open, drops tracked runtime artifacts, and aligns repo docs with the web-first product
+- **What changed:** Review sessions for legacy runs without captured template artifacts now still open and expose `historical_export_status`, while exact historical export continues to fail closed. The Python regression suite was realigned with current equipment-observation behavior, tracked `runtime/api` outputs were removed from the repo path, and repo guidance like `README.md` now reflects the actual web-first plus desktop-fallback stance.
+- **Why:** The branch was functionally ready to become the new baseline, but legacy review openness, stale runtime artifacts, and outdated top-level docs were still undermining merge confidence.
+- **Area:** Application services / Tests / Config/docs
+- **Follow-up needed:** Keep future runtime storage outputs out of source control and preserve the distinction between review availability and exact historical export reproducibility for older runs.
+
 ### [2026-04-11] Profile settings now forces open drafts to resolve before leaving and auto-discards them on browser exit
 - **What changed:** The browser settings workspace now treats any open profile draft as a blocking unpublished change, even when no local sections are currently dirty. Leaving settings for review or another trusted profile now always forces `Save and leave`, `Don't save`, or `Stay here`, and browser/tab exit uses a keepalive draft-discard request so unpublished badges do not survive normal browser navigation away from the page.
 - **Why:** Operators could previously leave settings with a clean-but-open draft still attached to the profile, which let the `Unpublished changes` badge linger and undermined trust in whether profile edits were truly resolved.

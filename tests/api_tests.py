@@ -663,6 +663,18 @@ class Phase1ApiTests(unittest.TestCase):
         )
 
     def test_processing_run_observation_capture_exposes_equipment_prediction_metadata_in_draft_state(self) -> None:
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "equipment_mapping.json",
+            {
+                "raw_mappings": {"pickup truck": "Pick-up Truck"},
+                "saved_mappings": [
+                    {
+                        "raw_description": "pickup truck",
+                        "target_category": "Pick-up Truck",
+                    }
+                ],
+            },
+        )
         upload_response = self.client.post(
             "/api/source-documents/uploads",
             files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
@@ -698,7 +710,7 @@ class Phase1ApiTests(unittest.TestCase):
                 "is_observed": True,
                 "is_required_for_recent_processing": True,
                 "prediction_target": "Pick-up Truck",
-                "prediction_confidence_label": "Likely match",
+                "prediction_confidence_label": "High confidence",
             },
             draft_response.json()["equipment_mappings"],
         )
@@ -964,6 +976,28 @@ class Phase1ApiTests(unittest.TestCase):
             source_line_text="Labor source",
             record_type_normalized="labor",
             recap_labor_classification=None,
+        )
+
+    def _make_unmapped_equipment_record(self, *, raw_description: str) -> Record:
+        return Record(
+            record_type="equipment",
+            phase_code="20",
+            raw_description=raw_description,
+            cost=100.0,
+            hours=8.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=raw_description,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=["Equipment raw value is not mapped."],
+            source_page=1,
+            source_line_text="Equipment source",
+            record_type_normalized="equipment",
+            equipment_mapping_key=raw_description,
         )
 
     def _write_json(self, path: Path, payload: object) -> None:
