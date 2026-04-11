@@ -197,14 +197,33 @@ th {
   background: rgba(252, 246, 224, 0.98);
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .setup-panel {
+  margin-bottom: 1rem;
+}
+
+.workspace-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.9rem;
   margin-bottom: 1rem;
 }
 
 .workspace-toggle {
   display: inline-flex;
   gap: 0.7rem;
-  margin-bottom: 1rem;
   padding: 0.35rem;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.86);
@@ -217,6 +236,16 @@ th {
   gap: 1rem;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1.3fr) minmax(260px, 0.85fr);
   align-items: stretch;
+}
+
+.launch-dropzone-stack {
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+}
+
+.review-launch-button {
+  width: 100%;
 }
 
 .field {
@@ -807,11 +836,800 @@ th {
   color: #214048;
 }
 
+.app-shell-review {
+  max-width: none;
+  margin: 0;
+  padding: 0 0 1.4rem;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top right, rgba(120, 12, 12, 0.14), transparent 18%),
+    linear-gradient(180deg, #111011 0%, #181617 100%);
+  color: #f1e8df;
+}
+
+.app-shell-review .muted,
+.app-shell-review .hero-copy,
+.app-shell-review .workspace-copy,
+.app-shell-review .panel-heading p,
+.app-shell-review .status-card p,
+.app-shell-review .summary-card p,
+.app-shell-review .panel p,
+.app-shell-review .dropzone small,
+.app-shell-review .field span,
+.app-shell-review .summary-list dt,
+.app-shell-review .status-block strong,
+.app-shell-review .cell-secondary,
+.app-shell-review .empty-state {
+  color: #9f948a;
+}
+
+.app-shell-review .hero {
+  margin-bottom: 0;
+  padding: 1rem 1.1rem 0.85rem;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+  align-items: center;
+  background: rgba(16, 15, 15, 0.98);
+  border-bottom: 1px solid #272222;
+}
+
+.app-shell-review .hero h1 {
+  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+  font-size: clamp(1.5rem, 2.2vw, 2rem);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #cf100f;
+}
+
+.app-shell-review .eyebrow {
+  color: #b1a69b;
+}
+
+.app-shell-review .status-card,
+.app-shell-review .panel,
+.app-shell-review .setup-panel,
+.app-shell-review .summary-card,
+.app-shell-review .status-block,
+.app-shell-review .workspace-callout,
+.app-shell-review .banner {
+  background: rgba(27, 24, 23, 0.98);
+  border-color: #2f2a28;
+  box-shadow: none;
+  backdrop-filter: none;
+  color: #f1e8df;
+}
+
+.app-shell-review .status-card {
+  min-height: 100%;
+  border-radius: 0.5rem;
+  background: rgba(22, 19, 18, 0.98);
+}
+
+.app-shell-review .workspace-toolbar {
+  margin: 0;
+  padding: 0.8rem 1.1rem 1rem;
+  align-items: center;
+}
+
+.app-shell-review .workspace-toggle {
+  margin-left: auto;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell-review button {
+  border-radius: 0.35rem;
+  background: #a60909;
+  color: #f8f1eb;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: none;
+}
+
+.app-shell-review button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(166, 9, 9, 0.22);
+}
+
+.app-shell-review .secondary-button,
+.app-shell-review .toggle-button,
+.app-shell-review .tertiary-button {
+  background: rgba(31, 28, 27, 0.98);
+  color: #d9d0c8;
+  border: 1px solid #39312f;
+}
+
+.app-shell-review .toggle-button.active {
+  background: #a60909;
+  border-color: #a60909;
+  color: #fff7f2;
+}
+
+.app-shell-review input,
+.app-shell-review select,
+.app-shell-review textarea {
+  background: rgba(16, 14, 14, 0.98);
+  color: #f6eee6;
+  border-color: #403736;
+  border-radius: 0.35rem;
+}
+
+.app-shell-review .field-invalid {
+  border-color: #a3502a;
+  background: rgba(34, 20, 16, 0.98);
+}
+
+.review-console {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  align-items: start;
+  padding: 0 1.1rem;
+}
+
+.review-console-rail,
+.review-console-main {
+  min-width: 0;
+}
+
+.app-shell-review .review-launch-panel {
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+  margin-bottom: 0;
+  min-height: calc(100vh - 10rem);
+  display: flex;
+  flex-direction: column;
+  border-radius: 0.5rem;
+  background: rgba(24, 21, 20, 0.98);
+}
+
+.app-shell-review .review-launch-panel .panel-heading h2 {
+  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #f4ede5;
+}
+
+.app-shell-review .review-launch-panel .setup-grid {
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+}
+
+.app-shell-review .dropzone {
+  border: 1px dashed #5f514c;
+  border-radius: 0.45rem;
+  background:
+    linear-gradient(180deg, rgba(29, 26, 25, 0.98), rgba(20, 18, 18, 0.98)),
+    radial-gradient(circle at top left, rgba(166, 9, 9, 0.14), transparent 42%);
+}
+
+.app-shell-review .dropzone strong,
+.app-shell-review .staged-report-select,
+.app-shell-review .summary-card strong,
+.app-shell-review .status-block strong,
+.app-shell-review .workspace-callout strong,
+.app-shell-review .staged-report-header strong {
+  color: #f5ede4;
+}
+
+.app-shell-review .dropzone-label,
+.app-shell-review th,
+.app-shell-review .summary-list dt {
+  color: #93867b;
+}
+
+.app-shell-review .setup-summary,
+.app-shell-review .status-block,
+.app-shell-review .workspace-callout {
+  border-radius: 0.45rem;
+  background: rgba(33, 29, 28, 0.98);
+  border-color: #3a322f;
+}
+
+.app-shell-review .staged-report-item {
+  border-radius: 0.45rem;
+  border-color: #3b3331;
+  background: rgba(16, 14, 14, 0.98);
+}
+
+.app-shell-review .staged-report-item.active {
+  border-color: #a60909;
+  background: rgba(41, 18, 18, 0.98);
+}
+
+.app-shell-review .status-pill {
+  border-radius: 0.35rem;
+  border-color: #433936;
+  background: rgba(16, 14, 14, 0.98);
+  color: #f1e8df;
+}
+
+.app-shell-review .status-pill.success {
+  border-color: rgba(47, 140, 74, 0.34);
+  background: rgba(18, 41, 23, 0.98);
+  color: #97d4a5;
+}
+
+.app-shell-review .status-pill.warning {
+  border-color: rgba(192, 130, 31, 0.34);
+  background: rgba(46, 34, 17, 0.98);
+  color: #d6b06b;
+}
+
+.app-shell-review .status-pill.error {
+  border-color: rgba(176, 73, 54, 0.34);
+  background: rgba(53, 20, 20, 0.98);
+  color: #f0a39c;
+}
+
+.app-shell-review .workspace-header {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.9rem;
+}
+
+.app-shell-review .workspace-header > div:first-child {
+  padding: 1rem 1.1rem;
+  border-radius: 0.5rem;
+  background: rgba(24, 21, 20, 0.98);
+  border: 1px solid #2f2a28;
+}
+
+.app-shell-review .workspace-header h2,
+.app-shell-review .workspace-sidebar h3 {
+  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: #f6eee6;
+}
+
+.app-shell-review .workspace-metrics {
+  margin-top: 0;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.app-shell-review .workspace-metrics .metric-card {
+  padding: 1rem 1.05rem;
+  border-radius: 0.45rem;
+  border: 1px solid #302927;
+  background: rgba(28, 25, 24, 0.98);
+}
+
+.app-shell-review .workspace-metrics .metric-card dd {
+  font-size: clamp(1.3rem, 2.2vw, 2rem);
+  font-weight: 800;
+  color: #f6eee6;
+}
+
+.app-shell-review .workspace-metrics .metric-card-alert {
+  border-color: rgba(166, 9, 9, 0.34);
+  background: rgba(38, 16, 16, 0.98);
+}
+
+.app-shell-review .workspace-metrics .metric-card-alert dd {
+  color: #ff9a91;
+}
+
+.app-shell-review .workspace-metrics .metric-card-success {
+  border-color: rgba(47, 140, 74, 0.28);
+  background: rgba(19, 35, 23, 0.98);
+}
+
+.app-shell-review .workspace-grid {
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(310px, 360px);
+}
+
+.app-shell-review .workspace-main {
+  max-height: calc(100vh - 11rem);
+}
+
+.app-shell-review .workspace-main.panel {
+  padding: 0 0 1rem;
+  border-radius: 0.5rem;
+  background: rgba(18, 16, 16, 0.98);
+}
+
+.app-shell-review .workspace-main.panel > .banner,
+.app-shell-review .workspace-main.panel > .workspace-callout,
+.app-shell-review .workspace-main.panel > .review-bulk-bar,
+.app-shell-review .workspace-main.panel > .bulk-hint {
+  margin-left: 1rem;
+  margin-right: 1rem;
+}
+
+.app-shell-review .banner.warning {
+  background: rgba(41, 24, 19, 0.98);
+  border-color: rgba(166, 9, 9, 0.32);
+  color: #f2c1b9;
+}
+
+.app-shell-review .banner.error {
+  background: rgba(53, 20, 20, 0.98);
+  border-color: rgba(166, 9, 9, 0.34);
+  color: #ffb8b1;
+}
+
+.app-shell-review .workspace-callout.success {
+  background: rgba(23, 31, 24, 0.98);
+  border-color: rgba(47, 140, 74, 0.28);
+  color: #cbe9d3;
+}
+
+.app-shell-review .review-bulk-bar {
+  justify-content: flex-start;
+  gap: 1rem;
+  border-radius: 0.45rem;
+  border-color: #342d2a;
+  background: rgba(28, 25, 24, 0.98);
+}
+
+.app-shell-review .review-bulk-actions {
+  gap: 0.55rem;
+}
+
+.app-shell-review .bulk-field {
+  min-width: 180px;
+}
+
+.app-shell-review .workspace-table-wrap {
+  margin: 1rem 1rem 0;
+  border-radius: 0;
+  border-color: #312a28;
+  background: rgba(15, 14, 14, 0.98);
+}
+
+.app-shell-review .workspace-table-wrap thead th {
+  background: rgba(40, 36, 35, 0.99);
+  box-shadow: inset 0 -1px 0 #3b3331;
+}
+
+.app-shell-review th,
+.app-shell-review td {
+  border-bottom-color: #24201e;
+}
+
+.app-shell-review .review-table tbody tr {
+  background: rgba(15, 14, 14, 0.98);
+}
+
+.app-shell-review .review-table tbody tr:hover {
+  background: rgba(29, 26, 25, 0.98);
+}
+
+.app-shell-review .workspace-row.selected {
+  background: rgba(45, 20, 20, 0.98);
+}
+
+.app-shell-review .workspace-row.bulk-selected {
+  box-shadow: inset 0 0 0 1px rgba(166, 9, 9, 0.4);
+}
+
+.app-shell-review .workspace-row.warning {
+  box-shadow: inset 4px 0 0 #a60909;
+}
+
+.app-shell-review .workspace-row.omitted {
+  opacity: 0.8;
+}
+
+.app-shell-review .cell-primary {
+  color: #f6eee6;
+}
+
+.app-shell-review .attention-pill {
+  border-radius: 0.3rem;
+  background: rgba(38, 34, 33, 0.98);
+  color: #f1e8df;
+}
+
+.app-shell-review .review-group-row td {
+  background: rgba(41, 37, 36, 0.99);
+  border-bottom-color: #332c2a;
+}
+
+.app-shell-review .review-group-toggle {
+  color: #d7cdc4;
+}
+
+.app-shell-review .review-group-toggle:hover:not(:disabled) {
+  background: rgba(54, 49, 47, 0.98);
+}
+
+.app-shell-review .workspace-sidebar-inner {
+  top: 1rem;
+  max-height: calc(100vh - 11rem);
+  border-radius: 0.5rem;
+  background: rgba(24, 21, 20, 0.98);
+}
+
+.app-shell-review .sidebar-section {
+  border-bottom-color: #342d2a;
+}
+
+.app-shell-review .export-card {
+  background: rgba(30, 20, 20, 0.98);
+  border-color: #5a2323;
+}
+
+.app-shell-review .system-details summary {
+  color: #f1e8df;
+}
+
+.app-shell-review .empty-workspace {
+  border-radius: 0.5rem;
+  background: rgba(20, 18, 18, 0.98);
+}
+
+.settings-console {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.settings-sidebar-column,
+.settings-content-column {
+  min-width: 0;
+}
+
+.settings-summary-card {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.settings-content-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell-settings {
+  max-width: none;
+  margin: 0;
+  padding: 0 0 1.4rem;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top right, rgba(120, 12, 12, 0.14), transparent 18%),
+    linear-gradient(180deg, #111011 0%, #181617 100%);
+  color: #f1e8df;
+}
+
+.app-shell-settings .muted,
+.app-shell-settings .hero-copy,
+.app-shell-settings .workspace-copy,
+.app-shell-settings .panel-heading p,
+.app-shell-settings .status-card p,
+.app-shell-settings .summary-card p,
+.app-shell-settings .panel p,
+.app-shell-settings .field span,
+.app-shell-settings .summary-list dt,
+.app-shell-settings .status-block strong,
+.app-shell-settings .cell-secondary,
+.app-shell-settings .empty-state,
+.app-shell-settings .dropzone small {
+  color: #9f948a;
+}
+
+.app-shell-settings .hero {
+  margin-bottom: 0;
+  padding: 1rem 1.1rem 0.85rem;
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 560px);
+  align-items: center;
+  background: rgba(16, 15, 15, 0.98);
+  border-bottom: 1px solid #272222;
+}
+
+.settings-hero-side {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(220px, 1fr);
+  gap: 0.8rem;
+  align-items: start;
+}
+
+.app-shell-settings .hero h1,
+.app-shell-settings .workspace-header h2,
+.app-shell-settings .settings-heading h3 {
+  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #f6eee6;
+}
+
+.app-shell-settings .hero h1 {
+  font-size: clamp(1.5rem, 2.2vw, 2rem);
+}
+
+.app-shell-settings .eyebrow {
+  color: #b1a69b;
+}
+
+.app-shell-settings .status-card,
+.app-shell-settings .panel,
+.app-shell-settings .summary-card,
+.app-shell-settings .status-block,
+.app-shell-settings .workspace-callout,
+.app-shell-settings .banner {
+  background: rgba(27, 24, 23, 0.98);
+  border-color: #2f2a28;
+  box-shadow: none;
+  backdrop-filter: none;
+  color: #f1e8df;
+}
+
+.app-shell-settings .status-card {
+  min-height: 100%;
+  border-radius: 0.5rem;
+  background: rgba(22, 19, 18, 0.98);
+}
+
+.app-shell-settings .settings-header-toggle {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+  align-self: stretch;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell-settings .settings-header-toggle .toggle-button {
+  width: 100%;
+}
+
+.app-shell-settings .workspace-toolbar {
+  margin: 0;
+  padding: 0.8rem 1.1rem 1rem;
+  align-items: center;
+}
+
+.app-shell-settings .workspace-toggle {
+  margin-left: auto;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell-settings button {
+  border-radius: 0.35rem;
+  background: #a60909;
+  color: #f8f1eb;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: none;
+}
+
+.app-shell-settings button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(166, 9, 9, 0.22);
+}
+
+.app-shell-settings .secondary-button,
+.app-shell-settings .toggle-button,
+.app-shell-settings .tertiary-button {
+  background: rgba(31, 28, 27, 0.98);
+  color: #d9d0c8;
+  border: 1px solid #39312f;
+}
+
+.app-shell-settings .toggle-button.active {
+  background: #a60909;
+  border-color: #a60909;
+  color: #fff7f2;
+}
+
+.app-shell-settings input,
+.app-shell-settings select,
+.app-shell-settings textarea {
+  background: rgba(16, 14, 14, 0.98);
+  color: #f6eee6;
+  border-color: #403736;
+  border-radius: 0.35rem;
+}
+
+.app-shell-settings .field-invalid {
+  border-color: #a3502a;
+  background: rgba(34, 20, 16, 0.98);
+}
+
+.app-shell-settings .settings-shell {
+  gap: 1rem;
+  padding: 0 1.1rem;
+}
+
+.app-shell-settings .settings-sidebar-column {
+  align-self: start;
+}
+
+.app-shell-settings .settings-summary-card {
+  position: sticky;
+  top: 1rem;
+  border-radius: 0.5rem;
+  background: rgba(24, 21, 20, 0.98);
+}
+
+.app-shell-settings .dropzone strong,
+.app-shell-settings .summary-card strong,
+.app-shell-settings .status-block strong,
+.app-shell-settings .workspace-callout strong,
+.app-shell-settings .staged-report-header strong {
+  color: #f5ede4;
+}
+
+.app-shell-settings .dropzone-label,
+.app-shell-settings th,
+.app-shell-settings .summary-list dt {
+  color: #93867b;
+}
+
+.app-shell-settings .workspace-callout,
+.app-shell-settings .status-block {
+  border-radius: 0.45rem;
+  background: rgba(33, 29, 28, 0.98);
+  border-color: #3a322f;
+}
+
+.app-shell-settings .workspace-callout.success {
+  background: rgba(23, 31, 24, 0.98);
+  border-color: rgba(47, 140, 74, 0.28);
+  color: #cbe9d3;
+}
+
+.app-shell-settings .banner.warning {
+  background: rgba(41, 24, 19, 0.98);
+  border-color: rgba(166, 9, 9, 0.32);
+  color: #f2c1b9;
+}
+
+.app-shell-settings .banner.error {
+  background: rgba(53, 20, 20, 0.98);
+  border-color: rgba(166, 9, 9, 0.34);
+  color: #ffb8b1;
+}
+
+.app-shell-settings .status-pill {
+  border-radius: 0.35rem;
+  border-color: #433936;
+  background: rgba(16, 14, 14, 0.98);
+  color: #f1e8df;
+}
+
+.app-shell-settings .status-pill.success {
+  border-color: rgba(47, 140, 74, 0.34);
+  background: rgba(18, 41, 23, 0.98);
+  color: #97d4a5;
+}
+
+.app-shell-settings .status-pill.warning {
+  border-color: rgba(192, 130, 31, 0.34);
+  background: rgba(46, 34, 17, 0.98);
+  color: #d6b06b;
+}
+
+.app-shell-settings .status-pill.error {
+  border-color: rgba(176, 73, 54, 0.34);
+  background: rgba(53, 20, 20, 0.98);
+  color: #f0a39c;
+}
+
+.app-shell-settings .status-pill.neutral {
+  color: #f1e8df;
+}
+
+.app-shell-settings .profile-list-item {
+  border-radius: 0.45rem;
+  padding: 0.85rem 0.95rem;
+  background: rgba(16, 14, 14, 0.98);
+  border-color: #3b3331;
+  color: #f1e8df;
+}
+
+.app-shell-settings .profile-list-item.active {
+  border-color: #a60909;
+  background: rgba(41, 18, 18, 0.98);
+}
+
+.app-shell-settings .profile-list-item.archived {
+  background: rgba(34, 27, 22, 0.98);
+  border-color: rgba(192, 130, 31, 0.28);
+}
+
+.app-shell-settings .settings-content-column {
+  display: grid;
+  gap: 1rem;
+}
+
+.app-shell-settings .settings-console-main {
+  padding: 1rem 1rem 1.1rem;
+  border-radius: 0.5rem;
+  background: rgba(18, 16, 16, 0.98);
+}
+
+.app-shell-settings .settings-status-strip {
+  gap: 0.75rem;
+}
+
+.app-shell-settings .settings-status-card {
+  padding: 0.95rem 1rem;
+  border-radius: 0.45rem;
+  border: 1px solid #342d2a;
+  background: rgba(28, 25, 24, 0.98);
+}
+
+.app-shell-settings .settings-section {
+  margin-top: 1.35rem;
+  padding-top: 1.1rem;
+  border-top-color: #342d2a;
+}
+
+.app-shell-settings .table-wrap {
+  border: 1px solid #312a28;
+  background: rgba(15, 14, 14, 0.98);
+}
+
+.app-shell-settings .table-wrap table {
+  margin-top: 0;
+}
+
+.app-shell-settings .table-wrap thead th {
+  background: rgba(40, 36, 35, 0.99);
+  box-shadow: inset 0 -1px 0 #3b3331;
+}
+
+.app-shell-settings th,
+.app-shell-settings td {
+  border-bottom-color: #24201e;
+}
+
+.app-shell-settings tbody tr {
+  background: rgba(15, 14, 14, 0.98);
+}
+
+.app-shell-settings tbody tr:hover {
+  background: rgba(29, 26, 25, 0.98);
+}
+
+.app-shell-settings .cell-primary,
+.app-shell-settings .summary-list dd,
+.app-shell-settings .system-details summary {
+  color: #f6eee6;
+}
+
+.app-shell-settings .observed-badge,
+.app-shell-settings .required-observed-badge,
+.app-shell-settings .attention-pill {
+  border-radius: 0.3rem;
+  background: rgba(38, 34, 33, 0.98);
+  color: #f1e8df;
+}
+
+.app-shell-settings .empty-workspace {
+  border-radius: 0.5rem;
+  background: rgba(20, 18, 18, 0.98);
+}
+
 @media (max-width: 1100px) {
   .hero,
   .workspace-header,
   .workspace-grid,
   .settings-grid,
+  .settings-console,
   .settings-two-column,
   .setup-grid {
     grid-template-columns: 1fr;
@@ -830,6 +1648,25 @@ th {
   .workspace-table-wrap {
     overflow: visible;
   }
+
+  .review-console {
+    grid-template-columns: 1fr;
+    padding: 0 0.8rem;
+  }
+
+  .app-shell-review .review-launch-panel {
+    position: static;
+    min-height: auto;
+  }
+
+  .app-shell-review .workspace-main,
+  .app-shell-review .workspace-sidebar-inner {
+    max-height: none;
+  }
+
+  .settings-hero-side {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -841,8 +1678,28 @@ th {
     display: grid;
   }
 
+  .workspace-toolbar {
+    display: grid;
+  }
+
   th,
   td {
     padding: 0.68rem 0.7rem;
+  }
+
+  .app-shell-review {
+    padding-bottom: 1rem;
+  }
+
+  .app-shell-review .hero,
+  .app-shell-review .workspace-toolbar {
+    padding-left: 0.8rem;
+    padding-right: 0.8rem;
+  }
+
+  .app-shell-settings .hero,
+  .app-shell-settings .workspace-toolbar {
+    padding-left: 0.8rem;
+    padding-right: 0.8rem;
   }
 }

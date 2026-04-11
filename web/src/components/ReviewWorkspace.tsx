@@ -167,6 +167,7 @@ export function ReviewWorkspace({
   const currentBlockers = reviewSession?.blocking_issues ?? [];
   const aggregateBlockers = runDetail?.aggregate_blockers ?? [];
   const exportRevision = reviewSession?.current_revision ?? 0;
+  const blockerCount = currentBlockers.length;
   const selectedReviewRecordKeySet = new Set(selectedReviewRecordKeys);
   const reviewTotals = rows.reduce(
     (totals, row) => {
@@ -231,7 +232,7 @@ export function ReviewWorkspace({
   }, [selectedReviewRows.length]);
 
   return (
-    <section className="workspace-shell">
+    <section className="workspace-shell review-workspace-shell">
       <div className="workspace-header">
         <div>
           <p className="eyebrow">Review Workspace</p>
@@ -242,33 +243,29 @@ export function ReviewWorkspace({
           </p>
         </div>
         <dl className="summary-list compact workspace-metrics">
-          <div>
-            <dt>Trusted profile</dt>
-            <dd>{runDetail?.trusted_profile_name ?? "-"}</dd>
-          </div>
-          <div>
-            <dt>Records</dt>
-            <dd>{reviewSession?.records.length ?? runDetail?.record_count ?? 0}</dd>
-          </div>
-          <div>
-            <dt>Current revision</dt>
-            <dd>{reviewSession?.current_revision ?? "-"}</dd>
-          </div>
-          <div>
-            <dt>Run status</dt>
-            <dd>{runDetail?.status ?? "Waiting"}</dd>
-          </div>
-          <div>
-            <dt>Full raw total</dt>
+          <div className="metric-card metric-card-primary">
+            <dt>Raw total</dt>
             <dd>{formatCurrency(reviewTotals.rawCost)}</dd>
           </div>
-          <div>
+          <div className="metric-card metric-card-primary">
             <dt>Included total</dt>
             <dd>{formatCurrency(reviewTotals.includedCost)}</dd>
           </div>
-          <div>
+          <div className="metric-card">
             <dt>Omitted total</dt>
             <dd>{formatCurrency(reviewTotals.omittedCost)}</dd>
+          </div>
+          <div className="metric-card">
+            <dt>Total records</dt>
+            <dd>{reviewSession?.records.length ?? runDetail?.record_count ?? 0}</dd>
+          </div>
+          <div className={blockerCount > 0 ? "metric-card metric-card-alert" : "metric-card metric-card-success"}>
+            <dt>Blockers</dt>
+            <dd>{blockerCount}</dd>
+          </div>
+          <div className="metric-card">
+            <dt>Trusted profile</dt>
+            <dd>{runDetail?.trusted_profile_name ?? "-"}</dd>
           </div>
         </dl>
       </div>

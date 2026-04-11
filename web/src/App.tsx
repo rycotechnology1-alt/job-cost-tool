@@ -1155,55 +1155,97 @@ export default function App() {
     activeWorkspace === "settings"
       ? "The browser remains a thin client. Live profile versions and save rules still come from the backend authoring services."
       : "The browser stays thin. Processing, review lineage, and exact-revision export still come from the accepted backend services.";
+  const workspaceStatusCard = (
+    <div className="status-card" aria-live="polite">
+      <strong>{busyAction ?? "Workflow status"}</strong>
+      <p>{busy ? busyAction : currentWorkspaceStatusMessage}</p>
+      {activeWorkspace === "review" && runDetail ? (
+        <p className="muted">Reviewing {runDetail.source_document_filename}</p>
+      ) : null}
+      {activeWorkspace === "settings" && selectedTrustedProfile ? (
+        <p className="muted">Editing profile {selectedTrustedProfile.display_name}</p>
+      ) : null}
+    </div>
+  );
+  const workspaceModeToggle = (
+    <div
+      className={
+        activeWorkspace === "review"
+          ? "workspace-toggle review-workspace-toggle"
+          : activeWorkspace === "settings"
+            ? "workspace-toggle settings-header-toggle"
+            : "workspace-toggle"
+      }
+      aria-label="Workspace mode"
+    >
+      <button
+        type="button"
+        className={activeWorkspace === "review" ? "toggle-button active" : "toggle-button"}
+        onClick={() => {
+          if (activeWorkspace === "settings") {
+            promptToLeaveSettings("review");
+            return;
+          }
+          setActiveWorkspace("review");
+          setErrorMessage("");
+        }}
+        aria-pressed={activeWorkspace === "review"}
+      >
+        Review workspace
+      </button>
+      <button
+        type="button"
+        className={activeWorkspace === "settings" ? "toggle-button active" : "toggle-button"}
+        onClick={() => {
+          setActiveWorkspace("settings");
+          setErrorMessage("");
+        }}
+        aria-pressed={activeWorkspace === "settings"}
+      >
+        Profile settings
+      </button>
+    </div>
+  );
 
   return (
-    <main className="app-shell">
-      <header className="hero compact-hero">
+    <main
+      className={
+        activeWorkspace === "review"
+          ? "app-shell app-shell-review"
+          : activeWorkspace === "settings"
+            ? "app-shell app-shell-settings"
+            : "app-shell"
+      }
+    >
+      <header
+        className={
+          activeWorkspace === "review"
+            ? "hero compact-hero review-hero"
+            : activeWorkspace === "settings"
+              ? "hero compact-hero settings-hero"
+              : "hero compact-hero"
+        }
+      >
         <div>
           <p className="eyebrow">{currentWorkspaceEyebrow}</p>
           <h1>{currentWorkspaceTitle}</h1>
           <p className="hero-copy">{currentWorkspaceCopy}</p>
         </div>
-        <div className="status-card" aria-live="polite">
-          <strong>{busyAction ?? "Workflow status"}</strong>
-          <p>{busy ? busyAction : currentWorkspaceStatusMessage}</p>
-          {activeWorkspace === "review" && runDetail ? (
-            <p className="muted">Reviewing {runDetail.source_document_filename}</p>
-          ) : null}
-          {activeWorkspace === "settings" && selectedTrustedProfile ? (
-            <p className="muted">Editing profile {selectedTrustedProfile.display_name}</p>
-          ) : null}
-        </div>
+        {activeWorkspace === "settings" ? (
+          <div className="settings-hero-side">
+            {workspaceModeToggle}
+            {workspaceStatusCard}
+          </div>
+        ) : (
+          workspaceStatusCard
+        )}
       </header>
 
-      <section className="workspace-toggle" aria-label="Workspace mode">
-        <button
-          type="button"
-          className={activeWorkspace === "review" ? "toggle-button active" : "toggle-button"}
-          onClick={() => {
-            if (activeWorkspace === "settings") {
-              promptToLeaveSettings("review");
-              return;
-            }
-            setActiveWorkspace("review");
-            setErrorMessage("");
-          }}
-          aria-pressed={activeWorkspace === "review"}
-        >
-          Review workspace
-        </button>
-        <button
-          type="button"
-          className={activeWorkspace === "settings" ? "toggle-button active" : "toggle-button"}
-          onClick={() => {
-            setActiveWorkspace("settings");
-            setErrorMessage("");
-          }}
-          aria-pressed={activeWorkspace === "settings"}
-        >
-          Profile settings
-        </button>
-      </section>
+      {activeWorkspace === "review" ? (
+        <section className="workspace-toolbar review-workspace-toolbar">
+          {workspaceModeToggle}
+        </section>
+      ) : null}
 
       {errorMessage ? (
         <div className="banner error" role="alert">
@@ -1256,11 +1298,11 @@ export default function App() {
       ) : null}
 
       {activeWorkspace === "review" ? (
-        <>
+        <section className="review-console">
+          <div className="review-console-rail">
           <UploadRunPanel
             trustedProfiles={trustedProfiles}
             selectedTrustedProfileName={selectedTrustedProfileName}
-            selectedTrustedProfile={selectedTrustedProfile}
             stagedReports={stagedReports}
             activeStagedReportId={activeStagedReport?.stagedReportId ?? ""}
             busy={busy}
@@ -1268,29 +1310,32 @@ export default function App() {
             onStageFiles={handleStageFiles}
             onSelectStagedReport={handleSelectStagedReport}
             onRemoveStagedReport={handleRemoveStagedReport}
-            onLaunchReviewWorkspace={handleLaunchReviewWorkspace}
+            onLaunchReviewWorkspace={() => void handleLaunchReviewWorkspace()}
           />
+        </div>
 
-          <ReviewWorkspace
-            runDetail={runDetail}
-            reviewSession={reviewSession}
-            rows={rows}
-            selectedRow={selectedRow}
-            selectedReviewRecordKeys={selectedReviewRecordKeys}
-            exportArtifact={exportArtifact}
-            lastDownloadedFilename={lastDownloadedFilename}
-            exportDisabled={reviewExportInvalidated}
-            exportDisabledMessage={reviewContextMessage}
-            busy={busy}
-            onToggleReviewRowSelection={handleReviewRowSelectionChange}
-            onSelectRow={setSelectedRecordKey}
-            onApplyBulkVendorName={handleApplyBulkVendorName}
-            onApplyBulkOmission={handleApplyBulkOmission}
-            onApplyBulkLaborClassification={handleApplyBulkLaborClassification}
-            onApplyBulkEquipmentCategory={handleApplyBulkEquipmentCategory}
-            onExportAndDownload={handleExportAndDownload}
-          />
-        </>
+          <div className="review-console-main">
+            <ReviewWorkspace
+              runDetail={runDetail}
+              reviewSession={reviewSession}
+              rows={rows}
+              selectedRow={selectedRow}
+              selectedReviewRecordKeys={selectedReviewRecordKeys}
+              exportArtifact={exportArtifact}
+              lastDownloadedFilename={lastDownloadedFilename}
+              exportDisabled={reviewExportInvalidated}
+              exportDisabledMessage={reviewContextMessage}
+              busy={busy}
+              onToggleReviewRowSelection={handleReviewRowSelectionChange}
+              onSelectRow={setSelectedRecordKey}
+              onApplyBulkVendorName={handleApplyBulkVendorName}
+              onApplyBulkOmission={handleApplyBulkOmission}
+              onApplyBulkLaborClassification={handleApplyBulkLaborClassification}
+              onApplyBulkEquipmentCategory={handleApplyBulkEquipmentCategory}
+              onExportAndDownload={handleExportAndDownload}
+            />
+          </div>
+        </section>
       ) : (
         <ProfileSettingsWorkspace
           trustedProfiles={trustedProfiles}

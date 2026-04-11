@@ -44,6 +44,24 @@ Historical migration notes, retired planning sections, and older long-form chang
 
 ## Recent Meaningful Changes
 
+### [2026-04-10] Profile settings now shares the review workspace console-style shell
+- **What changed:** The browser profile-settings page now uses the same dark console-style shell language as review, with a persistent settings side rail for profile controls and lifecycle cards while the existing authoring sections remain in the main content column.
+- **Why:** The old settings layout was functionally complete but visually disconnected from the newer review workspace and harder to scan as one product surface.
+- **Area:** Web delivery / Config/docs
+- **Follow-up needed:** If more settings polish continues later, keep the console shell aligned with review without reintroducing redundant controls or changing the current profile-authoring workflow.
+
+### [2026-04-10] Review launch action moved to the top bar and the left rail was simplified
+- **What changed:** The review page now launches processing from a top-bar `Process Source PDF` button, and the left staging rail no longer shows the redundant trusted-profile summary card.
+- **Why:** The profile summary duplicated information already visible elsewhere, and the processing action is easier to find in the top status area.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** If more review-shell cleanup continues, keep launch and queue controls distinct so the staged-file rail remains focused on selection and status rather than mixed actions.
+
+### [2026-04-10] Review workspace now uses a consolidated dashboard-style shell
+- **What changed:** The browser review page now presents staging in a persistent left rail, keeps the grouped review table and bulk actions in the center, and uses a darker dashboard-style layout inspired by the pilot mockup while preserving the existing staging, review-edit, and export workflows.
+- **Why:** The earlier stacked layout worked functionally but felt visually disconnected and harder to scan during review.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** If later polishing continues, revisit whether the right rail should surface richer readiness summaries without duplicating backend/export-state concepts.
+
 ### [2026-04-10] Review export is now visible immediately when the workspace opens
 - **What changed:** The browser review sidebar now keeps the export card visible as soon as a review session loads instead of hiding export behind selected-row details.
 - **Why:** Export readiness is a workspace-level action, so gating the button behind row selection was unnecessary and confusing.

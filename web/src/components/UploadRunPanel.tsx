@@ -11,7 +11,6 @@ export interface StagedReportSummary {
 interface UploadRunPanelProps {
   trustedProfiles: TrustedProfileResponse[];
   selectedTrustedProfileName: string;
-  selectedTrustedProfile: TrustedProfileResponse | null;
   stagedReports: StagedReportSummary[];
   activeStagedReportId: string;
   busy: boolean;
@@ -19,13 +18,12 @@ interface UploadRunPanelProps {
   onStageFiles: (files: File[]) => void;
   onSelectStagedReport: (stagedReportId: string) => void;
   onRemoveStagedReport: (stagedReportId: string) => void;
-  onLaunchReviewWorkspace: () => Promise<void> | void;
+  onLaunchReviewWorkspace: () => void;
 }
 
 export function UploadRunPanel({
   trustedProfiles,
   selectedTrustedProfileName,
-  selectedTrustedProfile,
   stagedReports,
   activeStagedReportId,
   busy,
@@ -49,7 +47,7 @@ export function UploadRunPanel({
   }
 
   return (
-    <section className="setup-panel">
+    <section className="setup-panel review-launch-panel">
       <div className="panel-heading">
         <h2>Open Review Workspace</h2>
         <p>Choose one trusted profile, stage up to 10 PDFs, then open whichever queued report you want to review.</p>
@@ -72,27 +70,37 @@ export function UploadRunPanel({
           </select>
         </label>
 
-        <label
-          className="dropzone"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={handleDrop}
-        >
-          <span className="dropzone-label">Source report PDF</span>
-          <strong>{activeStagedReport?.filename ?? "Drop one or more PDFs here or browse"}</strong>
-          <small>
-            {stagedReports.length > 0
-              ? "Queued PDFs stay staged here so you can open the next report without reselecting it."
-              : "Add one or more job-cost PDFs to build a small staged review queue."}
-          </small>
-          <input
-            aria-label="Source report PDF"
-            type="file"
-            accept=".pdf,application/pdf"
-            multiple
-            onChange={handleFileChange}
-            disabled={busy}
-          />
-        </label>
+        <div className="launch-dropzone-stack">
+          <label
+            className="dropzone"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={handleDrop}
+          >
+            <span className="dropzone-label">Source report PDF</span>
+            <strong>{activeStagedReport?.filename ?? "Drop one or more PDFs here or browse"}</strong>
+            <small>
+              {stagedReports.length > 0
+                ? "Queued PDFs stay staged here so you can open the next report without reselecting it."
+                : "Add one or more job-cost PDFs to build a small staged review queue."}
+            </small>
+            <input
+              aria-label="Source report PDF"
+              type="file"
+              accept=".pdf,application/pdf"
+              multiple
+              onChange={handleFileChange}
+              disabled={busy}
+            />
+          </label>
+          <button
+            type="button"
+            className="review-launch-button"
+            onClick={onLaunchReviewWorkspace}
+            disabled={busy || !selectedTrustedProfileName.trim() || !activeStagedReport}
+          >
+            Process source PDF
+          </button>
+        </div>
 
         <div className="setup-summary staged-report-summary">
           <div className="staged-report-header">
@@ -135,34 +143,6 @@ export function UploadRunPanel({
             </div>
           )}
         </div>
-
-        <div className="setup-summary">
-          <strong>{selectedTrustedProfile?.display_name ?? "No trusted profile selected"}</strong>
-          <p>{selectedTrustedProfile?.description || "Select one validated trusted profile for this pilot review."}</p>
-          <dl className="summary-list compact">
-            <div>
-              <dt>Profile key</dt>
-              <dd>{selectedTrustedProfile?.profile_name ?? "-"}</dd>
-            </div>
-            <div>
-              <dt>Template</dt>
-              <dd>{selectedTrustedProfile?.template_filename ?? "-"}</dd>
-            </div>
-            <div>
-              <dt>Queued file</dt>
-              <dd>{activeStagedReport?.filename ?? "-"}</dd>
-            </div>
-          </dl>
-        </div>
-      </div>
-      <div className="actions">
-        <button
-          type="button"
-          onClick={onLaunchReviewWorkspace}
-          disabled={busy || !selectedTrustedProfile || !activeStagedReport}
-        >
-          Open review workspace
-        </button>
       </div>
     </section>
   );

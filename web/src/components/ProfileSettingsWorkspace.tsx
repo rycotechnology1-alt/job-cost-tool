@@ -499,6 +499,8 @@ export function ProfileSettingsWorkspace({
   onLeaveGuardChange,
   lastDownloadedProfileSyncFilename,
 }: ProfileSettingsWorkspaceProps) {
+  void onCreateDesktopSyncExport;
+  void lastDownloadedProfileSyncFilename;
   const [defaultOmitRules, setDefaultOmitRules] = useState<DefaultOmitRuleRow[]>([]);
   const [laborMappings, setLaborMappings] = useState<LaborMappingRow[]>([]);
   const [equipmentMappings, setEquipmentMappings] = useState<EquipmentMappingRow[]>([]);
@@ -647,7 +649,6 @@ export function ProfileSettingsWorkspace({
   }, [draftState, draftSyncToken.reason, selectedTrustedProfileId]);
 
   const detailToRender = draftState ?? profileDetail;
-  const deferredDomains = detailToRender?.deferred_domains ?? null;
   const openDraftId = draftState?.trusted_profile_draft_id ?? profileDetail?.open_draft_id ?? null;
   const laborTargets = laborSlots.filter((row) => row.active && row.label.trim()).map((row) => row.label.trim());
   const equipmentTargets = equipmentSlots.filter((row) => row.active && row.label.trim()).map((row) => row.label.trim());
@@ -1118,17 +1119,12 @@ export function ProfileSettingsWorkspace({
 
   return (
     <section className="workspace-shell settings-shell">
-      <div className="workspace-header">
-        <div>
-          <p className="eyebrow">Profile Settings</p>
-          <h2>{selectedTrustedProfile?.display_name ?? "Choose a trusted profile"}</h2>
-          <p className="workspace-copy">
-            Inspect the live trusted profile, edit the approved Phase 2A settings slice, and save profile settings when
-            you are ready to publish a new live version for future processing.
-          </p>
-        </div>
-        <div className="summary-card">
-          <label className="field">
+      <h2 className="sr-only">{selectedTrustedProfile?.display_name ?? "Choose a trusted profile"}</h2>
+
+      <div className="settings-console">
+        <aside className="settings-sidebar-column" aria-label="Profile settings controls">
+          <div className="summary-card settings-summary-card">
+            <label className="field">
             <span>Trusted profile</span>
             <select
               aria-label="Settings trusted profile"
@@ -1144,42 +1140,20 @@ export function ProfileSettingsWorkspace({
               ))}
             </select>
           </label>
-          <div className="actions">
-            <button
-              type="button"
-              onClick={() => void handlePrimarySettingsAction()}
-              disabled={draftState ? saveProfileDisabled : busy || !selectedTrustedProfile}
-            >
-              {draftState ? "Save profile settings" : "Edit current profile"}
-            </button>
-          </div>
-          <p className="muted">
-            Live profile settings drive processing. Changes stay in this editor until you save profile settings.
-          </p>
-          {selectedTrustedProfile ? (
-            <div className="workspace-callout">
-              <strong>Selected profile state</strong>
-              <div className="settings-inline-status">
-                <StatusPill tone="neutral">{selectedTrustedProfile.display_name}</StatusPill>
-                <StatusPill tone={profileSourceTone(selectedTrustedProfile.source_kind)}>
-                  {selectedProfileSourceLabel}
-                </StatusPill>
-                <StatusPill tone={selectedTrustedProfile.has_open_draft ? "warning" : "success"}>
-                  {selectedTrustedProfile.has_open_draft ? "Unpublished changes" : "Live only"}
-                </StatusPill>
-                <StatusPill tone="neutral">Live v{selectedTrustedProfile.current_published_version_number}</StatusPill>
-                <StatusPill tone={workspaceViewTone}>{workspaceViewLabel}</StatusPill>
-                {selectedRetainedDraftState ? <StatusPill tone="warning">Local unsaved edits retained</StatusPill> : null}
-                {selectedTrustedProfile.is_active_profile ? <StatusPill tone="neutral">Desktop active</StatusPill> : null}
-              </div>
-              <p className="muted">
-                The selected profile controls both the live profile view and any unpublished changes you continue in
-                this tab. Local unsaved browser edits stay scoped to one profile at a time.
-              </p>
+            <div className="actions">
+              <button
+                type="button"
+                onClick={() => void handlePrimarySettingsAction()}
+                disabled={draftState ? saveProfileDisabled : busy || !selectedTrustedProfile}
+              >
+                {draftState ? "Save profile settings" : "Edit current profile"}
+              </button>
             </div>
-          ) : null}
-          {trustedProfiles.length > 0 ? (
-            <div className="workspace-callout">
+            <p className="muted">
+              Live profile settings drive processing. Changes stay in this editor until you save profile settings.
+            </p>
+            {trustedProfiles.length > 0 ? (
+              <div className="workspace-callout">
               <strong>Profiles in this organization</strong>
               <div className="profile-list">
                 {trustedProfiles.map((profile) => (
@@ -1207,8 +1181,8 @@ export function ProfileSettingsWorkspace({
                 ))}
               </div>
             </div>
-          ) : null}
-          <div className="workspace-callout">
+            ) : null}
+            <div className="workspace-callout">
             <strong>Create another trusted profile</strong>
             <p>
               New profiles start from the currently selected profile&apos;s live version only. Unpublished profile
@@ -1283,8 +1257,30 @@ export function ProfileSettingsWorkspace({
               </button>
             </div>
             <p className="muted">Profile keys are stable logical ids and should be treated as permanent.</p>
-          </div>
-          <div className="workspace-callout">
+            </div>
+            {selectedTrustedProfile ? (
+              <div className="workspace-callout">
+              <strong>Selected profile state</strong>
+              <div className="settings-inline-status">
+                <StatusPill tone="neutral">{selectedTrustedProfile.display_name}</StatusPill>
+                <StatusPill tone={profileSourceTone(selectedTrustedProfile.source_kind)}>
+                  {selectedProfileSourceLabel}
+                </StatusPill>
+                <StatusPill tone={selectedTrustedProfile.has_open_draft ? "warning" : "success"}>
+                  {selectedTrustedProfile.has_open_draft ? "Unpublished changes" : "Live only"}
+                </StatusPill>
+                <StatusPill tone="neutral">Live v{selectedTrustedProfile.current_published_version_number}</StatusPill>
+                <StatusPill tone={workspaceViewTone}>{workspaceViewLabel}</StatusPill>
+                {selectedRetainedDraftState ? <StatusPill tone="warning">Local unsaved edits retained</StatusPill> : null}
+                {selectedTrustedProfile.is_active_profile ? <StatusPill tone="neutral">Desktop active</StatusPill> : null}
+              </div>
+              <p className="muted">
+                The selected profile controls both the live profile view and any unpublished changes you continue in
+                this tab. Local unsaved browser edits stay scoped to one profile at a time.
+              </p>
+            </div>
+          ) : null}
+            <div className="workspace-callout">
             <strong>Profile lifecycle</strong>
             <p>User-created profiles can be archived to remove them from active web selectors without deleting published history.</p>
             <div className="actions">
@@ -1304,8 +1300,8 @@ export function ProfileSettingsWorkspace({
                   ? "Save or discard the unpublished profile changes before archiving this profile."
                   : "Archiving hides the profile from active selectors but preserves its versions, runs, and sync-export audit history."}
             </p>
-          </div>
-          <div className="workspace-callout">
+            </div>
+            <div className="workspace-callout">
             <strong>Archived profiles</strong>
             <p className="muted">
               Archived profiles remain in lineage history, stay out of active review/profile selectors, and cannot be
@@ -1339,98 +1335,45 @@ export function ProfileSettingsWorkspace({
                 ))}
               </div>
             )}
+            </div>
           </div>
-        </div>
-      </div>
+        </aside>
 
-      {!selectedTrustedProfile ? (
-        <div className="panel empty-workspace">
-          <p className="empty-state">Choose a trusted profile to inspect the live configuration and edit the current profile.</p>
-        </div>
-      ) : null}
-
-      {settingsErrorMessage ? (
-        <div className="banner error" role="alert">
-          <strong>Settings workflow needs attention</strong>
-          <p>{settingsErrorMessage}</p>
-          {draftState ? (
-            <p className="muted">Unsaved browser edits remain on screen while you retry or continue adjusting the current profile.</p>
+        <div className="settings-content-column">
+          {!selectedTrustedProfile ? (
+            <div className="panel empty-workspace">
+              <p className="empty-state">Choose a trusted profile to inspect the live configuration and edit the current profile.</p>
+            </div>
           ) : null}
-          <div className="actions">
-            {!profileDetail ? (
-              <button type="button" className="secondary-button" onClick={() => void onReloadProfileDetail()} disabled={busy}>
-                Retry loading live profile
-              </button>
-            ) : !draftState ? (
-              <button type="button" className="secondary-button" onClick={() => void onOpenDraft()} disabled={busy}>
-                Retry editing current profile
-              </button>
-            ) : (
-              <button type="button" className="secondary-button" onClick={() => void onReloadProfileDetail()} disabled={busy}>
-                Reload live summary
-              </button>
-            )}
-          </div>
-        </div>
-      ) : null}
 
-      {profileDetail ? (
-        <div className="settings-grid">
-          <div className="panel settings-main">
-            <SectionHeader
-              title="Live Profile Summary"
-              description="Live profile settings are read-only here. Select Edit current profile to change the approved Phase 2A domains."
-              action={
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => void onCreateDesktopSyncExport()}
-                  disabled={busy}
-                >
-                  Create desktop sync archive
-                </button>
-              }
-            />
-            <dl className="summary-list settings-summary-grid">
-              <div>
-                <dt>Profile key</dt>
-                <dd>{profileDetail.profile_name}</dd>
+          {settingsErrorMessage ? (
+            <div className="banner error" role="alert">
+              <strong>Settings workflow needs attention</strong>
+              <p>{settingsErrorMessage}</p>
+              {draftState ? (
+                <p className="muted">Unsaved browser edits remain on screen while you retry or continue adjusting the current profile.</p>
+              ) : null}
+              <div className="actions">
+                {!profileDetail ? (
+                  <button type="button" className="secondary-button" onClick={() => void onReloadProfileDetail()} disabled={busy}>
+                    Retry loading live profile
+                  </button>
+                ) : !draftState ? (
+                  <button type="button" className="secondary-button" onClick={() => void onOpenDraft()} disabled={busy}>
+                    Retry editing current profile
+                  </button>
+                ) : (
+                  <button type="button" className="secondary-button" onClick={() => void onReloadProfileDetail()} disabled={busy}>
+                    Reload live summary
+                  </button>
+                )}
               </div>
-              <div>
-                <dt>Profile source</dt>
-                <dd>{selectedTrustedProfile ? profileSourceLabel(selectedTrustedProfile.source_kind) : "-"}</dd>
-              </div>
-              <div>
-                <dt>Display name</dt>
-                <dd>{profileDetail.display_name}</dd>
-              </div>
-              <div>
-                <dt>Description</dt>
-                <dd>{profileDetail.description || "-"}</dd>
-              </div>
-              <div>
-                <dt>Version label</dt>
-                <dd>{profileDetail.version_label ?? "-"}</dd>
-              </div>
-              <div>
-                <dt>Live version</dt>
-                <dd>v{profileDetail.current_published_version.version_number}</dd>
-              </div>
-              <div>
-                <dt>Template reference</dt>
-                <dd>{profileDetail.current_published_version.template_artifact_ref ?? "-"}</dd>
-              </div>
-            </dl>
-            <p className="muted">
-              Desktop sync archives always come from the current live version only. Unpublished changes are never exported.
-            </p>
-            {lastDownloadedProfileSyncFilename ? (
-              <div className="workspace-callout success">
-                <strong>Manual desktop-sync archive ready</strong>
-                <p>{lastDownloadedProfileSyncFilename}</p>
-              </div>
-            ) : null}
+            </div>
+          ) : null}
 
+          {profileDetail ? (
+            <div className="settings-grid settings-content-grid">
+              <div className="panel settings-main settings-console-main">
             <div className="settings-status-strip">
               <div className="status-block settings-status-card">
                 <strong>Live profile</strong>
@@ -2252,35 +2195,15 @@ export function ProfileSettingsWorkspace({
                 </p>
               </div>
             )}
-          </div>
-
-          <aside className="workspace-sidebar">
-            <div className="workspace-sidebar-inner panel">
-              <SectionHeader
-                title="Read-only Deferred Domains"
-                description="These domains remain non-editable in Phase 2A."
-              />
-              <p className="muted">Read only in Phase 2A. Template identity is still part of the live version.</p>
-              {deferredDomains ? (
-                <>
-                  <DeferredDomainCard title="Vendor Normalization" payload={deferredDomains.vendor_normalization} />
-                  <DeferredDomainCard title="Phase Mapping" payload={deferredDomains.phase_mapping} />
-                  <DeferredDomainCard title="Input Model" payload={deferredDomains.input_model} />
-                  <DeferredDomainCard title="Recap Template Map" payload={deferredDomains.recap_template_map} />
-                </>
-              ) : (
-                <p className="empty-state">
-                  Published deferred-domain inspection will appear here once the profile detail loads.
-                </p>
-              )}
+              </div>
             </div>
-          </aside>
+          ) : selectedTrustedProfile ? (
+            <div className="panel empty-workspace">
+              <p className="empty-state">Loading published profile detail for the selected trusted profile.</p>
+            </div>
+          ) : null}
         </div>
-      ) : selectedTrustedProfile ? (
-        <div className="panel empty-workspace">
-          <p className="empty-state">Loading published profile detail for the selected trusted profile.</p>
-        </div>
-      ) : null}
+      </div>
     </section>
   );
 }

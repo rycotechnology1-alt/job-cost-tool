@@ -602,9 +602,9 @@ describe("Profile settings workspace", () => {
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
 
-    expect(await screen.findByText("Live Profile Summary")).toBeInTheDocument();
-    expect(screen.getByText("Read only in Phase 2A. Template identity is still part of the live version.")).toBeInTheDocument();
-    expect(screen.getByText("Vendor Normalization")).toBeInTheDocument();
+    expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
+    expect(screen.queryByText("Read only in Phase 2A. Template identity is still part of the live version.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Vendor Normalization")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /edit current profile/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /create draft from published version/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /open current draft/i })).not.toBeInTheDocument();
@@ -766,7 +766,7 @@ describe("Profile settings workspace", () => {
     expect(screen.getByText("Open a report in the review workspace to inspect rows and apply corrections.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
-    expect(await screen.findByText("Live Profile Summary")).toBeInTheDocument();
+    expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
     expect(screen.queryByText(/restored .* from unsaved browser edits/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /edit current profile/i }));
@@ -852,41 +852,18 @@ describe("Profile settings workspace", () => {
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "DELETE")).toBe(true);
   });
 
-  it("creates and downloads a manual desktop-sync archive from the published version summary", async () => {
-    const originalCreateObjectUrl = URL.createObjectURL;
-    const originalRevokeObjectUrl = URL.revokeObjectURL;
-    URL.createObjectURL = vi.fn(() => "blob:sync-download");
-    URL.revokeObjectURL = vi.fn();
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  it("does not show the removed live profile metadata summary or desktop sync action", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock();
+    render(<App />);
 
-    try {
-      const user = userEvent.setup();
-      installSettingsFetchMock();
-      render(<App />);
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
 
-      await screen.findByText("Trusted profiles loaded.");
-      await user.click(screen.getByRole("button", { name: /profile settings/i }));
-      expect(await screen.findByText("Live Profile Summary")).toBeInTheDocument();
-
-      await user.click(screen.getByRole("button", { name: /create desktop sync archive/i }));
-
-      await waitFor(() => {
-        expect(globalThis.fetch).toHaveBeenCalledWith("/api/profile-sync-exports/sync-export-1/download", undefined);
-      });
-      expect(await screen.findByText("default__v1.zip")).toBeInTheDocument();
-
-      const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
-      expect(
-        fetchCalls.some(
-          ([url, init]) => url === "/api/profile-versions/trusted-profile-version-1/desktop-sync-export" && init?.method === "POST",
-        ),
-      ).toBe(true);
-      expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
-      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:sync-download");
-    } finally {
-      URL.createObjectURL = originalCreateObjectUrl;
-      URL.revokeObjectURL = originalRevokeObjectUrl;
-    }
+    expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
+    expect(screen.queryByText("Live Profile Summary")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /create desktop sync archive/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("default__v1.zip")).not.toBeInTheDocument();
   });
 
   it("creates a second profile and saves its settings through the simplified current-profile flow", async () => {
@@ -896,7 +873,7 @@ describe("Profile settings workspace", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await user.click(screen.getByRole("button", { name: /profile settings/i }));
-    expect(await screen.findByText("Live Profile Summary")).toBeInTheDocument();
+    expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
 
     await user.type(screen.getByLabelText(/new profile key/i), "field-team");
     await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");

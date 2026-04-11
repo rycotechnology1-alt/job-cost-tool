@@ -523,10 +523,11 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: /report-b\.pdf/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /report-b\.pdf/i }));
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
 
     expect(await screen.findByRole("heading", { name: "report-b.pdf" })).toBeInTheDocument();
     expect(screen.getByText("No current blockers.")).toBeInTheDocument();
+    expect(screen.queryByText(/profile key/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /export and download workbook/i })).toBeVisible();
     expect(screen.getByRole("button", { name: /export and download workbook/i })).toBeEnabled();
     expect(screen.getByText(/select a row to inspect its source context and apply edits/i)).toBeInTheDocument();
@@ -567,7 +568,7 @@ describe("App", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await stageReports(user, ["report.pdf"]);
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Material");
@@ -597,7 +598,7 @@ describe("App", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await stageReports(user, ["report.pdf"]);
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Material");
@@ -616,7 +617,7 @@ describe("App", () => {
     await user.click(exportButton);
     expect(vi.mocked(globalThis.fetch).mock.calls).toHaveLength(fetchCallsBeforeRerun);
 
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
     await screen.findByText("No current blockers.");
     expect(screen.queryByText(/review context is stale for export/i)).not.toBeInTheDocument();
     await expandFamily(user, "Show Material");
@@ -636,7 +637,7 @@ describe("App", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await stageReports(user, ["report.pdf"]);
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Labor");
@@ -667,7 +668,7 @@ describe("App", () => {
     await screen.findByText("Trusted profiles loaded.");
     await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "alternate");
     await stageReports(user, ["report.pdf"]);
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Labor");
@@ -685,7 +686,7 @@ describe("App", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await stageReports(user, ["report.pdf"]);
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Material");
@@ -717,7 +718,7 @@ describe("App", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await stageReports(user, ["report.pdf"]);
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Labor");
@@ -750,7 +751,7 @@ describe("App", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await stageReports(user, ["report.pdf"]);
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Equipment");
@@ -777,10 +778,10 @@ describe("App", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await stageReports(user, ["report.pdf"]);
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
     await screen.findByRole("heading", { name: "report.pdf" });
 
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
 
     expect(
       await screen.findByText(/cached upload for report\.pdf expired from temporary storage/i),
@@ -801,7 +802,7 @@ describe("App", () => {
 
     await screen.findByText("Trusted profiles loaded.");
     await stageReports(user, ["report.pdf"]);
-    await user.click(screen.getByRole("button", { name: /open review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
     await screen.findByRole("heading", { name: "report.pdf" });
 
     await expandFamily(user, "Show Material");
