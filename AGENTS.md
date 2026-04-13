@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Use .\.venv\Scripts\python.exe for all Python commands, tests, and dependency checks in this repo.
+
 ## Project Context
 This repository is now a web-first job cost recap product built around a shared Python engine and service layer.
 

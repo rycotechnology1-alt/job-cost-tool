@@ -13,12 +13,16 @@ from api.schemas.profile_authoring import (
     DraftEditorStateResponse,
     EquipmentMappingRow,
     EquipmentRateRow,
+    ExportSettingsResponse,
     LaborMappingRow,
+    LaborMinimumHoursRuleResponse,
     LaborRateRow,
     PhaseOptionRow,
     ProfileSyncExportResponse,
     ProfileVersionSummaryResponse,
     PublishedProfileDetailResponse,
+    TemplateMetadataResponse,
+    TemplateRowDefinitionResponse,
 )
 from api.schemas.runs import ProcessingRunDetailResponse, ProcessingRunResponse
 from api.schemas.review_sessions import ReviewSessionResponse
@@ -166,6 +170,11 @@ def to_published_profile_detail_response(detail: PublishedProfileDetail) -> Publ
             template_file_hash=detail.template_file_hash,
             template_filename=detail.template_filename,
         ),
+        template_metadata=_to_template_metadata_response(detail.template_metadata),
+        labor_active_slot_count=detail.labor_active_slot_count,
+        labor_inactive_slot_count=detail.labor_inactive_slot_count,
+        equipment_active_slot_count=detail.equipment_active_slot_count,
+        equipment_inactive_slot_count=detail.equipment_inactive_slot_count,
         open_draft_id=detail.open_draft_id,
         deferred_domains=_to_deferred_domains_response(detail.deferred_domains),
     )
@@ -190,12 +199,18 @@ def to_draft_editor_state_response(state: DraftEditorState) -> DraftEditorStateR
         ),
         base_trusted_profile_version_id=state.base_trusted_profile_version_id,
         draft_content_hash=state.draft_content_hash,
+        template_metadata=_to_template_metadata_response(state.template_metadata),
+        labor_active_slot_count=state.labor_active_slot_count,
+        labor_inactive_slot_count=state.labor_inactive_slot_count,
+        equipment_active_slot_count=state.equipment_active_slot_count,
+        equipment_inactive_slot_count=state.equipment_inactive_slot_count,
         default_omit_rules=[DefaultOmitRuleRow(**row) for row in state.default_omit_rules],
         default_omit_phase_options=[PhaseOptionRow(**row) for row in state.default_omit_phase_options],
         labor_mappings=[LaborMappingRow(**row) for row in state.labor_mappings],
         equipment_mappings=[EquipmentMappingRow(**row) for row in state.equipment_mappings],
         labor_slots=[ClassificationSlotRow(**row) for row in state.labor_slots],
         equipment_slots=[ClassificationSlotRow(**row) for row in state.equipment_slots],
+        export_settings=_to_export_settings_response(state.export_settings),
         labor_rates=[LaborRateRow(**row) for row in state.labor_rates],
         equipment_rates=[EquipmentRateRow(**row) for row in state.equipment_rates],
         deferred_domains=_to_deferred_domains_response(state.deferred_domains),
@@ -226,4 +241,50 @@ def _to_deferred_domains_response(payload: dict) -> DeferredDomainsResponse:
         phase_mapping=dict(payload.get("phase_mapping", {})),
         input_model=dict(payload.get("input_model", {})),
         recap_template_map=dict(payload.get("recap_template_map", {})),
+    )
+
+
+def _to_template_metadata_response(payload: dict) -> TemplateMetadataResponse:
+    """Build the read-only template metadata payload."""
+    labor_rows = payload.get("labor_rows", []) if isinstance(payload.get("labor_rows"), list) else []
+    equipment_rows = payload.get("equipment_rows", []) if isinstance(payload.get("equipment_rows"), list) else []
+    return TemplateMetadataResponse(
+        template_id=str(payload.get("template_id") or ""),
+        display_label=str(payload.get("display_label") or ""),
+        template_filename=str(payload.get("template_filename") or "") or None,
+        template_artifact_ref=str(payload.get("template_artifact_ref") or "") or None,
+        template_file_hash=str(payload.get("template_file_hash") or "") or None,
+        labor_active_slot_capacity=int(payload.get("labor_active_slot_capacity") or 0),
+        equipment_active_slot_capacity=int(payload.get("equipment_active_slot_capacity") or 0),
+        labor_rows=[
+            TemplateRowDefinitionResponse(
+                row_id=str(row.get("row_id") or ""),
+                template_label=str(row.get("template_label") or ""),
+                mapping=dict(row.get("mapping", {})) if isinstance(row.get("mapping"), dict) else {},
+            )
+            for row in labor_rows
+            if isinstance(row, dict)
+        ],
+        equipment_rows=[
+            TemplateRowDefinitionResponse(
+                row_id=str(row.get("row_id") or ""),
+                template_label=str(row.get("template_label") or ""),
+                mapping=dict(row.get("mapping", {})) if isinstance(row.get("mapping"), dict) else {},
+            )
+            for row in equipment_rows
+            if isinstance(row, dict)
+        ],
+        export_behaviors=dict(payload.get("export_behaviors", {})) if isinstance(payload.get("export_behaviors"), dict) else {},
+    )
+
+
+def _to_export_settings_response(payload: dict) -> ExportSettingsResponse:
+    """Build the export-settings payload."""
+    labor_minimum_hours = payload.get("labor_minimum_hours", {}) if isinstance(payload.get("labor_minimum_hours"), dict) else {}
+    return ExportSettingsResponse(
+        labor_minimum_hours=LaborMinimumHoursRuleResponse(
+            enabled=bool(labor_minimum_hours.get("enabled")),
+            threshold_hours=str(labor_minimum_hours.get("threshold_hours") or ""),
+            minimum_hours=str(labor_minimum_hours.get("minimum_hours") or ""),
+        )
     )

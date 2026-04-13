@@ -468,6 +468,7 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(slots["classifications"], ["Legacy A", "Legacy B"])
         self.assertEqual(slots["slots"][0]["slot_id"], "labor_1")
         self.assertEqual(slots["slots"][1]["slot_id"], "labor_2")
+        self.assertEqual(slots["slots"][2], {"slot_id": "labor_3", "label": "Legacy C", "active": False})
 
     def test_labor_classification_validation_rejects_referenced_mapping_or_rate(self) -> None:
         with self.assertRaisesRegex(ValueError, "still referenced by labor mapping"):

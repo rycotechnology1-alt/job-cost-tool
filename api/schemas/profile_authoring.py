@@ -20,6 +20,29 @@ class ProfileVersionSummaryResponse(ApiModel):
     template_filename: str | None = None
 
 
+class TemplateRowDefinitionResponse(ApiModel):
+    """One ordered fixed export row definition within a template."""
+
+    row_id: str
+    template_label: str = ""
+    mapping: dict = Field(default_factory=dict)
+
+
+class TemplateMetadataResponse(ApiModel):
+    """Read-only template metadata derived from the current profile template."""
+
+    template_id: str
+    display_label: str
+    template_filename: str | None = None
+    template_artifact_ref: str | None = None
+    template_file_hash: str | None = None
+    labor_active_slot_capacity: int = 0
+    equipment_active_slot_capacity: int = 0
+    labor_rows: list[TemplateRowDefinitionResponse] = Field(default_factory=list)
+    equipment_rows: list[TemplateRowDefinitionResponse] = Field(default_factory=list)
+    export_behaviors: dict = Field(default_factory=dict)
+
+
 class DeferredDomainsResponse(ApiModel):
     """Read-only deferred profile domains exposed for inspection only."""
 
@@ -89,6 +112,20 @@ class EquipmentRateRow(ApiModel):
     rate: str = ""
 
 
+class LaborMinimumHoursRuleResponse(ApiModel):
+    """Editable export-only minimum-hours override for labor rows."""
+
+    enabled: bool = False
+    threshold_hours: str = ""
+    minimum_hours: str = ""
+
+
+class ExportSettingsResponse(ApiModel):
+    """Editable export-only settings for one trusted profile."""
+
+    labor_minimum_hours: LaborMinimumHoursRuleResponse = Field(default_factory=LaborMinimumHoursRuleResponse)
+
+
 class PublishedProfileDetailResponse(ApiModel):
     """Read-only published profile detail for authoring entry."""
 
@@ -98,6 +135,11 @@ class PublishedProfileDetailResponse(ApiModel):
     description: str
     version_label: str | None = None
     current_published_version: ProfileVersionSummaryResponse
+    template_metadata: TemplateMetadataResponse
+    labor_active_slot_count: int = 0
+    labor_inactive_slot_count: int = 0
+    equipment_active_slot_count: int = 0
+    equipment_inactive_slot_count: int = 0
     open_draft_id: str | None = None
     deferred_domains: DeferredDomainsResponse
 
@@ -138,12 +180,18 @@ class DraftEditorStateResponse(ApiModel):
     current_published_version: ProfileVersionSummaryResponse
     base_trusted_profile_version_id: str | None = None
     draft_content_hash: str
+    template_metadata: TemplateMetadataResponse
+    labor_active_slot_count: int = 0
+    labor_inactive_slot_count: int = 0
+    equipment_active_slot_count: int = 0
+    equipment_inactive_slot_count: int = 0
     default_omit_rules: list[DefaultOmitRuleRow]
     default_omit_phase_options: list[PhaseOptionRow]
     labor_mappings: list[LaborMappingRow]
     equipment_mappings: list[EquipmentMappingRow]
     labor_slots: list[ClassificationSlotRow]
     equipment_slots: list[ClassificationSlotRow]
+    export_settings: ExportSettingsResponse
     labor_rates: list[LaborRateRow]
     equipment_rates: list[EquipmentRateRow]
     deferred_domains: DeferredDomainsResponse
@@ -180,3 +228,9 @@ class RatesPatchRequest(ApiModel):
 
     labor_rates: list[LaborRateRow] = Field(default_factory=list)
     equipment_rates: list[EquipmentRateRow] = Field(default_factory=list)
+
+
+class ExportSettingsPatchRequest(ApiModel):
+    """Request body for replacing draft export-only settings."""
+
+    export_settings: ExportSettingsResponse = Field(default_factory=ExportSettingsResponse)

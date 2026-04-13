@@ -5,6 +5,7 @@ import type {
   DraftEditorStateResponse,
   EquipmentMappingRow,
   EquipmentRateRow,
+  ExportSettingsResponse,
   ExportArtifactResponse,
   LaborMappingRow,
   LaborRateRow,
@@ -218,6 +219,16 @@ export async function updateDraftRates(
   return apiJson<DraftEditorStateResponse>(
     `/api/profile-drafts/${trustedProfileDraftId}/rates`,
     buildJsonRequest({ labor_rates: laborRates, equipment_rates: equipmentRates }, "PATCH"),
+  );
+}
+
+export async function updateDraftExportSettings(
+  trustedProfileDraftId: string,
+  exportSettings: ExportSettingsResponse,
+): Promise<DraftEditorStateResponse> {
+  return apiJson<DraftEditorStateResponse>(
+    `/api/profile-drafts/${trustedProfileDraftId}/export-settings`,
+    buildJsonRequest({ export_settings: exportSettings }, "PATCH"),
   );
 }
 

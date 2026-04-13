@@ -1,4 +1,4 @@
-"""Helpers for fixed-capacity profile classification slots."""
+"""Helpers for slot-backed profile classifications with template-bound active capacity."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def normalize_slot_config(
     return {
         "slots": slots,
         "classifications": active_labels,
-        "capacity": len(slots),
+        "capacity": normalized_capacity,
     }
 
 
@@ -53,7 +53,7 @@ def build_slot_config_from_rows(slot_rows: list[SlotDict]) -> dict[str, Any]:
     for index, row in enumerate(slot_rows):
         slot_id = str(row.get("slot_id") or f"slot_{index + 1}").strip() or f"slot_{index + 1}"
         active = bool(row.get("active"))
-        label = str(row.get("label", "")).strip() if active else ""
+        label = str(row.get("label", "")).strip()
         slots.append(
             {
                 "slot_id": slot_id,
@@ -99,9 +99,9 @@ def build_slot_lookup(active_slots: list[SlotDict]) -> dict[str, SlotDict]:
 
 
 def _normalize_existing_slots(raw_slots: list[Any], *, slot_prefix: str, capacity: int) -> list[SlotDict]:
-    """Normalize a slot array to the expected fixed capacity."""
+    """Normalize a slot array while preserving inactive stored classifications."""
     slots: list[SlotDict] = []
-    for index in range(max(capacity, 0)):
+    for index in range(max(capacity, len(raw_slots), 0)):
         raw_slot = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], dict) else {}
         label = str(raw_slot.get("label", "")).strip()
         active = bool(raw_slot.get("active")) and bool(label)
@@ -109,7 +109,7 @@ def _normalize_existing_slots(raw_slots: list[Any], *, slot_prefix: str, capacit
         slots.append(
             {
                 "slot_id": slot_id,
-                "label": label if active else "",
+                "label": label,
                 "active": active,
             }
         )
@@ -123,25 +123,32 @@ def _migrate_labels_to_slots(
     capacity: int,
     template_labels: list[str],
 ) -> list[SlotDict]:
-    """Migrate the old freeform list format into fixed-capacity slots."""
-    active_labels = _resolve_migrated_labels(labels, capacity=capacity, template_labels=template_labels)
+    """Migrate the old freeform list format into slot rows with inactive overflow preserved."""
+    active_labels = _resolve_migrated_active_labels(labels, capacity=capacity, template_labels=template_labels)
+    inactive_labels = _resolve_inactive_overflow_labels(labels, active_labels)
     slots: list[SlotDict] = []
-    for index in range(max(capacity, 0)):
-        label = active_labels[index] if index < len(active_labels) else ""
+    for index in range(max(capacity, len(labels), 0)):
+        if index < len(active_labels):
+            label = active_labels[index]
+            active = bool(label)
+        else:
+            inactive_index = index - len(active_labels)
+            label = inactive_labels[inactive_index] if inactive_index < len(inactive_labels) else ""
+            active = False
         slots.append(
             {
                 "slot_id": f"{slot_prefix}_{index + 1}",
                 "label": label,
-                "active": bool(label),
+                "active": active,
             }
         )
     return slots
 
 
-def _resolve_migrated_labels(labels: list[str], *, capacity: int, template_labels: list[str]) -> list[str]:
+def _resolve_migrated_active_labels(labels: list[str], *, capacity: int, template_labels: list[str]) -> list[str]:
     """Resolve the active labels to retain during old-config migration."""
     if capacity <= 0:
-        return []
+        return labels
     if len(labels) <= capacity:
         return labels
 
@@ -151,3 +158,12 @@ def _resolve_migrated_labels(labels: list[str], *, capacity: int, template_label
             return matched_labels
 
     return labels[:capacity]
+
+
+def _resolve_inactive_overflow_labels(labels: list[str], active_labels: list[str]) -> list[str]:
+    """Return legacy labels that should remain stored but inactive after migration."""
+    remaining_labels = list(labels)
+    for active_label in active_labels:
+        if active_label in remaining_labels:
+            remaining_labels.remove(active_label)
+    return remaining_labels

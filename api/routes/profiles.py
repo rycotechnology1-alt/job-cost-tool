@@ -13,6 +13,7 @@ from api.schemas.profile_authoring import (
     DefaultOmitPatchRequest,
     DraftEditorStateResponse,
     EquipmentMappingsPatchRequest,
+    ExportSettingsPatchRequest,
     LaborMappingsPatchRequest,
     ProfileSyncExportResponse,
     PublishedProfileDetailResponse,
@@ -215,6 +216,23 @@ def patch_rates(
             trusted_profile_draft_id,
             labor_rows=[row.model_dump() for row in request.labor_rates],
             equipment_rows=[row.model_dump() for row in request.equipment_rates],
+        )
+        return to_draft_editor_state_response(state)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_drafts_router.patch("/{trusted_profile_draft_id}/export-settings", response_model=DraftEditorStateResponse)
+def patch_export_settings(
+    trusted_profile_draft_id: str,
+    request: ExportSettingsPatchRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> DraftEditorStateResponse:
+    """Replace draft export-only settings."""
+    try:
+        state = runtime.profile_authoring_service.update_export_settings(
+            trusted_profile_draft_id,
+            request.export_settings.model_dump(),
         )
         return to_draft_editor_state_response(state)
     except Exception as exc:  # pragma: no cover - exercised via API tests

@@ -23,6 +23,7 @@ import {
   updateDraftClassifications,
   updateDraftDefaultOmit,
   updateDraftEquipmentMappings,
+  updateDraftExportSettings,
   updateDraftLaborMappings,
   updateDraftRates,
   uploadSourceDocument,
@@ -34,6 +35,7 @@ import type {
   DraftEditorStateResponse,
   EquipmentMappingRow,
   EquipmentRateRow,
+  ExportSettingsResponse,
   ExportArtifactResponse,
   LaborMappingRow,
   LaborRateRow,
@@ -60,6 +62,7 @@ type DraftSyncReason =
   | "laborMappings"
   | "equipmentMappings"
   | "classifications"
+  | "exportSettings"
   | "rates";
 
 interface DraftSyncToken {
@@ -1021,6 +1024,18 @@ export default function App() {
     });
   }
 
+  async function handleSaveExportSettings(exportSettings: ExportSettingsResponse): Promise<boolean> {
+    return runAction("Saving export settings...", async () => {
+      if (!draftState) {
+        throw new Error("Edit the current profile before saving export settings.");
+      }
+      const nextDraft = await updateDraftExportSettings(draftState.trusted_profile_draft_id, exportSettings);
+      setDraftState(nextDraft);
+      advanceDraftSync("exportSettings");
+      setSettingsStatusMessage("Saved export settings into the current unpublished profile changes.");
+    });
+  }
+
   async function handleDiscardProfileDraft(trustedProfileDraftId: string): Promise<boolean> {
     return runAction("Discarding profile changes...", async () => {
       await discardProfileDraft(trustedProfileDraftId);
@@ -1418,6 +1433,7 @@ export default function App() {
           onSaveEquipmentMappings={handleSaveEquipmentMappings}
           onSaveClassifications={handleSaveClassifications}
           onSaveRates={handleSaveRates}
+          onSaveExportSettings={handleSaveExportSettings}
           onPublishDraft={handlePublishDraft}
           onDiscardDraft={handleDiscardProfileDraft}
           onCreateTrustedProfile={handleCreateTrustedProfile}

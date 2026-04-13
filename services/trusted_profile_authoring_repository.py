@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, Callable, Iterator
 
 from core.config import ConfigLoader, ProfileManager
+from core.config.template_metadata import build_template_metadata
 from core.models.lineage import (
     Organization,
     TemplateArtifact,
@@ -57,10 +58,12 @@ class TrustedProfileAuthoringRepository:
         "vendor_normalization": "vendor_normalization.json",
         "input_model": "input_model.json",
         "review_rules": "review_rules.json",
+        "export_settings": "export_settings.json",
         "rates": "rates.json",
         "labor_slots": "target_labor_classifications.json",
         "equipment_slots": "target_equipment_classifications.json",
         "recap_template_map": "recap_template_map.json",
+        "template": "template_metadata.json",
     }
 
     def __init__(
@@ -715,6 +718,13 @@ class TrustedProfileAuthoringRepository:
         template_file_hash: str | None,
     ) -> dict[str, object]:
         """Build the persisted trusted-profile bundle payload."""
+        template_payload = build_template_metadata(
+            loader.get_template_metadata(),
+            recap_template_map=loader.get_recap_template_map(),
+            template_filename=str(profile_metadata.get("template_filename") or "") or None,
+            template_artifact_ref=template_artifact_ref,
+            template_file_hash=template_file_hash,
+        )
         return {
             "behavioral_bundle": {
                 "phase_mapping": loader.get_phase_mapping(),
@@ -723,15 +733,12 @@ class TrustedProfileAuthoringRepository:
                 "vendor_normalization": loader.get_vendor_normalization(),
                 "input_model": loader.get_input_model(),
                 "review_rules": loader.get_review_rules(),
+                "export_settings": loader.get_export_settings(),
                 "rates": loader.get_rates(),
                 "labor_slots": loader.get_labor_slots(),
                 "equipment_slots": loader.get_equipment_slots(),
                 "recap_template_map": loader.get_recap_template_map(),
-                "template": {
-                    "template_artifact_ref": template_artifact_ref,
-                    "template_file_hash": template_file_hash,
-                    "template_filename": str(profile_metadata.get("template_filename") or "") or None,
-                },
+                "template": template_payload,
             },
             "traceability": {
                 "trusted_profile": {

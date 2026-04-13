@@ -89,6 +89,11 @@ class TrustedProfileAuthoringRepositoryTests(unittest.TestCase):
             default_version.bundle_payload["behavioral_bundle"]["template"]["template_artifact_ref"],
             "recap_template.xlsx",
         )
+        self.assertEqual(
+            default_version.bundle_payload["behavioral_bundle"]["template"]["template_id"],
+            "recap-template",
+        )
+        self.assertIn("export_settings", default_version.bundle_payload["behavioral_bundle"])
 
     def test_bootstrap_is_idempotent_and_does_not_duplicate_equivalent_versions(self) -> None:
         first_versions = self.repository.bootstrap_filesystem_profiles()
@@ -328,9 +333,13 @@ class TrustedProfileAuthoringRepositoryTests(unittest.TestCase):
         with self.repository.materialize_published_version_bundle(current_version) as materialized_dir:
             labor_mapping = json.loads((materialized_dir / "labor_mapping.json").read_text(encoding="utf-8"))
             profile_metadata = json.loads((materialized_dir / "profile.json").read_text(encoding="utf-8"))
+            template_metadata = json.loads((materialized_dir / "template_metadata.json").read_text(encoding="utf-8"))
+            export_settings = json.loads((materialized_dir / "export_settings.json").read_text(encoding="utf-8"))
 
             self.assertEqual(labor_mapping["raw_mappings"]["103/J"], "Default Journeyman")
             self.assertEqual(profile_metadata["template_filename"], "recap_template.xlsx")
+            self.assertEqual(template_metadata["template_id"], "recap-template")
+            self.assertIn("labor_minimum_hours", export_settings)
             self.assertTrue((materialized_dir / "recap_template.xlsx").is_file())
 
     def test_observation_upsert_is_idempotent_and_updates_last_seen_state(self) -> None:

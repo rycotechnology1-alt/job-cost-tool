@@ -80,9 +80,27 @@ def _get_active_equipment_slot_lookup() -> dict[str, dict[str, Any]]:
 
 
 @lru_cache(maxsize=1)
+def _get_labor_export_row_slots() -> dict[str, dict[str, Any]]:
+    """Return compacted labor export row mappings keyed by active slot id."""
+    return ConfigLoader().get_labor_row_slots()
+
+
+@lru_cache(maxsize=1)
+def _get_equipment_export_row_slots() -> dict[str, dict[str, Any]]:
+    """Return compacted equipment export row mappings keyed by active slot id."""
+    return ConfigLoader().get_equipment_row_slots()
+
+
+@lru_cache(maxsize=1)
 def _get_rates() -> dict[str, Any]:
     """Return the configured rate bundle for the active profile."""
     return ConfigLoader().get_rates()
+
+
+@lru_cache(maxsize=1)
+def _get_export_settings() -> dict[str, Any]:
+    """Return export-only settings for the active profile."""
+    return ConfigLoader().get_export_settings()
 
 
 @lru_cache(maxsize=1)
@@ -246,6 +264,7 @@ def _build_labor_values(records: list[Record]) -> dict[str, dict[str, float]]:
             labor_totals[slot_id] = {"ST": Decimal("0"), "OT": Decimal("0"), "DT": Decimal("0")}
         labor_totals[slot_id][hour_type] += Decimal(str(record.hours))
 
+    labor_totals = _apply_labor_minimum_hours_rule(labor_totals)
     return {
         slot_id: {hour_type: _to_number(value) for hour_type, value in totals.items()}
         for slot_id, totals in labor_totals.items()
@@ -258,7 +277,7 @@ def _build_labor_rate_values() -> dict[str, dict[str, float]]:
     raw_labor_rates = rates_bundle.get("labor_rates", {}) if isinstance(rates_bundle.get("labor_rates"), dict) else {}
 
     payload: dict[str, dict[str, float]] = {}
-    for slot in _get_active_labor_slots():
+    for slot in _get_labor_export_row_slots().values():
         label = str(slot.get("label") or "").strip()
         slot_id = str(slot.get("slot_id") or "").strip()
         if not label or not slot_id:
@@ -316,7 +335,7 @@ def _build_equipment_rate_values() -> dict[str, float]:
     )
 
     payload: dict[str, float] = {}
-    for slot in _get_active_equipment_slots():
+    for slot in _get_equipment_export_row_slots().values():
         label = str(slot.get("label") or "").strip()
         slot_id = str(slot.get("slot_id") or "").strip()
         if not label or not slot_id:
@@ -475,31 +494,68 @@ def _build_project_management_total(records: list[Record]) -> int | float | None
 
 
 def _resolve_labor_slot_id(record: Record) -> Optional[str]:
-    """Resolve the active labor slot id for a record."""
+    """Resolve the exportable labor slot id for a record."""
     slot_id = str(record.recap_labor_slot_id or "").strip()
-    if slot_id:
+    if slot_id and slot_id in _get_labor_export_row_slots():
         return slot_id
     label = str(record.recap_labor_classification or "").strip()
     if not label:
         return None
-    slot = _get_active_labor_slot_lookup().get(label.casefold())
+    slot = _build_export_row_lookup(_get_labor_export_row_slots()).get(label.casefold())
     if not slot:
         return None
     return str(slot.get("slot_id") or "").strip() or None
 
 
 def _resolve_equipment_slot_id(record: Record) -> Optional[str]:
-    """Resolve the active equipment slot id for a record."""
+    """Resolve the exportable equipment slot id for a record."""
     slot_id = str(record.recap_equipment_slot_id or "").strip()
-    if slot_id:
+    if slot_id and slot_id in _get_equipment_export_row_slots():
         return slot_id
     label = str(record.equipment_category or "").strip()
     if not label:
         return None
-    slot = _get_active_equipment_slot_lookup().get(label.casefold())
+    slot = _build_export_row_lookup(_get_equipment_export_row_slots()).get(label.casefold())
     if not slot:
         return None
     return str(slot.get("slot_id") or "").strip() or None
+
+
+def _apply_labor_minimum_hours_rule(
+    labor_totals: OrderedDict[str, dict[str, Decimal]],
+) -> OrderedDict[str, dict[str, Decimal]]:
+    """Apply export-only minimum-hours shaping to labor hour buckets."""
+    export_settings = _get_export_settings()
+    rule = export_settings.get("labor_minimum_hours", {}) if isinstance(export_settings.get("labor_minimum_hours"), dict) else {}
+    if not bool(rule.get("enabled")):
+        return labor_totals
+
+    try:
+        threshold = Decimal(str(rule.get("threshold_hours")))
+        minimum = Decimal(str(rule.get("minimum_hours")))
+    except Exception:
+        return labor_totals
+    if threshold <= 0 or minimum <= 0:
+        return labor_totals
+
+    for totals in labor_totals.values():
+        for hour_type, value in list(totals.items()):
+            if value > 0 and value < threshold:
+                totals[hour_type] = minimum
+    return labor_totals
+
+
+def _build_export_row_lookup(row_slots: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Build a case-insensitive label lookup from active export row mappings."""
+    lookup: dict[str, dict[str, Any]] = {}
+    for slot in row_slots.values():
+        if not isinstance(slot, dict):
+            continue
+        label = str(slot.get("label") or "").strip()
+        if not label:
+            continue
+        lookup[label.casefold()] = slot
+    return lookup
 
 
 def _infer_list_section(record: Record) -> Optional[str]:

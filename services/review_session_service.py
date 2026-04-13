@@ -371,6 +371,8 @@ class ReviewSessionService:
             "target_equipment_classifications.json": behavioral_bundle.get("equipment_slots", {}),
             "rates.json": behavioral_bundle.get("rates", {}),
             "review_rules.json": behavioral_bundle.get("review_rules", {}),
+            "export_settings.json": behavioral_bundle.get("export_settings", {}),
+            "template_metadata.json": behavioral_bundle.get("template", {}),
             "profile.json": {
                 "profile_name": str(self._nested_lookup(traceability, "trusted_profile", "profile_name") or "snapshot"),
                 "display_name": str(self._nested_lookup(traceability, "trusted_profile", "display_name") or "Snapshot"),

@@ -184,17 +184,32 @@ def build_classification_bundle_edit_result(
     equipment_mapping_config: dict[str, Any],
     rates_config: dict[str, Any],
     recap_template_map: dict[str, Any],
+    template_metadata: dict[str, Any] | None = None,
 ) -> ClassificationBundleEditResult:
     """Validate slot edits and return the updated dependent bundle payloads."""
+    labor_active_capacity = _resolve_active_slot_capacity(
+        template_metadata,
+        recap_template_map,
+        recap_key="labor_rows",
+        capacity_key="labor_active_slot_capacity",
+    )
+    equipment_active_capacity = _resolve_active_slot_capacity(
+        template_metadata,
+        recap_template_map,
+        recap_key="equipment_rows",
+        capacity_key="equipment_active_slot_capacity",
+    )
     validated_labor_slots = _validate_slot_rows(
         updated_labor_slots,
         existing_slots=existing_labor_slots,
         slot_label="Labor",
+        active_capacity=labor_active_capacity,
     )
     validated_equipment_slots = _validate_slot_rows(
         updated_equipment_slots,
         existing_slots=existing_equipment_slots,
         slot_label="Equipment",
+        active_capacity=equipment_active_capacity,
     )
 
     validated_labor = _active_labels_from_slots(validated_labor_slots)
@@ -821,26 +836,36 @@ def _validate_slot_rows(
     *,
     existing_slots: list[dict[str, Any]],
     slot_label: str,
+    active_capacity: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Validate edited slot rows for a fixed-capacity classification table."""
-    if len(slot_rows) != len(existing_slots):
+    """Validate edited slot rows while preserving existing slot order and ids."""
+    if len(slot_rows) < len(existing_slots):
         raise ValueError(
-            f"{slot_label} slot count does not match fixed template capacity ({len(existing_slots)} slots expected)."
+            f"{slot_label} slot count cannot drop below the existing saved rows ({len(existing_slots)} slots expected)."
         )
 
     validated_rows: list[dict[str, Any]] = []
     seen_active_labels: set[str] = set()
-    for index, (row, existing_slot) in enumerate(zip(slot_rows, existing_slots), start=1):
+    seen_slot_ids: set[str] = set()
+    active_count = 0
+    for index, row in enumerate(slot_rows, start=1):
+        existing_slot = existing_slots[index - 1] if index - 1 < len(existing_slots) else {}
         slot_id = str(row.get("slot_id") or existing_slot.get("slot_id") or "").strip()
         expected_slot_id = str(existing_slot.get("slot_id") or "").strip()
-        if not slot_id or slot_id != expected_slot_id:
+        if index - 1 < len(existing_slots) and (not slot_id or slot_id != expected_slot_id):
             raise ValueError(f"{slot_label} slot {index} has an invalid slot identifier.")
+        if index - 1 >= len(existing_slots) and not slot_id:
+            raise ValueError(f"{slot_label} slot {index} needs a stable slot identifier.")
+        if slot_id.casefold() in seen_slot_ids:
+            raise ValueError(f"Duplicate {slot_label.casefold()} slot identifier '{slot_id}' is not allowed.")
+        seen_slot_ids.add(slot_id.casefold())
 
         active = bool(row.get("active"))
         label = str(row.get("label", "")).strip()
         if active and not label:
             raise ValueError(f"{slot_label} slot {index} is active and requires a label.")
         if active:
+            active_count += 1
             label_key = label.casefold()
             if label_key in seen_active_labels:
                 raise ValueError(f"Duplicate active {slot_label.casefold()} classification '{label}' is not allowed.")
@@ -852,6 +877,11 @@ def _validate_slot_rows(
                 "label": label,
                 "active": active,
             }
+        )
+    if active_capacity is not None and active_count > active_capacity:
+        raise ValueError(
+            f"{slot_label} active classifications exceed template capacity ({active_capacity} active slot"
+            f"{'' if active_capacity == 1 else 's'} available)."
         )
     return validated_rows
 
@@ -1025,19 +1055,8 @@ def _rename_recap_template_map_targets(
     labor_rename_map: dict[str, str],
     equipment_rename_map: dict[str, str],
 ) -> dict[str, Any]:
-    """Rename recap template row keys so export continues to align with updated classifications."""
-    updated_map = dict(recap_template_map)
-    updated_map["labor_rows"] = _rename_mapping_keys(
-        recap_template_map.get("labor_rows", {}),
-        labor_rename_map,
-        "labor recap row",
-    )
-    updated_map["equipment_rows"] = _rename_mapping_keys(
-        recap_template_map.get("equipment_rows", {}),
-        equipment_rename_map,
-        "equipment recap row",
-    )
-    return updated_map
+    """Leave template row keys stable; export no longer relies on profile-owned label keys."""
+    return dict(recap_template_map)
 
 
 def _rename_mapping_keys(
@@ -1059,6 +1078,29 @@ def _rename_mapping_keys(
             raise ValueError(f"{label.capitalize()} collision detected while renaming '{updated_key}'.")
         updated_mapping[updated_key] = value
     return updated_mapping
+
+
+def _resolve_active_slot_capacity(
+    template_metadata: dict[str, Any] | None,
+    recap_template_map: dict[str, Any],
+    *,
+    recap_key: str,
+    capacity_key: str,
+) -> int | None:
+    """Resolve active slot capacity from template metadata with recap-map fallback."""
+    if isinstance(template_metadata, dict):
+        raw_capacity = template_metadata.get(capacity_key)
+        try:
+            resolved_capacity = int(raw_capacity)
+        except (TypeError, ValueError):
+            resolved_capacity = None
+        if resolved_capacity is not None and resolved_capacity >= 0:
+            return resolved_capacity
+
+    row_mapping = recap_template_map.get(recap_key, {}) if isinstance(recap_template_map, dict) else {}
+    if not isinstance(row_mapping, dict):
+        return None
+    return len(row_mapping)
 
 
 def _validate_labor_classification_references(

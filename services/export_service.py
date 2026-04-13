@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import List
 
 from core.config import ConfigLoader
-from core.export.excel_exporter import export_to_excel
 from core.export.recap_mapper import build_recap_payload
 from core.models.record import Record
 from services.validation_service import validate_records
@@ -68,6 +67,8 @@ def export_records_to_recap(
             raise ValueError(f"Export blocked until all blocking issues are resolved:\n{issue_list}")
 
         recap_payload = build_recap_payload(validated_records)
+        from core.export.excel_exporter import export_to_excel
+
         export_to_excel(template_path=template_path, output_path=output_path, recap_payload=recap_payload)
 
 

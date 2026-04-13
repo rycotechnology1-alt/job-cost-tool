@@ -132,6 +132,25 @@ export interface ProfileVersionSummaryResponse {
   template_filename: string | null;
 }
 
+export interface TemplateRowDefinitionResponse {
+  row_id: string;
+  template_label: string;
+  mapping: Record<string, unknown>;
+}
+
+export interface TemplateMetadataResponse {
+  template_id: string;
+  display_label: string;
+  template_filename: string | null;
+  template_artifact_ref: string | null;
+  template_file_hash: string | null;
+  labor_active_slot_capacity: number;
+  equipment_active_slot_capacity: number;
+  labor_rows: TemplateRowDefinitionResponse[];
+  equipment_rows: TemplateRowDefinitionResponse[];
+  export_behaviors: Record<string, unknown>;
+}
+
 export interface DeferredDomainsResponse {
   vendor_normalization: Record<string, unknown>;
   phase_mapping: Record<string, unknown>;
@@ -185,6 +204,16 @@ export interface EquipmentRateRow {
   rate: string;
 }
 
+export interface LaborMinimumHoursRuleResponse {
+  enabled: boolean;
+  threshold_hours: string;
+  minimum_hours: string;
+}
+
+export interface ExportSettingsResponse {
+  labor_minimum_hours: LaborMinimumHoursRuleResponse;
+}
+
 export interface PublishedProfileDetailResponse {
   trusted_profile_id: string;
   profile_name: string;
@@ -192,6 +221,11 @@ export interface PublishedProfileDetailResponse {
   description: string;
   version_label: string | null;
   current_published_version: ProfileVersionSummaryResponse;
+  template_metadata: TemplateMetadataResponse;
+  labor_active_slot_count: number;
+  labor_inactive_slot_count: number;
+  equipment_active_slot_count: number;
+  equipment_inactive_slot_count: number;
   open_draft_id: string | null;
   deferred_domains: DeferredDomainsResponse;
 }
@@ -226,12 +260,18 @@ export interface DraftEditorStateResponse {
   current_published_version: ProfileVersionSummaryResponse;
   base_trusted_profile_version_id: string | null;
   draft_content_hash: string;
+  template_metadata: TemplateMetadataResponse;
+  labor_active_slot_count: number;
+  labor_inactive_slot_count: number;
+  equipment_active_slot_count: number;
+  equipment_inactive_slot_count: number;
   default_omit_rules: DefaultOmitRuleRow[];
   default_omit_phase_options: PhaseOptionRow[];
   labor_mappings: LaborMappingRow[];
   equipment_mappings: EquipmentMappingRow[];
   labor_slots: ClassificationSlotRow[];
   equipment_slots: ClassificationSlotRow[];
+  export_settings: ExportSettingsResponse;
   labor_rates: LaborRateRow[];
   equipment_rates: EquipmentRateRow[];
   deferred_domains: DeferredDomainsResponse;

@@ -91,6 +91,10 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.assertEqual(detail.profile_name, "default")
         self.assertEqual(detail.current_published_version_number, 1)
         self.assertEqual(detail.template_artifact_ref, "recap_template.xlsx")
+        self.assertEqual(detail.template_metadata["template_id"], "recap-template")
+        self.assertEqual(detail.template_metadata["labor_active_slot_capacity"], 1)
+        self.assertEqual(detail.labor_active_slot_count, 1)
+        self.assertEqual(detail.labor_inactive_slot_count, 0)
         self.assertIn("phase_mapping", detail.deferred_domains)
         self.assertIsNone(detail.open_draft_id)
 
@@ -105,7 +109,28 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.assertEqual(first_state.default_omit_phase_options[0]["phase_code"], "20")
         self.assertEqual(first_state.labor_mappings[0]["target_classification"], "Default Journeyman")
         self.assertEqual(first_state.labor_slots[0]["slot_id"], "labor_1")
+        self.assertFalse(first_state.export_settings["labor_minimum_hours"]["enabled"])
+        self.assertEqual(first_state.template_metadata["labor_active_slot_capacity"], 1)
         self.assertEqual(first_state.validation_errors, [])
+
+    def test_update_export_settings_persists_export_only_minimum_hours_rule(self) -> None:
+        trusted_profile_id = "trusted-profile:org-default:default"
+        draft_state = self.service.create_or_open_draft(trusted_profile_id)
+
+        updated_state = self.service.update_export_settings(
+            draft_state.trusted_profile_draft_id,
+            {
+                "labor_minimum_hours": {
+                    "enabled": True,
+                    "threshold_hours": "2",
+                    "minimum_hours": "4",
+                }
+            },
+        )
+
+        self.assertTrue(updated_state.export_settings["labor_minimum_hours"]["enabled"])
+        self.assertEqual(updated_state.export_settings["labor_minimum_hours"]["threshold_hours"], "2")
+        self.assertEqual(updated_state.export_settings["labor_minimum_hours"]["minimum_hours"], "4")
 
     def test_create_trusted_profile_seeds_second_profile_and_keeps_default_profile_independent(self) -> None:
         default_profile_id = "trusted-profile:org-default:default"
@@ -241,7 +266,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.assertEqual(updated_state.labor_mappings[0]["target_classification"], "Updated Journeyman")
         self.assertEqual(updated_state.labor_rates[0]["classification"], "Updated Journeyman")
         self.assertIn(
-            "Updated Journeyman",
+            "Default Journeyman",
             updated_state.deferred_domains["recap_template_map"]["labor_rows"],
         )
 

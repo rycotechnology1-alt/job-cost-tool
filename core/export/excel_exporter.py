@@ -42,6 +42,7 @@ def export_to_excel(template_path: str, output_path: str, recap_payload: dict[st
     output = Path(output_path).expanduser().resolve()
     loader = ConfigLoader()
     mapping = loader.get_recap_template_map()
+    template_metadata = loader.get_template_metadata()
     labor_row_slots = loader.get_labor_row_slots()
     equipment_row_slots = loader.get_equipment_row_slots()
     worksheet_name = str(mapping.get("worksheet_name", "")).strip()
@@ -52,7 +53,7 @@ def export_to_excel(template_path: str, output_path: str, recap_payload: dict[st
     _validate_output_path(template, output)
     _validate_section_capacities(recap_payload, mapping)
 
-    _clear_fixed_inputs(worksheet, labor_row_slots, equipment_row_slots)
+    _clear_fixed_inputs(worksheet, template_metadata)
     _clear_list_section(worksheet, "materials", mapping["materials_section"])
     _clear_list_section(worksheet, "subcontractors", mapping["subcontractors_section"])
     _clear_list_section(worksheet, "permits & fees", mapping["permits_fees_section"])
@@ -183,37 +184,42 @@ def _validate_section_capacities(recap_payload: dict[str, Any], mapping: dict[st
 
 def _clear_fixed_inputs(
     worksheet: Worksheet,
-    labor_row_slots: dict[str, Any],
-    equipment_row_slots: dict[str, Any],
+    template_metadata: dict[str, Any],
 ) -> None:
     """Clear fixed writable input cells before writing a new export."""
-    for slot_info in labor_row_slots.values():
-        if not isinstance(slot_info, dict):
-            continue
-        row_mapping = slot_info.get("mapping", {})
-        if not isinstance(row_mapping, dict):
-            continue
-        label_cell = _get_fixed_row_label_cell(slot_info, "labor")
-        if label_cell:
-            worksheet[str(label_cell)].value = None
-        for key in ("st_hours", "ot_hours", "dt_hours", "st_rate", "ot_rate", "dt_rate"):
-            cell_ref = row_mapping.get(key)
-            if cell_ref:
-                worksheet[str(cell_ref)].value = None
+    labor_rows = template_metadata.get("labor_rows", []) if isinstance(template_metadata.get("labor_rows"), list) else []
+    equipment_rows = (
+        template_metadata.get("equipment_rows", [])
+        if isinstance(template_metadata.get("equipment_rows"), list)
+        else []
+    )
 
-    for slot_info in equipment_row_slots.values():
-        if not isinstance(slot_info, dict):
-            continue
-        row_mapping = slot_info.get("mapping", {})
-        if not isinstance(row_mapping, dict):
-            continue
-        label_cell = _get_fixed_row_label_cell(slot_info, "equipment")
-        if label_cell:
-            worksheet[str(label_cell)].value = None
-        for key in ("hours_qty", "rate"):
-            cell_ref = row_mapping.get(key)
-            if cell_ref:
-                worksheet[str(cell_ref)].value = None
+    for row_definition in labor_rows:
+        _clear_fixed_row_definition(worksheet, row_definition, "labor")
+
+    for row_definition in equipment_rows:
+        _clear_fixed_row_definition(worksheet, row_definition, "equipment")
+
+
+def _clear_fixed_row_definition(
+    worksheet: Worksheet,
+    row_definition: dict[str, Any],
+    family: str,
+) -> None:
+    """Clear one fixed row definition regardless of active slot assignment."""
+    if not isinstance(row_definition, dict):
+        return
+    row_mapping = row_definition.get("mapping", {})
+    if not isinstance(row_mapping, dict):
+        return
+    label_cell = _get_fixed_row_label_cell(row_definition, family)
+    if label_cell:
+        worksheet[str(label_cell)].value = None
+    keys = ("st_hours", "ot_hours", "dt_hours", "st_rate", "ot_rate", "dt_rate") if family == "labor" else ("hours_qty", "rate")
+    for key in keys:
+        cell_ref = row_mapping.get(key)
+        if cell_ref:
+            worksheet[str(cell_ref)].value = None
 
 
 def _clear_header_fields(worksheet: Worksheet, header_mapping: dict[str, Any]) -> None:

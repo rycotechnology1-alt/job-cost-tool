@@ -106,6 +106,10 @@ class ProfileBundleHelpersTests(unittest.TestCase):
                 "labor_rows": {"Old Labor": {"row": 10}},
                 "equipment_rows": {"Old Equipment": {"row": 20}},
             },
+            template_metadata={
+                "labor_active_slot_capacity": 1,
+                "equipment_active_slot_capacity": 1,
+            },
         )
 
         self.assertEqual(result.labor_rename_map, {"Old Labor": "New Labor"})
@@ -114,8 +118,29 @@ class ProfileBundleHelpersTests(unittest.TestCase):
         self.assertEqual(result.equipment_mapping_config["raw_mappings"], {"CRANE TRUCK": "New Equipment"})
         self.assertEqual(result.rates_config["labor_rates"], {"New Labor": {"standard_rate": 100.0}})
         self.assertEqual(result.rates_config["equipment_rates"], {"New Equipment": {"rate": 50.0}})
-        self.assertEqual(result.recap_template_map["labor_rows"], {"New Labor": {"row": 10}})
-        self.assertEqual(result.recap_template_map["equipment_rows"], {"New Equipment": {"row": 20}})
+        self.assertEqual(result.recap_template_map["labor_rows"], {"Old Labor": {"row": 10}})
+        self.assertEqual(result.recap_template_map["equipment_rows"], {"Old Equipment": {"row": 20}})
+
+    def test_build_classification_bundle_edit_result_rejects_active_rows_over_template_capacity(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Labor active classifications exceed template capacity"):
+            build_classification_bundle_edit_result(
+                existing_labor_slots=[{"slot_id": "labor_1", "label": "Slot A", "active": True}],
+                updated_labor_slots=[
+                    {"slot_id": "labor_1", "label": "Slot A", "active": True},
+                    {"slot_id": "labor_2", "label": "Overflow", "active": True},
+                ],
+                existing_equipment_slots=[],
+                updated_equipment_slots=[],
+                labor_mapping_rows=[],
+                equipment_mapping_rows=[],
+                labor_rate_rows=[],
+                equipment_rate_rows=[],
+                labor_mapping_config={"raw_mappings": {}, "saved_mappings": []},
+                equipment_mapping_config={"raw_mappings": {}, "saved_mappings": []},
+                rates_config={"labor_rates": {}, "equipment_rates": {}},
+                recap_template_map={"labor_rows": {"Slot 1": {"row": 10}}, "equipment_rows": {}},
+                template_metadata={"labor_active_slot_capacity": 1, "equipment_active_slot_capacity": 0},
+            )
 
     def test_build_rates_config_rejects_unknown_classification(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unknown labor rate classification"):

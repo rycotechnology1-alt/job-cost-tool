@@ -8,6 +8,7 @@ import type {
   DraftEditorStateResponse,
   EquipmentMappingRow,
   EquipmentRateRow,
+  ExportSettingsResponse,
   LaborMappingRow,
   LaborRateRow,
   PublishedProfileDetailResponse,
@@ -22,6 +23,7 @@ type DraftSyncReason =
   | "laborMappings"
   | "equipmentMappings"
   | "classifications"
+  | "exportSettings"
   | "rates";
 
 interface DraftSyncToken {
@@ -59,6 +61,7 @@ interface ProfileSettingsWorkspaceProps {
     equipmentSlots: ClassificationSlotRow[],
   ) => Promise<boolean> | boolean;
   onSaveRates: (laborRates: LaborRateRow[], equipmentRates: EquipmentRateRow[]) => Promise<boolean> | boolean;
+  onSaveExportSettings: (exportSettings: ExportSettingsResponse) => Promise<boolean> | boolean;
   onPublishDraft: (trustedProfileDraftId?: string) => Promise<boolean> | boolean;
   onDiscardDraft: (trustedProfileDraftId: string) => Promise<boolean> | boolean;
   onCreateTrustedProfile: (request: CreateTrustedProfileRequest) => Promise<void> | void;
@@ -84,6 +87,7 @@ interface RetainedDraftWorkspaceState {
   equipment_mappings: EquipmentMappingRow[];
   labor_slots: ClassificationSlotRow[];
   equipment_slots: ClassificationSlotRow[];
+  export_settings: ExportSettingsResponse;
   labor_rates: LaborRateRow[];
   equipment_rates: EquipmentRateRow[];
   dirty_sections: string[];
@@ -110,6 +114,7 @@ function cloneDraftWorkspaceState(
     equipment_mappings: cloneRows(state.equipment_mappings),
     labor_slots: cloneRows(state.labor_slots),
     equipment_slots: cloneRows(state.equipment_slots),
+    export_settings: { labor_minimum_hours: { ...state.export_settings.labor_minimum_hours } },
     labor_rates: cloneRows(state.labor_rates),
     equipment_rates: cloneRows(state.equipment_rates),
     dirty_sections: [...state.dirty_sections],
@@ -142,6 +147,16 @@ function emptyEquipmentMappingRow(): EquipmentMappingRow {
   };
 }
 
+function emptyExportSettings(): ExportSettingsResponse {
+  return {
+    labor_minimum_hours: {
+      enabled: false,
+      threshold_hours: "",
+      minimum_hours: "",
+    },
+  };
+}
+
 function findPhaseName(phaseCode: string, options: DefaultOmitRuleRow[]): string {
   const normalizedPhaseCode = phaseCode.trim();
   if (!normalizedPhaseCode) {
@@ -161,6 +176,10 @@ function hasObservedUnmappedRows(
 }
 
 function compareRows<T>(left: T[], right: T[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function compareValue<T>(left: T, right: T): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
@@ -259,9 +278,10 @@ function buildEquipmentMappingValidation(rows: EquipmentMappingRow[], validTarge
   return result;
 }
 
-function buildClassificationValidation(rows: ClassificationSlotRow[], label: string): ValidationResult {
+function buildClassificationValidation(rows: ClassificationSlotRow[], label: string, activeCapacity: number): ValidationResult {
   const result = createValidationResult();
   const seen = new Map<string, number>();
+  let activeCount = 0;
 
   rows.forEach((row, index) => {
     const normalizedLabel = normalizeKey(row.label);
@@ -272,6 +292,7 @@ function buildClassificationValidation(rows: ClassificationSlotRow[], label: str
     if (!row.active || !normalizedLabel) {
       return;
     }
+    activeCount += 1;
     const existingIndex = seen.get(normalizedLabel);
     if (existingIndex !== undefined) {
       appendRowError(result, existingIndex, `Active ${label} classification labels must be unique.`);
@@ -280,6 +301,11 @@ function buildClassificationValidation(rows: ClassificationSlotRow[], label: str
     }
     seen.set(normalizedLabel, index);
   });
+  if (activeCapacity > 0 && activeCount > activeCapacity) {
+    result.messages.push(
+      `Active ${label} classifications exceed template capacity (${activeCapacity} active slot${activeCapacity === 1 ? "" : "s"} available).`,
+    );
+  }
 
   return result;
 }
@@ -310,6 +336,45 @@ function buildRatesValidation(laborRates: LaborRateRow[], equipmentRates: Equipm
     }
   });
 
+  return result;
+}
+
+function buildExportSettingsValidation(exportSettings: ExportSettingsResponse): ValidationResult {
+  const result = createValidationResult();
+  const rule = exportSettings.labor_minimum_hours;
+  const thresholdValue = rule.threshold_hours.trim();
+  const minimumValue = rule.minimum_hours.trim();
+  const thresholdNumber = thresholdValue === "" ? Number.NaN : Number(thresholdValue);
+  const minimumNumber = minimumValue === "" ? Number.NaN : Number(minimumValue);
+
+  if (!rule.enabled && !thresholdValue && !minimumValue) {
+    return result;
+  }
+  if (rule.enabled && !thresholdValue) {
+    result.messages.push("Labor minimum-hours threshold is required when the rule is enabled.");
+  }
+  if (rule.enabled && !minimumValue) {
+    result.messages.push("Labor minimum-hours value is required when the rule is enabled.");
+  }
+  if (thresholdValue && Number.isNaN(thresholdNumber)) {
+    result.messages.push("Labor minimum-hours threshold must be numeric.");
+  }
+  if (minimumValue && Number.isNaN(minimumNumber)) {
+    result.messages.push("Labor minimum-hours value must be numeric.");
+  }
+  if (!Number.isNaN(thresholdNumber) && thresholdNumber <= 0) {
+    result.messages.push("Labor minimum-hours threshold must be greater than 0.");
+  }
+  if (!Number.isNaN(minimumNumber) && minimumNumber <= 0) {
+    result.messages.push("Labor minimum-hours value must be greater than 0.");
+  }
+  if (
+    !Number.isNaN(thresholdNumber) &&
+    !Number.isNaN(minimumNumber) &&
+    minimumNumber < thresholdNumber
+  ) {
+    result.messages.push("Labor minimum-hours value must be greater than or equal to the threshold.");
+  }
   return result;
 }
 
@@ -414,6 +479,18 @@ function buildTargetOptions(currentValue: string, validTargets: string[]) {
     return validTargets;
   }
   return [trimmedCurrentValue, ...validTargets];
+}
+
+function buildNextSlotId(rows: ClassificationSlotRow[], prefix: string): string {
+  const nextSequence =
+    rows.reduce((maxValue, row) => {
+      const match = row.slot_id.match(new RegExp(`^${prefix}_(\\d+)$`, "i"));
+      if (!match) {
+        return maxValue;
+      }
+      return Math.max(maxValue, Number(match[1]));
+    }, 0) + 1;
+  return `${prefix}_${nextSequence}`;
 }
 
 const MAX_PROFILE_DISPLAY_NAME_LENGTH = 32;
@@ -594,6 +671,7 @@ export function ProfileSettingsWorkspace({
   onSaveEquipmentMappings,
   onSaveClassifications,
   onSaveRates,
+  onSaveExportSettings,
   onPublishDraft,
   onDiscardDraft,
   onCreateTrustedProfile,
@@ -610,6 +688,7 @@ export function ProfileSettingsWorkspace({
   const [equipmentMappings, setEquipmentMappings] = useState<EquipmentMappingRow[]>([]);
   const [laborSlots, setLaborSlots] = useState<ClassificationSlotRow[]>([]);
   const [equipmentSlots, setEquipmentSlots] = useState<ClassificationSlotRow[]>([]);
+  const [exportSettings, setExportSettings] = useState<ExportSettingsResponse>(emptyExportSettings());
   const [laborRates, setLaborRates] = useState<LaborRateRow[]>([]);
   const [equipmentRates, setEquipmentRates] = useState<EquipmentRateRow[]>([]);
   const [newProfileDisplayName, setNewProfileDisplayName] = useState("");
@@ -631,6 +710,7 @@ export function ProfileSettingsWorkspace({
     setEquipmentMappings([]);
     setLaborSlots([]);
     setEquipmentSlots([]);
+    setExportSettings(emptyExportSettings());
     setLaborRates([]);
     setEquipmentRates([]);
   }
@@ -641,6 +721,7 @@ export function ProfileSettingsWorkspace({
     setEquipmentMappings(cloneRows(nextDraftState.equipment_mappings));
     setLaborSlots(cloneRows(nextDraftState.labor_slots));
     setEquipmentSlots(cloneRows(nextDraftState.equipment_slots));
+    setExportSettings({ labor_minimum_hours: { ...nextDraftState.export_settings.labor_minimum_hours } });
     setLaborRates(cloneRows(nextDraftState.labor_rates));
     setEquipmentRates(cloneRows(nextDraftState.equipment_rates));
   }
@@ -651,6 +732,7 @@ export function ProfileSettingsWorkspace({
     setEquipmentMappings(cloneRows(nextDraftState.equipment_mappings));
     setLaborSlots(cloneRows(nextDraftState.labor_slots));
     setEquipmentSlots(cloneRows(nextDraftState.equipment_slots));
+    setExportSettings({ labor_minimum_hours: { ...nextDraftState.export_settings.labor_minimum_hours } });
     setLaborRates(cloneRows(nextDraftState.labor_rates));
     setEquipmentRates(cloneRows(nextDraftState.equipment_rates));
   }
@@ -714,6 +796,9 @@ export function ProfileSettingsWorkspace({
         setLaborRates(cloneRows(draftState.labor_rates));
         setEquipmentRates(cloneRows(draftState.equipment_rates));
         break;
+      case "exportSettings":
+        setExportSettings({ labor_minimum_hours: { ...draftState.export_settings.labor_minimum_hours } });
+        break;
       case "rates":
         setLaborRates(cloneRows(draftState.labor_rates));
         setEquipmentRates(cloneRows(draftState.equipment_rates));
@@ -752,6 +837,13 @@ export function ProfileSettingsWorkspace({
 
   const detailToRender = draftState ?? profileDetail;
   const openDraftId = draftState?.trusted_profile_draft_id ?? profileDetail?.open_draft_id ?? null;
+  const templateMetadata = detailToRender?.template_metadata ?? null;
+  const laborActiveCapacity = templateMetadata?.labor_active_slot_capacity ?? 0;
+  const equipmentActiveCapacity = templateMetadata?.equipment_active_slot_capacity ?? 0;
+  const laborActiveCount = laborSlots.filter((row) => row.active && row.label.trim()).length;
+  const equipmentActiveCount = equipmentSlots.filter((row) => row.active && row.label.trim()).length;
+  const laborInactiveCount = laborSlots.filter((row) => !row.active && row.label.trim()).length;
+  const equipmentInactiveCount = equipmentSlots.filter((row) => !row.active && row.label.trim()).length;
   const laborTargets = laborSlots.filter((row) => row.active && row.label.trim()).map((row) => row.label.trim());
   const equipmentTargets = equipmentSlots.filter((row) => row.active && row.label.trim()).map((row) => row.label.trim());
   const observedDraftNote = hasObservedUnmappedRows(laborMappings, equipmentMappings);
@@ -810,13 +902,14 @@ export function ProfileSettingsWorkspace({
     [equipmentMappings, equipmentTargets],
   );
   const laborClassificationValidation = useMemo(
-    () => buildClassificationValidation(laborSlots, "labor"),
-    [laborSlots],
+    () => buildClassificationValidation(laborSlots, "labor", laborActiveCapacity),
+    [laborActiveCapacity, laborSlots],
   );
   const equipmentClassificationValidation = useMemo(
-    () => buildClassificationValidation(equipmentSlots, "equipment"),
-    [equipmentSlots],
+    () => buildClassificationValidation(equipmentSlots, "equipment", equipmentActiveCapacity),
+    [equipmentActiveCapacity, equipmentSlots],
   );
+  const exportSettingsValidation = useMemo(() => buildExportSettingsValidation(exportSettings), [exportSettings]);
   const effectiveLaborRates = useMemo(
     () => (draftState ? filterLaborRatesForCurrentSlots(laborRates, draftState.labor_slots, laborSlots) : laborRates),
     [draftState, laborRates, laborSlots],
@@ -852,6 +945,9 @@ export function ProfileSettingsWorkspace({
   const localRatesDirty =
     draftState &&
     (!compareRows(laborRates, draftState.labor_rates) || !compareRows(equipmentRates, draftState.equipment_rates));
+  const exportSettingsDirty =
+    draftState &&
+    !compareValue(exportSettings, draftState.export_settings);
   const retiredRatesDirty =
     draftState &&
     (!compareRows(effectiveLaborRates, draftState.labor_rates) ||
@@ -866,6 +962,7 @@ export function ProfileSettingsWorkspace({
     laborMappingsDirty ? "labor mappings" : "",
     equipmentMappingsDirty ? "equipment mappings" : "",
     classificationsDirty ? "classifications" : "",
+    exportSettingsDirty ? "export settings" : "",
     ratesDirty ? "rates" : "",
   ].filter(Boolean);
 
@@ -874,6 +971,7 @@ export function ProfileSettingsWorkspace({
     (laborMappingsDirty && laborMappingValidation.messages.length > 0) ||
     (equipmentMappingsDirty && equipmentMappingValidation.messages.length > 0) ||
     (classificationsDirty && classificationIssueCount > 0) ||
+    (exportSettingsDirty && exportSettingsValidation.messages.length > 0) ||
     (ratesDirty && ratesValidation.messages.length > 0);
 
   const saveProfileDisabled =
@@ -990,6 +1088,7 @@ export function ProfileSettingsWorkspace({
         equipment_mappings: cloneRows(equipmentMappings),
         labor_slots: cloneRows(laborSlots),
         equipment_slots: cloneRows(equipmentSlots),
+        export_settings: { labor_minimum_hours: { ...exportSettings.labor_minimum_hours } },
         labor_rates: cloneRows(laborRates),
         equipment_rates: cloneRows(equipmentRates),
         dirty_sections: [...dirtySections],
@@ -1011,6 +1110,7 @@ export function ProfileSettingsWorkspace({
     equipmentMappings,
     equipmentRates,
     equipmentSlots,
+    exportSettings,
     laborMappings,
     laborRates,
     laborSlots,
@@ -1108,6 +1208,9 @@ export function ProfileSettingsWorkspace({
     if (classificationsDirty && classificationIssueCount > 0) {
       return false;
     }
+    if (exportSettingsDirty && exportSettingsValidation.messages.length > 0) {
+      return false;
+    }
     if (ratesDirty && ratesValidation.messages.length > 0) {
       return false;
     }
@@ -1124,6 +1227,9 @@ export function ProfileSettingsWorkspace({
       return false;
     }
     if (classificationsDirty && !(await onSaveClassifications(laborSlots, equipmentSlots))) {
+      return false;
+    }
+    if (exportSettingsDirty && !(await onSaveExportSettings(exportSettings))) {
       return false;
     }
     setRestoredDraftNotice("");
@@ -2061,6 +2167,18 @@ export function ProfileSettingsWorkspace({
                     Marking a classification inactive retires its configured rates on save, but mappings still need to
                     be cleared or reassigned manually before that classification can be retired.
                   </p>
+                  <div className="workspace-callout">
+                    <strong>{templateMetadata?.display_label ?? "Current template"}</strong>
+                    <p>
+                      Labor active slots: {draftState ? laborActiveCount : (detailToRender?.labor_active_slot_count ?? 0)} / {laborActiveCapacity || 0}. Inactive stored labor classifications: {draftState ? laborInactiveCount : (detailToRender?.labor_inactive_slot_count ?? 0)}.
+                    </p>
+                    <p>
+                      Equipment active slots: {draftState ? equipmentActiveCount : (detailToRender?.equipment_active_slot_count ?? 0)} / {equipmentActiveCapacity || 0}. Inactive stored equipment classifications: {draftState ? equipmentInactiveCount : (detailToRender?.equipment_inactive_slot_count ?? 0)}.
+                    </p>
+                    <p>
+                      Export compacts active classifications into contiguous template rows, so inactive middle slots do not leave blank workbook rows.
+                    </p>
+                  </div>
                   <div className="settings-two-column">
                     <div className="table-wrap">
                       <table>
@@ -2111,6 +2229,25 @@ export function ProfileSettingsWorkspace({
                           ))}
                         </tbody>
                       </table>
+                      <div className="actions">
+                        <button
+                          type="button"
+                          className="tertiary-button"
+                          onClick={() =>
+                            setLaborSlots([
+                              ...laborSlots,
+                              {
+                                slot_id: buildNextSlotId(laborSlots, "labor"),
+                                label: "",
+                                active: false,
+                              },
+                            ])
+                          }
+                          disabled={busy}
+                        >
+                          Add labor classification row
+                        </button>
+                      </div>
                     </div>
 
                     <div className="table-wrap">
@@ -2160,6 +2297,114 @@ export function ProfileSettingsWorkspace({
                               </td>
                             </tr>
                           ))}
+                        </tbody>
+                      </table>
+                      <div className="actions">
+                        <button
+                          type="button"
+                          className="tertiary-button"
+                          onClick={() =>
+                            setEquipmentSlots([
+                              ...equipmentSlots,
+                              {
+                                slot_id: buildNextSlotId(equipmentSlots, "equipment"),
+                                label: "",
+                                active: false,
+                              },
+                            ])
+                          }
+                          disabled={busy}
+                        >
+                          Add equipment classification row
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="settings-section">
+                  <SectionHeader
+                    title="Export Settings"
+                    description="These rules affect workbook shaping only. They do not mutate stored run, review, or mapping data."
+                    action={
+                      <SectionStatusPill
+                        dirty={Boolean(exportSettingsDirty)}
+                        errorCount={exportSettingsValidation.messages.length}
+                      />
+                    }
+                  />
+                  <p className="muted">
+                    Labor minimum-hours applies during export shaping after review is complete. It is snapshot-bound through published profile lineage.
+                  </p>
+                  {exportSettingsValidation.messages.length > 0 ? (
+                    <RowMessages messages={exportSettingsValidation.messages} />
+                  ) : null}
+                  <div className="settings-two-column">
+                    <div className="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Rule</th>
+                            <th>Setting</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td className="cell-primary">Labor minimum hours</td>
+                            <td>
+                              <label className="checkbox-field">
+                                <input
+                                  type="checkbox"
+                                  checked={exportSettings.labor_minimum_hours.enabled}
+                                  onChange={(event) =>
+                                    setExportSettings({
+                                      labor_minimum_hours: {
+                                        ...exportSettings.labor_minimum_hours,
+                                        enabled: event.target.checked,
+                                      },
+                                    })
+                                  }
+                                />
+                                <span>
+                                  {exportSettings.labor_minimum_hours.enabled ? "Enabled" : "Disabled"}
+                                </span>
+                              </label>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="cell-primary">Threshold hours</td>
+                            <td>
+                              <input
+                                aria-label="Labor minimum hours threshold"
+                                value={exportSettings.labor_minimum_hours.threshold_hours}
+                                onChange={(event) =>
+                                  setExportSettings({
+                                    labor_minimum_hours: {
+                                      ...exportSettings.labor_minimum_hours,
+                                      threshold_hours: event.target.value,
+                                    },
+                                  })
+                                }
+                              />
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="cell-primary">Minimum export hours</td>
+                            <td>
+                              <input
+                                aria-label="Labor minimum hours value"
+                                value={exportSettings.labor_minimum_hours.minimum_hours}
+                                onChange={(event) =>
+                                  setExportSettings({
+                                    labor_minimum_hours: {
+                                      ...exportSettings.labor_minimum_hours,
+                                      minimum_hours: event.target.value,
+                                    },
+                                  })
+                                }
+                              />
+                            </td>
+                          </tr>
                         </tbody>
                       </table>
                     </div>

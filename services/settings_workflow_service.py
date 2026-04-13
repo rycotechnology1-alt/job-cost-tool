@@ -285,6 +285,7 @@ class SettingsWorkflowService:
             equipment_mapping_config=loader.get_equipment_mapping(),
             rates_config=loader.get_rates(),
             recap_template_map=loader.get_recap_template_map(),
+            template_metadata=loader.get_template_metadata(),
         )
 
         _write_json_files(

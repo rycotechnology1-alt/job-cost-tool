@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Any, ClassVar, Iterator
 
 from core.config.classification_slots import build_slot_lookup, get_active_slots, normalize_slot_config
+from core.config.export_settings import normalize_export_settings_config
 from core.equipment_keys import derive_equipment_mapping_key
 from core.phase_codes import canonicalize_phase_code
 from core.review_defaults import normalize_review_rules_config
+from core.config.template_metadata import build_template_metadata
 from core.config.path_utils import get_legacy_config_root
 from core.config.profile_manager import ProfileManager
 
@@ -40,6 +42,8 @@ class ConfigLoader:
     }
     _optional_files: ClassVar[dict[str, str]] = {
         "review_rules": "review_rules.json",
+        "export_settings": "export_settings.json",
+        "template_metadata": "template_metadata.json",
     }
     _shared_optional_files: ClassVar[dict[str, str]] = {
         "phase_catalog": "phase_catalog.json",
@@ -134,7 +138,10 @@ class ConfigLoader:
             recap_mapper._get_active_equipment_slots,
             recap_mapper._get_active_labor_slot_lookup,
             recap_mapper._get_active_equipment_slot_lookup,
+            recap_mapper._get_labor_export_row_slots,
+            recap_mapper._get_equipment_export_row_slots,
             recap_mapper._get_rates,
+            recap_mapper._get_export_settings,
             recap_mapper._get_material_section_capacity,
         ]
 
@@ -172,6 +179,10 @@ class ConfigLoader:
         """Return the recap template mapping configuration."""
         return self._load_config("recap_template_map")
 
+    def get_template_metadata(self) -> JsonDict:
+        """Return normalized template metadata for the active profile/config bundle."""
+        return self._load_optional_config("template_metadata")
+
     def get_labor_slots(self) -> JsonDict:
         """Return fixed-capacity labor slot definitions for the active profile."""
         return self._load_config("target_labor_classifications")
@@ -197,12 +208,12 @@ class ConfigLoader:
         return build_slot_lookup(self.get_active_equipment_slots())
 
     def get_labor_row_slots(self) -> JsonDict:
-        """Return fixed labor recap row mappings keyed by stable slot id."""
-        return self._build_row_slot_mapping("labor", self.get_labor_slots(), "labor_rows")
+        """Return compacted labor export row mappings keyed by active slot id."""
+        return self._build_export_row_mapping("labor", self.get_labor_slots(), "labor_rows")
 
     def get_equipment_row_slots(self) -> JsonDict:
-        """Return fixed equipment recap row mappings keyed by stable slot id."""
-        return self._build_row_slot_mapping("equipment", self.get_equipment_slots(), "equipment_rows")
+        """Return compacted equipment export row mappings keyed by active slot id."""
+        return self._build_export_row_mapping("equipment", self.get_equipment_slots(), "equipment_rows")
 
     def get_target_labor_classifications(self) -> JsonDict:
         """Return the active labor recap classifications derived from labor slots."""
@@ -219,6 +230,10 @@ class ConfigLoader:
     def get_review_rules(self) -> JsonDict:
         """Return profile-driven review workflow rules such as default omission."""
         return self._load_optional_config("review_rules")
+
+    def get_export_settings(self) -> JsonDict:
+        """Return export-only profile settings."""
+        return self._load_optional_config("export_settings")
 
     def get_phase_catalog(self) -> JsonDict:
         """Return the shared company-wide phase catalog."""
@@ -416,6 +431,14 @@ class ConfigLoader:
             return self._normalize_phase_catalog_config(loaded_config)
         if config_name == "review_rules":
             return normalize_review_rules_config(loaded_config)
+        if config_name == "export_settings":
+            return normalize_export_settings_config(loaded_config)
+        if config_name == "template_metadata":
+            return build_template_metadata(
+                loaded_config,
+                recap_template_map=self.get_recap_template_map(),
+                template_filename=self._resolve_template_metadata_filename(),
+            )
         if config_name == "target_labor_classifications":
             capacity, template_labels = self._get_slot_context("labor_rows")
             return normalize_slot_config(
@@ -586,44 +609,77 @@ class ConfigLoader:
         return normalized_config
 
     def _get_slot_context(self, recap_key: str) -> tuple[int, list[str]]:
-        """Return slot capacity and row-label order from the recap template map."""
-        recap_map = self.get_recap_template_map()
-        row_mapping = recap_map.get(recap_key, {}) if isinstance(recap_map.get(recap_key), dict) else {}
-        template_labels = [str(label).strip() for label in row_mapping.keys() if str(label).strip()]
-        capacity = len(template_labels)
+        """Return active slot capacity and row-label order from template metadata."""
+        template_metadata = self.get_template_metadata()
+        row_definitions = (
+            template_metadata.get(recap_key, [])
+            if isinstance(template_metadata.get(recap_key), list)
+            else []
+        )
+        template_labels = [
+            str(row.get("template_label") or "").strip()
+            for row in row_definitions
+            if isinstance(row, dict) and str(row.get("template_label") or "").strip()
+        ]
+        capacity = len(row_definitions)
         return capacity, template_labels
 
-    def _build_row_slot_mapping(
+    def _build_export_row_mapping(
         self,
         slot_prefix: str,
         slot_config: JsonDict,
         recap_key: str,
     ) -> JsonDict:
-        """Build a stable slot-id to recap-row mapping using fixed row order."""
-        recap_map = self.get_recap_template_map()
-        raw_rows = recap_map.get(recap_key, {}) if isinstance(recap_map.get(recap_key), dict) else {}
-        normalized_slots = slot_config.get("slots", []) if isinstance(slot_config.get("slots"), list) else []
+        """Build compacted export row mappings keyed by active slot id."""
+        template_metadata = self.get_template_metadata()
+        row_definitions = (
+            template_metadata.get(recap_key, [])
+            if isinstance(template_metadata.get(recap_key), list)
+            else []
+        )
+        normalized_slots = [
+            dict(slot)
+            for slot in slot_config.get("slots", [])
+            if isinstance(slot, dict)
+            and bool(slot.get("active"))
+            and str(slot.get("label") or "").strip()
+        ] if isinstance(slot_config.get("slots"), list) else []
 
-        row_items = list(raw_rows.items())
-        if normalized_slots and len(row_items) < len(normalized_slots):
+        if len(normalized_slots) > len(row_definitions):
             raise ValueError(
-                f"Recap template map '{recap_key}' does not have enough fixed rows for the configured slot capacity."
+                f"Configured active {slot_prefix} classifications exceed template capacity ({len(row_definitions)} rows available)."
             )
 
         slot_rows: JsonDict = {}
         for index, slot in enumerate(normalized_slots):
-            if not isinstance(slot, dict) or index >= len(row_items):
+            if index >= len(row_definitions):
                 continue
-            template_label, row_mapping = row_items[index]
+            row_definition = row_definitions[index]
+            if not isinstance(row_definition, dict):
+                continue
+            row_mapping = row_definition.get("mapping", {})
             slot_id = str(slot.get("slot_id") or f"{slot_prefix}_{index + 1}").strip() or f"{slot_prefix}_{index + 1}"
             slot_rows[slot_id] = {
                 "slot_id": slot_id,
                 "label": str(slot.get("label", "")).strip(),
-                "active": bool(slot.get("active")),
-                "template_label": str(template_label).strip(),
+                "active": True,
+                "template_label": str(row_definition.get("template_label") or "").strip(),
                 "mapping": dict(row_mapping) if isinstance(row_mapping, dict) else {},
             }
         return slot_rows
+
+    def _resolve_template_metadata_filename(self) -> str | None:
+        """Return the configured template filename for template-metadata derivation."""
+        profile_file = self._config_dir / "profile.json"
+        if profile_file.is_file():
+            try:
+                metadata = self._load_profile_metadata_file(profile_file)
+            except Exception:
+                metadata = {}
+            template_filename = str(metadata.get("template_filename") or "").strip()
+            if template_filename:
+                return template_filename
+        return None
 
 
     def _validate_top_level_structure(
@@ -653,6 +709,15 @@ class ConfigLoader:
         elif config_name == "review_rules":
             if "default_omit_rules" in loaded_config:
                 self._validate_key_type(file_path, loaded_config, "default_omit_rules", list, "array")
+        elif config_name == "export_settings":
+            if "labor_minimum_hours" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "labor_minimum_hours", dict, "object")
+        elif config_name == "template_metadata":
+            for key in ("labor_rows", "equipment_rows"):
+                if key in loaded_config:
+                    self._validate_key_type(file_path, loaded_config, key, list, "array")
+            if "export_behaviors" in loaded_config:
+                self._validate_key_type(file_path, loaded_config, "export_behaviors", dict, "object")
         elif config_name == "phase_catalog":
             if "phases" in loaded_config:
                 self._validate_key_type(file_path, loaded_config, "phases", list, "array")

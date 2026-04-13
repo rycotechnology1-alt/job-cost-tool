@@ -15,6 +15,11 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from core.config import ConfigLoader, ProfileManager
+from core.config.export_settings import (
+    build_export_settings_config,
+    build_export_settings_editor_state,
+)
+from core.config.template_metadata import build_template_metadata
 from core.models import Record
 from core.models.lineage import (
     TrustedProfile,
@@ -52,6 +57,7 @@ _EDITABLE_DOMAIN_KEYS = (
     "equipment_mapping",
     "labor_slots",
     "equipment_slots",
+    "export_settings",
     "rates",
 )
 _DEFERRED_DOMAIN_KEYS = (
@@ -79,6 +85,11 @@ class PublishedProfileDetail:
     template_artifact_ref: str | None
     template_file_hash: str | None
     template_filename: str | None
+    template_metadata: dict[str, Any]
+    labor_active_slot_count: int
+    labor_inactive_slot_count: int
+    equipment_active_slot_count: int
+    equipment_inactive_slot_count: int
     open_draft_id: str | None
     deferred_domains: dict[str, Any]
 
@@ -101,12 +112,18 @@ class DraftEditorState:
     template_artifact_ref: str | None
     template_file_hash: str | None
     template_filename: str | None
+    template_metadata: dict[str, Any]
+    labor_active_slot_count: int
+    labor_inactive_slot_count: int
+    equipment_active_slot_count: int
+    equipment_inactive_slot_count: int
     default_omit_rules: list[dict[str, str]]
     default_omit_phase_options: list[dict[str, str]]
     labor_mappings: list[dict[str, Any]]
     equipment_mappings: list[dict[str, Any]]
     labor_slots: list[dict[str, Any]]
     equipment_slots: list[dict[str, Any]]
+    export_settings: dict[str, Any]
     labor_rates: list[dict[str, str]]
     equipment_rates: list[dict[str, str]]
     deferred_domains: dict[str, Any]
@@ -314,6 +331,7 @@ class ProfileAuthoringService:
             equipment_mapping_config=bundle["equipment_mapping"],
             rates_config=bundle["rates"],
             recap_template_map=bundle["recap_template_map"],
+            template_metadata=bundle.get("template"),
         )
         bundle["labor_slots"] = edit_result.labor_slots_config
         bundle["equipment_slots"] = edit_result.equipment_slots_config
@@ -340,6 +358,21 @@ class ProfileAuthoringService:
             equipment_rows,
             valid_labor_targets=self._active_classifications(bundle["labor_slots"]),
             valid_equipment_targets=self._active_classifications(bundle["equipment_slots"]),
+        )
+        updated_draft = self._save_validated_bundle(draft, bundle)
+        return self.get_draft_state(updated_draft.trusted_profile_draft_id)
+
+    def update_export_settings(
+        self,
+        trusted_profile_draft_id: str,
+        export_settings: dict[str, Any],
+    ) -> DraftEditorState:
+        """Replace export-only profile settings and return refreshed state."""
+        draft = self._repository.get_draft(trusted_profile_draft_id)
+        bundle = self._copy_behavioral_bundle(draft.bundle_payload)
+        bundle["export_settings"] = build_export_settings_config(
+            bundle.get("export_settings", {}),
+            export_settings,
         )
         updated_draft = self._save_validated_bundle(draft, bundle)
         return self.get_draft_state(updated_draft.trusted_profile_draft_id)
@@ -831,6 +864,8 @@ class ProfileAuthoringService:
         """Build read-only published profile detail."""
         behavioral_bundle = self._behavioral_bundle(published_version.bundle_payload)
         template_payload = self._template_payload(behavioral_bundle)
+        labor_slots = self._slot_rows(behavioral_bundle["labor_slots"])
+        equipment_slots = self._slot_rows(behavioral_bundle["equipment_slots"])
         return PublishedProfileDetail(
             trusted_profile_id=trusted_profile.trusted_profile_id,
             profile_name=trusted_profile.profile_name,
@@ -843,6 +878,11 @@ class ProfileAuthoringService:
             template_artifact_ref=published_version.template_artifact_ref,
             template_file_hash=published_version.template_file_hash,
             template_filename=str(template_payload.get("template_filename") or "") or None,
+            template_metadata=template_payload,
+            labor_active_slot_count=self._active_slot_count(labor_slots),
+            labor_inactive_slot_count=self._inactive_slot_count(labor_slots),
+            equipment_active_slot_count=self._active_slot_count(equipment_slots),
+            equipment_inactive_slot_count=self._inactive_slot_count(equipment_slots),
             open_draft_id=open_draft_id,
             deferred_domains=self._deferred_domains(behavioral_bundle),
         )
@@ -968,6 +1008,8 @@ class ProfileAuthoringService:
             for observation in unresolved_observations
             if observation.observation_domain == _OBSERVATION_DOMAIN_EQUIPMENT
         ]
+        labor_slots = self._slot_rows(behavioral_bundle["labor_slots"])
+        equipment_slots = self._slot_rows(behavioral_bundle["equipment_slots"])
         labor_classifications = self._active_classifications(behavioral_bundle["labor_slots"])
         equipment_classifications = self._active_classifications(behavioral_bundle["equipment_slots"])
         template_payload = self._template_payload(behavioral_bundle)
@@ -986,6 +1028,11 @@ class ProfileAuthoringService:
             template_artifact_ref=draft.template_artifact_ref,
             template_file_hash=draft.template_file_hash,
             template_filename=str(template_payload.get("template_filename") or "") or None,
+            template_metadata=template_payload,
+            labor_active_slot_count=self._active_slot_count(labor_slots),
+            labor_inactive_slot_count=self._inactive_slot_count(labor_slots),
+            equipment_active_slot_count=self._active_slot_count(equipment_slots),
+            equipment_inactive_slot_count=self._inactive_slot_count(equipment_slots),
             default_omit_rules=default_omit_rules,
             default_omit_phase_options=phase_options,
             labor_mappings=build_labor_mapping_rows(
@@ -997,8 +1044,9 @@ class ProfileAuthoringService:
                 required_raw_descriptions=required_equipment_raw_descriptions,
                 active_targets=equipment_classifications,
             ),
-            labor_slots=self._slot_rows(behavioral_bundle["labor_slots"]),
-            equipment_slots=self._slot_rows(behavioral_bundle["equipment_slots"]),
+            labor_slots=labor_slots,
+            equipment_slots=equipment_slots,
+            export_settings=build_export_settings_editor_state(behavioral_bundle.get("export_settings", {})),
             labor_rates=build_labor_rate_rows(behavioral_bundle["rates"], labor_classifications),
             equipment_rates=build_equipment_rate_rows(behavioral_bundle["rates"], equipment_classifications),
             deferred_domains=self._deferred_domains(behavioral_bundle),
@@ -1060,6 +1108,7 @@ class ProfileAuthoringService:
                 equipment_mapping_config=behavioral_bundle["equipment_mapping"],
                 rates_config=behavioral_bundle["rates"],
                 recap_template_map=behavioral_bundle["recap_template_map"],
+                template_metadata=self._template_payload(behavioral_bundle),
             )
         except ValueError as exc:
             validation_errors.append(str(exc))
@@ -1071,6 +1120,14 @@ class ProfileAuthoringService:
                 build_equipment_rate_rows(behavioral_bundle["rates"], equipment_classifications),
                 valid_labor_targets=labor_classifications,
                 valid_equipment_targets=equipment_classifications,
+            )
+        except ValueError as exc:
+            validation_errors.append(str(exc))
+
+        try:
+            build_export_settings_config(
+                behavioral_bundle.get("export_settings", {}),
+                build_export_settings_editor_state(behavioral_bundle.get("export_settings", {})),
             )
         except ValueError as exc:
             validation_errors.append(str(exc))
@@ -1091,12 +1148,13 @@ class ProfileAuthoringService:
             "equipment_mapping": dict(behavioral_bundle.get("equipment_mapping", {})),
             "labor_slots": dict(behavioral_bundle.get("labor_slots", {})),
             "equipment_slots": dict(behavioral_bundle.get("equipment_slots", {})),
+            "export_settings": dict(behavioral_bundle.get("export_settings", {})),
             "rates": dict(behavioral_bundle.get("rates", {})),
             "vendor_normalization": dict(behavioral_bundle.get("vendor_normalization", {})),
             "phase_mapping": dict(behavioral_bundle.get("phase_mapping", {})),
             "input_model": dict(behavioral_bundle.get("input_model", {})),
             "recap_template_map": dict(behavioral_bundle.get("recap_template_map", {})),
-            "template": dict(behavioral_bundle.get("template", {})),
+            "template": self._template_payload(dict(behavioral_bundle)),
         }
 
     def _copy_behavioral_bundle(self, bundle_payload: dict[str, Any]) -> dict[str, Any]:
@@ -1144,9 +1202,29 @@ class ProfileAuthoringService:
         return {key: behavioral_bundle[key] for key in _DEFERRED_DOMAIN_KEYS}
 
     def _template_payload(self, behavioral_bundle: dict[str, Any]) -> dict[str, Any]:
-        """Return the template identity payload from a behavioral bundle."""
+        """Return normalized template metadata from a behavioral bundle."""
         template_payload = behavioral_bundle.get("template", {})
-        return dict(template_payload) if isinstance(template_payload, dict) else {}
+        recap_template_map = behavioral_bundle.get("recap_template_map", {})
+        return build_template_metadata(
+            template_payload if isinstance(template_payload, dict) else {},
+            recap_template_map=dict(recap_template_map) if isinstance(recap_template_map, dict) else {},
+        )
+
+    def _active_slot_count(self, slot_rows: list[dict[str, Any]]) -> int:
+        """Return the count of active labeled slot rows."""
+        return sum(
+            1
+            for row in slot_rows
+            if bool(row.get("active")) and str(row.get("label") or "").strip()
+        )
+
+    def _inactive_slot_count(self, slot_rows: list[dict[str, Any]]) -> int:
+        """Return the count of stored inactive labeled slot rows."""
+        return sum(
+            1
+            for row in slot_rows
+            if not bool(row.get("active")) and str(row.get("label") or "").strip()
+        )
 
     def _phase_catalog_rows(self) -> list[dict[str, Any]]:
         """Load the shared phase catalog used for default-omit editing."""

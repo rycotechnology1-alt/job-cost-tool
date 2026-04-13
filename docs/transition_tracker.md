@@ -44,6 +44,12 @@ Historical migration notes, retired planning sections, and older long-form chang
 
 ## Recent Meaningful Changes
 
+### [2026-04-13] Phase 3 profile export now uses template metadata, export settings, and inactive-slot compaction
+- **What changed:** Trusted-profile authoring now persists template metadata and export-only settings alongside the draft/published bundle, profile classification slots can keep inactive overflow rows beyond active template capacity, and recap export now compacts active labor/equipment slots into contiguous template rows so inactive middle slots no longer leave blank workbook gaps. The web settings surface now exposes template capacity and the first export-only rule for labor minimum-hours shaping.
+- **Why:** Phase 3 needed to preserve lineage-ready template context, unblock future multi-template work without starting it yet, and fix the trust-eroding blank-row export behavior caused by inactive classifications in the middle of the slot list.
+- **Area:** Core engine / Application services / Persistence/API / Web delivery / Tests / Config/docs
+- **Follow-up needed:** Phase 4 can build multi-template browsing/selection on top of this metadata model, but template choice remains fixed for now and export ordering still follows slot-table order.
+
 ### [2026-04-11] Review header now uses a single seven-block summary row
 - **What changed:** The browser review header no longer shows the extra descriptive sentence beneath the source filename. Instead, the filename/workspace label now occupies the first tile in a single seven-block top summary row, with the existing raw total, included total, omitted total, total records, blockers, and trusted profile tiles staying alongside it.
 - **Why:** The prior stacked header was consuming more vertical space than needed and pushed useful review canvas space downward without adding much operator value.
