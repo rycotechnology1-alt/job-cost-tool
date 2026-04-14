@@ -698,6 +698,12 @@ export default function App() {
     });
   }
 
+  function handleActivateReviewRow(recordKey: string) {
+    const isCurrentlySelected = selectedReviewRecordKeys.includes(recordKey);
+    handleReviewRowSelectionChange(recordKey, !isCurrentlySelected);
+    setSelectedRecordKey(isCurrentlySelected ? "" : recordKey);
+  }
+
   async function handleApplyBulkOmission(nextOmissionState: boolean) {
     await runAction(
       nextOmissionState ? "Bulk omitting review rows..." : "Bulk including review rows...",
@@ -1406,7 +1412,7 @@ export default function App() {
               exportDisabledMessage={reviewContextMessage}
               busy={busy}
               onToggleReviewRowSelection={handleReviewRowSelectionChange}
-              onSelectRow={setSelectedRecordKey}
+              onSelectRow={handleActivateReviewRow}
               onApplyBulkVendorName={handleApplyBulkVendorName}
               onApplyBulkOmission={handleApplyBulkOmission}
               onApplyBulkLaborClassification={handleApplyBulkLaborClassification}

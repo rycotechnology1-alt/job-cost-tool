@@ -293,101 +293,99 @@ export function ReviewWorkspace({
                 <strong>{selectedReviewRecordKeys.length} row{selectedReviewRecordKeys.length === 1 ? "" : "s"} selected</strong>
                 <p className="muted">Rows stay grouped by family. Use the action bar to update vendor names, omission state, or one shared target across the current selection.</p>
               </div>
-              <div className="actions review-bulk-actions">
-                <label className="field bulk-field">
-                  <span>Vendor name</span>
-                  <input
-                    aria-label="Bulk vendor name"
-                    value={bulkVendorName}
-                    onChange={(event) => setBulkVendorName(event.target.value)}
-                    placeholder="Enter vendor name"
-                    disabled={busy || selectedReviewRecordKeys.length === 0}
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => onApplyBulkVendorName(bulkVendorName)}
-                  disabled={busy || !canBulkApplyVendorName}
-                >
-                  Apply vendor name
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => onApplyBulkOmission(true)}
-                  disabled={busy || selectedReviewRecordKeys.length === 0 || !canBulkOmit}
-                >
-                  Bulk omit selected
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => onApplyBulkOmission(false)}
-                  disabled={busy || selectedReviewRecordKeys.length === 0 || !canBulkInclude}
-                >
-                  Bulk include selected
-                </button>
-                <label className="field bulk-field">
-                  <span>Bulk labor class</span>
-                  <select
-                    aria-label="Bulk labor classification"
-                    value={bulkLaborClassification}
-                    onChange={(event) => setBulkLaborClassification(event.target.value)}
-                    disabled={busy || selectedReviewRecordKeys.length === 0}
+              <div className="review-bulk-grid">
+                <div className="review-bulk-column">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => onApplyBulkOmission(true)}
+                    disabled={busy || selectedReviewRecordKeys.length === 0 || !canBulkOmit}
                   >
-                    <option value="">Choose labor class</option>
-                    {reviewSession.labor_classification_options.map((option) => (
-                      <option key={`bulk-labor-${option}`} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => onApplyBulkLaborClassification(bulkLaborClassification)}
-                  disabled={busy || !canBulkApplyLaborClassification}
-                >
-                  Apply labor class
-                </button>
-                <label className="field bulk-field">
-                  <span>Bulk equipment class</span>
-                  <select
-                    aria-label="Bulk equipment category"
-                    value={bulkEquipmentCategory}
-                    onChange={(event) => setBulkEquipmentCategory(event.target.value)}
-                    disabled={busy || selectedReviewRecordKeys.length === 0}
+                    Bulk Omit
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => onApplyBulkOmission(false)}
+                    disabled={busy || selectedReviewRecordKeys.length === 0 || !canBulkInclude}
                   >
-                    <option value="">Choose equipment class</option>
-                    {reviewSession.equipment_classification_options.map((option) => (
-                      <option key={`bulk-equipment-${option}`} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => onApplyBulkEquipmentCategory(bulkEquipmentCategory)}
-                  disabled={busy || !canBulkApplyEquipmentCategory}
-                >
-                  Apply equipment class
-                </button>
+                    Bulk Include
+                  </button>
+                </div>
+                <div className="review-bulk-column">
+                  <div className="field review-bulk-field">
+                    <span className="sr-only">Vendor name</span>
+                    <input
+                      aria-label="Bulk vendor name"
+                      value={bulkVendorName}
+                      onChange={(event) => setBulkVendorName(event.target.value)}
+                      placeholder="Enter Vendor Name"
+                      disabled={busy || selectedReviewRecordKeys.length === 0}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => onApplyBulkVendorName(bulkVendorName)}
+                    disabled={busy || !canBulkApplyVendorName}
+                  >
+                    Apply Vendor
+                  </button>
+                </div>
+                <div className="review-bulk-column">
+                  <div className="field review-bulk-field">
+                    <span className="sr-only">Bulk equipment category</span>
+                    <select
+                      aria-label="Bulk equipment category"
+                      value={bulkEquipmentCategory}
+                      onChange={(event) => setBulkEquipmentCategory(event.target.value)}
+                      disabled={busy || selectedReviewRecordKeys.length === 0}
+                    >
+                      <option value="">Choose Equipment Class</option>
+                      {reviewSession.equipment_classification_options.map((option) => (
+                        <option key={`bulk-equipment-${option}`} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => onApplyBulkEquipmentCategory(bulkEquipmentCategory)}
+                    disabled={busy || !canBulkApplyEquipmentCategory}
+                  >
+                    Apply Equipment
+                  </button>
+                </div>
+                <div className="review-bulk-column">
+                  <div className="field review-bulk-field">
+                    <span className="sr-only">Bulk labor classification</span>
+                    <select
+                      aria-label="Bulk labor classification"
+                      value={bulkLaborClassification}
+                      onChange={(event) => setBulkLaborClassification(event.target.value)}
+                      disabled={busy || selectedReviewRecordKeys.length === 0}
+                    >
+                      <option value="">Choose Labor Class</option>
+                      {reviewSession.labor_classification_options.map((option) => (
+                        <option key={`bulk-labor-${option}`} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => onApplyBulkLaborClassification(bulkLaborClassification)}
+                    disabled={busy || !canBulkApplyLaborClassification}
+                  >
+                    Apply Labor
+                  </button>
+                </div>
               </div>
             </div>
-            {selectedReviewRows.length > 0 && !vendorCompatibleSelection ? (
-              <p className="muted bulk-hint">Vendor name editing works only when every selected row is a vendor row.</p>
-            ) : null}
-            {selectedReviewRows.length > 0 && !laborCompatibleSelection ? (
-              <p className="muted bulk-hint">Bulk labor classification works only when every selected row is a labor row.</p>
-            ) : null}
-            {selectedReviewRows.length > 0 && !equipmentCompatibleSelection ? (
-              <p className="muted bulk-hint">Bulk equipment category works only when every selected row is an equipment row.</p>
-            ) : null}
-
             <div className="table-wrap workspace-table-wrap">
               <table className="review-table">
                 <thead>

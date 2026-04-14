@@ -542,10 +542,18 @@ describe("App", () => {
     expect(screen.getAllByText(/Page 2/i).length).toBeGreaterThan(0);
     expect(screen.getByText("Vendor name should be confirmed")).toBeInTheDocument();
     expect(screen.queryByText(/edit selected row/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /select concrete delivery/i })).toBeChecked();
 
-    await user.click(screen.getByRole("checkbox", { name: /select concrete delivery/i }));
+    await clickRowByText(user, "Concrete delivery");
+
+    expect(screen.getByRole("checkbox", { name: /select concrete delivery/i })).not.toBeChecked();
+    expect(screen.getByText(/select a row to inspect its source context and apply edits/i)).toBeInTheDocument();
+
+    await clickRowByText(user, "Concrete delivery");
+    expect(screen.getByRole("checkbox", { name: /select concrete delivery/i })).toBeChecked();
+
     await user.type(screen.getByRole("textbox", { name: /bulk vendor name/i }), "Vendor Edited");
-    await user.click(screen.getByRole("button", { name: /apply vendor name/i }));
+    await user.click(screen.getByRole("button", { name: /apply vendor/i }));
 
     expect(await screen.findByText(/applied vendor name vendor edited to 1 selected row/i)).toBeInTheDocument();
     expect(screen.getAllByText("Vendor Edited").length).toBeGreaterThan(0);
@@ -574,7 +582,7 @@ describe("App", () => {
     await expandFamily(user, "Show Material");
     await user.click(screen.getByRole("checkbox", { name: /select concrete delivery/i }));
     await user.type(screen.getByRole("textbox", { name: /bulk vendor name/i }), "Vendor Edited");
-    await user.click(screen.getByRole("button", { name: /apply vendor name/i }));
+    await user.click(screen.getByRole("button", { name: /apply vendor/i }));
     await user.click(screen.getByRole("button", { name: /export and download/i }));
 
     await waitFor(() => {
@@ -686,7 +694,7 @@ describe("App", () => {
     expect(screen.getByRole("option", { name: "103 Foreman" })).toBeInTheDocument();
 
     await user.selectOptions(laborSelect, "103 Foreman");
-    await user.click(screen.getByRole("button", { name: /apply labor class/i }));
+    await user.click(screen.getByRole("button", { name: /apply labor/i }));
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     const editRequest = fetchCalls.find(([url]) => url === "/api/runs/processing-run-1/review-session/edits");
@@ -729,7 +737,7 @@ describe("App", () => {
     await user.click(screen.getByRole("checkbox", { name: /select material line/i }));
     await user.click(screen.getByRole("checkbox", { name: /select concrete delivery/i }));
     await user.type(screen.getByRole("textbox", { name: /bulk vendor name/i }), "Shared Vendor");
-    await user.click(screen.getByRole("button", { name: /apply vendor name/i }));
+    await user.click(screen.getByRole("button", { name: /apply vendor/i }));
 
     expect(await screen.findByText(/applied vendor name shared vendor to 2 selected rows/i)).toBeInTheDocument();
 
@@ -761,7 +769,7 @@ describe("App", () => {
     await user.click(screen.getByRole("checkbox", { name: /select labor line/i }));
     await user.click(screen.getByRole("checkbox", { name: /select helper labor line/i }));
     await user.selectOptions(screen.getByRole("combobox", { name: /bulk labor classification/i }), "103 Foreman");
-    await user.click(screen.getByRole("button", { name: /apply labor class/i }));
+    await user.click(screen.getByRole("button", { name: /apply labor/i }));
 
     expect(await screen.findByText(/applied labor classification 103 foreman to 2 selected rows/i)).toBeInTheDocument();
 
@@ -794,7 +802,7 @@ describe("App", () => {
     await user.click(screen.getByRole("checkbox", { name: /select truck 1/i }));
     await user.click(screen.getByRole("checkbox", { name: /select truck 2/i }));
     await user.selectOptions(screen.getByRole("combobox", { name: /bulk equipment category/i }), "Pick-up Truck");
-    await user.click(screen.getByRole("button", { name: /apply equipment class/i }));
+    await user.click(screen.getByRole("button", { name: /apply equipment/i }));
 
     expect(await screen.findByText(/applied equipment category pick-up truck to 2 selected rows/i)).toBeInTheDocument();
 
@@ -844,7 +852,7 @@ describe("App", () => {
     await expandFamily(user, "Show Material");
     await user.click(screen.getByRole("checkbox", { name: /select material line/i }));
     await user.click(screen.getByRole("checkbox", { name: /select concrete delivery/i }));
-    await user.click(screen.getByRole("button", { name: /bulk omit selected/i }));
+    await user.click(screen.getByRole("button", { name: /bulk omit/i }));
 
     expect(await screen.findByText(/bulk omit change to 2 rows/i)).toBeInTheDocument();
     expect(screen.getAllByText("$160.00").length).toBeGreaterThan(0);
@@ -852,7 +860,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("checkbox", { name: /select material line/i }));
     await user.click(screen.getByRole("checkbox", { name: /select concrete delivery/i }));
-    await user.click(screen.getByRole("button", { name: /bulk include selected/i }));
+    await user.click(screen.getByRole("button", { name: /bulk include/i }));
 
     expect(await screen.findByText(/bulk include change to 2 rows/i)).toBeInTheDocument();
     expect(screen.getAllByText("$500.00").length).toBeGreaterThan(0);
