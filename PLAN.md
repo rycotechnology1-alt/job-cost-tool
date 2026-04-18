@@ -220,7 +220,7 @@
 - Keep each phase independently shippable.
 - Do not start phase 3 or 4 model changes inside phase 1 just for convenience unless a minimal seam is strictly required.
 - Keep desktop untouched unless shared logic changes require parity-safe adjustments.
-- Update `docs/transition_tracker.md` at the end of each completed phase with only the current high-signal outcome and follow-up.
+- Update current-state guidance docs when a completed phase changes architecture or workflow assumptions in a lasting way.
 
 ## Assumptions
 - Operator throughput is the highest-value first priority.

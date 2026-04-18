@@ -65,8 +65,8 @@
   - Add Postgres transaction/concurrency coverage.
 - Modify: `tests/trusted_profile_authoring_repository_tests.py`
   - Add repository-level publish transaction tests.
-- Modify: `docs/transition_tracker.md`
-  - Record the final hardened architecture and remaining intentional seams.
+- Modify: current-state repo guidance docs
+  - Record the final hardened architecture and remaining intentional seams where the repo now keeps current guidance.
 
 ## Task 1: Add Persistence Conflict Primitives And Draft Revision Schema
 
@@ -572,7 +572,7 @@ git commit -m "refactor: harden export cleanup and remove obsolete publish helpe
 **Files:**
 - Modify: `api/dependencies.py`
 - Modify: `services/trusted_profile_authoring_repository.py`
-- Modify: `docs/transition_tracker.md`
+- Modify: current-state repo guidance docs when needed
 - Modify: `README.md` only if naming/docs are now stale
 - Test: `tests/api_tests.py`
 - Test: `tests/postgres_lineage_store_tests.py`
@@ -602,14 +602,10 @@ Expected: `PASS`
 # - trim duplicate comments/docstrings that still describe the repo as a migration midpoint
 ```
 
-- [ ] **Step 4: Update the tracker and docs**
+- [ ] **Step 4: Update the current-state docs**
 
 ```markdown
-### [2026-04-18] Draft/review persistence now uses fail-fast concurrency and transactional publish boundaries
-- hosted draft mutations and publish now require the current draft revision
-- review edit appends now compare-and-swap the current revision
-- publish pointer updates and draft deletion commit atomically
-- intentionally retained compatibility seams remain explicit: ProfileExecutionCompatibilityAdapter and local runtime storage
+Document the final hardened architecture and any intentionally retained compatibility seams in the current repo guidance docs.
 ```
 
 - [ ] **Step 5: Run the full verification sweep**
@@ -621,7 +617,7 @@ Expected: `all targeted suites pass`
 - [ ] **Step 6: Commit**
 
 ```bash
-git add api/dependencies.py services/trusted_profile_authoring_repository.py docs/transition_tracker.md README.md tests/api_tests.py tests/postgres_lineage_store_tests.py tests/runtime_storage_tests.py
+git add api/dependencies.py services/trusted_profile_authoring_repository.py AGENTS.md README.md tests/api_tests.py tests/postgres_lineage_store_tests.py tests/runtime_storage_tests.py
 git commit -m "refactor: finalize post-migration hardening cleanup"
 ```
 

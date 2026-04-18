@@ -331,7 +331,7 @@ Current status in plain terms:
 - Keep API and UI layers thin; business rules belong in domain/config/service layers where possible.
 - Keep PySide widget code thin when desktop code is touched.
 - Add regression tests for parser, normalization, validation, export, and config-loading changes.
-- Keep `docs/transition_tracker.md` current for meaningful architecture/workflow changes.
+- Keep `AGENTS.md` and `README.md` aligned with meaningful architecture or workflow changes.
 
 ## Future Direction
 
