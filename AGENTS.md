@@ -1,21 +1,22 @@
 # AGENTS.md
 
-Use .\.venv\Scripts\python.exe for all Python commands, tests, and dependency checks in this repo.
+Use `.\.venv\Scripts\python.exe` for all Python commands, tests, and dependency checks in this repo.
 
-## Project Context
-This repository is now a web-first job cost recap product built around a shared Python engine and service layer.
+## Current Product State
+This repository is a web-first job cost recap product built around a shared Python engine and service layer.
 
 Current delivery model:
-- `web/` is the primary operator-facing delivery shell.
+- `web/` is the primary operator-facing shell.
 - `api/` is the primary backend boundary for browser workflows.
 - `app/` remains a valuable desktop fallback and reference implementation.
 
-The desktop app is not throwaway code. It still matters as:
-- a production fallback when needed
-- a reference for hardened workflow behavior
-- a secondary delivery shell that should remain stable when touched
+Current product surface:
+- browser upload, processing, review, and export workflows are active
+- browser trusted-profile selection and profile-settings authoring are active
+- shared persistence, lineage, and runtime-storage seams now support local and hosted-oriented workflows
+- desktop still matters as a fallback and as a correctness reference when shared behavior is touched
 
-At the same time, the repo is no longer in an early migration stance where web/API work is assumed out of scope. Web and API work are normal in-scope parts of the product now.
+This repo no longer carries a repo-local tracker workflow. Use the current code, tests, `README.md`, and active plan/spec docs for context when needed.
 
 ---
 
@@ -23,16 +24,18 @@ At the same time, the repo is no longer in an early migration stance where web/A
 Treat this repo as:
 - a reusable product engine in `core/`
 - a reusable orchestration layer in `services/`
+- a persistence/runtime layer in `infrastructure/`
 - a web-first delivery system with desktop fallback
 
 Default assumptions:
 - prefer reusable engine/service logic over delivery-specific logic
-- preserve current lineage and immutability rules
+- preserve lineage, immutability, and published-version rules
+- keep API and UI layers thin
 - keep desktop stable when desktop code is touched
 - avoid unnecessary platform sprawl or speculative infrastructure
 - treat one-organization internal use as the default unless the task explicitly expands scope
 
-Avoid assuming that the right answer is to build broad multi-tenant provisioning, billing, background-worker infrastructure, or other platform-heavy features unless the current task clearly asks for them.
+Avoid assuming the right answer is broad platform buildout such as billing, background workers, admin consoles, or generalized multi-tenant infrastructure unless the current task clearly needs it.
 
 ---
 
@@ -47,6 +50,7 @@ Meaningful work should preserve these product realities:
 - raw mapping source and resolved recap/export classification must stay separate
 - profile/config behavior should remain data-driven
 - current hardened desktop behavior is still a useful correctness reference when shared logic is touched
+- review and export behavior must continue to respect immutable processing snapshots and exact revision lineage
 
 ---
 
@@ -70,18 +74,25 @@ Workflow orchestration and behavior shaping:
 - profile resolution
 - processing-run creation and lineage capture
 - review edit application and revision behavior
-- profile authoring/edit orchestration
+- trusted-profile authoring/edit orchestration
 - blocker/warning shaping
 - export-readiness decisions
 - export generation orchestration
 
-### 3. Delivery layers
+### 3. Persistence / runtime layer
+Infrastructure concerns behind stable seams:
+- lineage-store implementations
+- schema and migrations
+- runtime storage
+- hosted/local runtime composition
+
+### 4. Delivery layers
 Interface-specific behavior:
 - FastAPI routes and schemas
 - React/browser UI
 - PySide windows, dialogs, tables, and widget refreshes
 
-Keep business logic out of UI glue when a service or core location is cleaner.
+Keep business logic out of route glue and UI glue when a service, core, or infrastructure seam is cleaner.
 
 ---
 
@@ -103,11 +114,11 @@ Prefer:
 
 Avoid:
 - broad rewrites unless requested
-- mixing unrelated refactor + feature + UI redesign in one change
-- embedding business rules directly in browser widgets or PySide UI code
+- mixing unrelated refactor, feature, and UI redesign in one change
+- embedding business rules directly in React components, FastAPI routes, or PySide widgets
 - speculative platform buildout that is not needed for the task
 
-Web/API work is normal in-scope, but it should still be thin over the accepted service and product rules rather than turning into infrastructure sprawl.
+Web/API work is normal in-scope, but it should stay thin over the accepted service and product rules rather than turning into infrastructure sprawl.
 
 ---
 
@@ -117,10 +128,11 @@ Any work touching processing, review, profile authoring, or export should preser
 - each `ProcessingRun` is a fixed snapshot
 - reprocessing with new logic or settings creates a new `ProcessingRun`
 - a `ReviewSession` belongs to one specific `ProcessingRun`
-- review edits are append-only overlays/deltas, not destructive rewrites of run records
+- review edits are append-only overlays or deltas, not destructive rewrites of run records
 - every run captures the exact profile/config snapshot and engine context used at process time
 - later profile/config changes do not mutate old runs, review sessions, exports, or prior results
 - profile authoring changes become processable only through the published-version path, not through mutable in-progress state
+- export should remain bound to the reviewed run or revision that produced it, and profile-setting changes must not silently rewrite prior review meaning
 
 Do not introduce persistence, API, or UI behavior that weakens these boundaries.
 
@@ -138,6 +150,8 @@ Especially protect:
 - workflow-level edit behavior
 - review lineage behavior
 - trusted-profile authoring behavior
+- optimistic-concurrency and persistence conflict behavior
+- org-scoped persistence or hosted runtime behavior when touched
 - browser workflow regressions
 - bug fixes for previously observed trust-eroding issues
 
@@ -157,35 +171,21 @@ When touching web/API code:
 - treat the existing web/API stack as a real product surface, not scaffolding
 - keep behavior anchored in shared services/helpers when possible
 - avoid widening into unrelated platform/admin work unless requested
+- do not assume single-instance local-disk behavior where runtime storage or hosted composition already provides a cleaner seam
 
 ---
 
-## Tracker Workflow
-The live tracker is:
+## Documentation Guidance
+Keep the docs that remain in this repo aligned with the actual current state.
 
-`docs/transition_tracker.md`
+Prefer:
+- updating `AGENTS.md` when repo guidance or engineering stance changes
+- updating `README.md` when operator-visible capabilities or architecture summaries change
+- keeping dated plan/spec docs under `docs/superpowers/` as historical implementation context when useful
 
-The historical archive is:
-
-`docs/transition_tracker_archive.md`
-
-For meaningful work:
-1. read `AGENTS.md`
-2. read the previous day's entries in `docs/transition_tracker.md` by default
-3. widen to older live-tracker entries or the archive only when the task depends on older decisions, architecture, or historical context
-
-Update the live tracker when a task changes:
-- architecture or delivery boundaries
-- workflow behavior
-- parsing/normalization/validation/export behavior
-- profile/config behavior
-- current product stance
-- active risks or priorities
-- meaningful technical debt or follow-up guidance
-
-Do not update the tracker for trivial edits or purely local cleanup with no behavior or architecture impact.
-
-Tracker updates should stay concise and current-state oriented.
+Avoid:
+- reintroducing a repo-local transition tracker or archive unless explicitly requested
+- creating process-heavy guidance that duplicates current README or code truth without adding real decision value
 
 ---
 
@@ -206,8 +206,6 @@ After meaningful code changes, provide a concise summary that includes:
 - desktop/web impact when relevant
 - any notable risks or follow-up items
 
-If the tracker was updated, say so.
-
 ---
 
 ## Success Condition
@@ -218,4 +216,4 @@ This file is being followed correctly when:
 - desktop remains stable when touched
 - lineage and published-version rules stay intact
 - guidance docs stay aligned with the real repo state
-- the live tracker remains short, current, and useful
+- repo guidance stays useful without relying on a separate tracker workflow
