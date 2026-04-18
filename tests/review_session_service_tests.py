@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,10 +14,18 @@ from openpyxl import Workbook, load_workbook
 
 from core.config import ConfigLoader, ProfileManager
 from core.models import MATERIAL, PendingRecordEdit, Record
+from core.models.lineage import User
 from infrastructure.persistence.sqlite_lineage_store import SqliteLineageStore
+from infrastructure.storage import StoredArtifact
 from infrastructure.storage import LocalRuntimeFileStore
+from services.profile_execution_compatibility_adapter import ProfileExecutionCompatibilityAdapter
+from services.profile_authoring_errors import ProfileAuthoringPersistenceConflictError
 from services.processing_run_service import ProcessingRunService
+from services.profile_authoring_service import ProfileAuthoringService
+from services.request_context import RequestContext
 from services.review_session_service import HistoricalExportUnavailableError, ReviewSessionService
+from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
+from services.trusted_profile_provisioning_service import TrustedProfileProvisioningService
 
 
 TEST_ROOT = Path("tests/_review_session_tmp")
@@ -45,14 +54,38 @@ class ReviewSessionServiceTests(unittest.TestCase):
             legacy_config_root=TEST_ROOT / "legacy_config",
         )
         self.lineage_store = SqliteLineageStore()
-        self.processing_run_service = ProcessingRunService(
+        self.repository = TrustedProfileAuthoringRepository(
+            lineage_store=self.lineage_store,
+            now_provider=lambda: self.created_at,
+        )
+        self.trusted_profile_provisioning_service = TrustedProfileProvisioningService(
+            lineage_store=self.lineage_store,
+            repository=self.repository,
+            profile_manager=self.profile_manager,
+            now_provider=lambda: self.created_at,
+        )
+        self.profile_execution_compatibility_adapter = ProfileExecutionCompatibilityAdapter(
             lineage_store=self.lineage_store,
             profile_manager=self.profile_manager,
+        )
+        self.profile_authoring_service = ProfileAuthoringService(
+            repository=self.repository,
+            trusted_profile_provisioning_service=self.trusted_profile_provisioning_service,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
+            profile_manager=self.profile_manager,
+            now_provider=lambda: self.created_at,
+        )
+        self.processing_run_service = ProcessingRunService(
+            lineage_store=self.lineage_store,
+            trusted_profile_provisioning_service=self.trusted_profile_provisioning_service,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
+            profile_authoring_service=self.profile_authoring_service,
             engine_version="engine-1",
             now_provider=lambda: self.created_at,
         )
         self.review_session_service = ReviewSessionService(
             lineage_store=self.lineage_store,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
             now_provider=lambda: self.created_at,
         )
 
@@ -82,6 +115,54 @@ class ReviewSessionServiceTests(unittest.TestCase):
         self.assertEqual(updated_state.records[0].vendor_name_normalized, "Vendor B")
         self.assertEqual(persisted_run_records[0].canonical_record["vendor_name_normalized"], "Vendor A")
         self.assertEqual(persisted_edits[0].changed_fields, {"vendor_name_normalized": "Vendor B"})
+
+    def test_hosted_review_edits_reject_stale_expected_current_revision(self) -> None:
+        processing_result = self._create_processing_run()
+        self.lineage_store.ensure_user(
+            User(
+                user_id="user-1",
+                organization_id="org-default",
+                email="user1@example.com",
+                display_name="User One",
+                auth_subject="auth-user-1",
+                is_active=True,
+                created_at=self.created_at,
+            )
+        )
+        request_context = RequestContext(
+            organization_id="org-default",
+            user_id="user-1",
+            role="member",
+        )
+
+        updated_state = self.review_session_service.apply_review_edits(
+            processing_result.processing_run.processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"vendor_name_normalized": "Vendor B"},
+                )
+            ],
+            expected_current_revision=0,
+            request_context=request_context,
+        )
+
+        with self.assertRaises(ProfileAuthoringPersistenceConflictError) as exc_info:
+            self.review_session_service.apply_review_edits(
+                processing_result.processing_run.processing_run_id,
+                [
+                    PendingRecordEdit(
+                        record_key="record-0",
+                        changed_fields={"vendor_name_normalized": "Vendor C"},
+                    )
+                ],
+                expected_current_revision=0,
+                request_context=request_context,
+            )
+
+        self.assertEqual(updated_state.review_session.current_revision, 1)
+        self.assertEqual(exc_info.exception.error_code, "review_session_persistence_conflict")
+        self.assertIn("expected_current_revision", exc_info.exception.field_errors)
 
     def test_reopening_review_session_resumes_latest_revision_for_the_run(self) -> None:
         processing_result = self._create_processing_run()
@@ -223,6 +304,7 @@ class ReviewSessionServiceTests(unittest.TestCase):
         )
         service = ReviewSessionService(
             lineage_store=self.lineage_store,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
             artifact_store=artifact_store,
             now_provider=lambda: self.created_at,
         )
@@ -240,6 +322,63 @@ class ReviewSessionServiceTests(unittest.TestCase):
         self.assertEqual(export_result.stored_artifact.original_filename, "sample_report-recap-rev-0.xlsx")
         self.assertEqual(resolved_payload.file_path, export_result.output_path)
         self.assertEqual(worksheet["G27"].value, "Vendor A")
+
+    def test_review_revision_advance_rolls_back_when_edit_insert_fails(self) -> None:
+        processing_result = self._create_processing_run()
+        processing_run_id = processing_result.processing_run.processing_run_id
+        review_session = self.review_session_service.open_review_session(processing_run_id).review_session
+        self.lineage_store._connection.execute(
+            """
+            CREATE TRIGGER reviewed_record_edits_block_insert
+            BEFORE INSERT ON reviewed_record_edits
+            BEGIN
+                SELECT RAISE(ABORT, 'block review edit insert');
+            END;
+            """
+        )
+        self.lineage_store._connection.commit()
+
+        with self.assertRaisesRegex(Exception, "block review edit insert"):
+            self.review_session_service.apply_review_edits(
+                processing_run_id,
+                [
+                    PendingRecordEdit(
+                        record_key="record-0",
+                        changed_fields={"vendor_name_normalized": "Vendor B"},
+                    )
+                ],
+            )
+
+        persisted_session = self.lineage_store.get_review_session(review_session.review_session_id)
+        persisted_edits = self.lineage_store.list_reviewed_record_edits(review_session.review_session_id)
+
+        self.assertEqual(persisted_session.current_revision, 0)
+        self.assertEqual(persisted_edits, [])
+
+    def test_export_artifact_storage_is_cleaned_up_when_lineage_persistence_fails(self) -> None:
+        processing_result = self._create_processing_run()
+        artifact_store = TrackingArtifactStore()
+        service = ReviewSessionService(
+            lineage_store=self.lineage_store,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
+            artifact_store=artifact_store,
+            now_provider=lambda: self.created_at,
+        )
+
+        with patch.object(
+            self.lineage_store,
+            "create_export_artifact",
+            side_effect=RuntimeError("lineage insert failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "lineage insert failed"):
+                service.export_session_revision(
+                    processing_result.processing_run.processing_run_id,
+                    session_revision=0,
+                )
+
+        self.assertEqual(len(artifact_store.saved_artifacts), 1)
+        self.assertEqual(artifact_store.cleaned_storage_refs, [artifact_store.saved_artifacts[0].storage_ref])
+        self.assertFalse(artifact_store.saved_artifacts[0].file_path.exists())
 
     def test_legacy_runs_are_marked_non_reproducible_and_fail_closed_for_historical_export(self) -> None:
         processing_result = self._create_processing_run()
@@ -447,6 +586,51 @@ class ReviewSessionServiceTests(unittest.TestCase):
     def _write_json(self, path: Path, payload: object) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+class TrackingArtifactStore:
+    """Minimal runtime storage double that records export cleanup activity."""
+
+    def __init__(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory(prefix="review-session-artifacts-")
+        self.saved_artifacts: list[StoredArtifact] = []
+        self.cleaned_storage_refs: list[str] = []
+
+    def save_export_artifact(
+        self,
+        *,
+        processing_run_id: str,
+        session_revision: int,
+        original_filename: str,
+        content_bytes: bytes,
+        content_type: str | None = None,
+    ) -> StoredArtifact:
+        artifact_dir = Path(self._tmpdir.name) / f"{processing_run_id.replace(':', '-')}-{session_revision}-{len(self.saved_artifacts)}"
+        artifact_dir.mkdir(parents=True, exist_ok=False)
+        artifact_path = artifact_dir / original_filename
+        artifact_path.write_bytes(content_bytes)
+        stored_artifact = StoredArtifact(
+            storage_ref=f"exports/{artifact_dir.name}/{original_filename}",
+            original_filename=original_filename,
+            content_type=content_type or "application/octet-stream",
+            file_size_bytes=len(content_bytes),
+            file_path=artifact_path,
+        )
+        self.saved_artifacts.append(stored_artifact)
+        return stored_artifact
+
+    def get_export_artifact(self, storage_ref: str) -> StoredArtifact:
+        for stored_artifact in self.saved_artifacts:
+            if stored_artifact.storage_ref == storage_ref:
+                return stored_artifact
+        raise FileNotFoundError(storage_ref)
+
+    def delete_export_artifact(self, storage_ref: str) -> None:
+        self.cleaned_storage_refs.append(storage_ref)
+        for stored_artifact in self.saved_artifacts:
+            if stored_artifact.storage_ref == storage_ref:
+                shutil.rmtree(stored_artifact.file_path.parent, ignore_errors=True)
+                return
 
 
 if __name__ == "__main__":

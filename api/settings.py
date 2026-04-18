@@ -12,7 +12,15 @@ from typing import Mapping
 class ApiSettings:
     """Small runtime configuration seam for local API startup and tests."""
 
+    database_provider: str
     database_path: str | Path
+    postgres_admin_url: str | None
+    postgres_pooled_url: str | None
+    postgres_schema: str
+    auth_mode: str
+    auth_secret: str | None
+    storage_provider: str
+    blob_read_write_token: str | None
     upload_root: Path
     export_root: Path
     upload_retention_hours: int
@@ -23,14 +31,30 @@ class ApiSettings:
         """Build phase-1 API settings from environment variables with safe local defaults."""
         environ = env or os.environ
         runtime_root = Path(environ.get("JOB_COST_API_RUNTIME_ROOT", "runtime/api")).expanduser()
+        database_provider = str(environ.get("JOB_COST_API_DATABASE_PROVIDER", "sqlite")).strip().lower() or "sqlite"
         database_path = environ.get("JOB_COST_API_DATABASE_PATH") or str(runtime_root / "lineage.db")
+        postgres_admin_url = str(environ.get("JOB_COST_API_POSTGRES_ADMIN_URL", "")).strip() or None
+        postgres_pooled_url = str(environ.get("JOB_COST_API_POSTGRES_POOLED_URL", "")).strip() or None
+        postgres_schema = str(environ.get("JOB_COST_API_POSTGRES_SCHEMA", "public")).strip() or "public"
+        auth_mode = str(environ.get("JOB_COST_API_AUTH_MODE", "local")).strip().lower() or "local"
+        auth_secret = str(environ.get("JOB_COST_API_AUTH_SECRET", "")).strip() or None
+        storage_provider = str(environ.get("JOB_COST_API_STORAGE_PROVIDER", "local")).strip().lower() or "local"
+        blob_read_write_token = str(environ.get("BLOB_READ_WRITE_TOKEN", "")).strip() or None
         upload_root = Path(environ.get("JOB_COST_API_UPLOAD_ROOT", str(runtime_root / "uploads"))).expanduser()
         export_root = Path(environ.get("JOB_COST_API_EXPORT_ROOT", str(runtime_root / "exports"))).expanduser()
         raw_upload_retention_hours = str(environ.get("JOB_COST_API_UPLOAD_RETENTION_HOURS", "24")).strip()
         upload_retention_hours = int(raw_upload_retention_hours or "24")
         engine_version = str(environ.get("JOB_COST_API_ENGINE_VERSION", "dev-local")).strip() or "dev-local"
         return cls(
+            database_provider=database_provider,
             database_path=database_path,
+            postgres_admin_url=postgres_admin_url,
+            postgres_pooled_url=postgres_pooled_url,
+            postgres_schema=postgres_schema,
+            auth_mode=auth_mode,
+            auth_secret=auth_secret,
+            storage_provider=storage_provider,
+            blob_read_write_token=blob_read_write_token,
             upload_root=upload_root,
             export_root=export_root,
             upload_retention_hours=upload_retention_hours,
@@ -40,7 +64,15 @@ class ApiSettings:
     def with_overrides(
         self,
         *,
+        database_provider: str | None = None,
         database_path: str | Path | None = None,
+        postgres_admin_url: str | None = None,
+        postgres_pooled_url: str | None = None,
+        postgres_schema: str | None = None,
+        auth_mode: str | None = None,
+        auth_secret: str | None = None,
+        storage_provider: str | None = None,
+        blob_read_write_token: str | None = None,
         upload_root: str | Path | None = None,
         export_root: str | Path | None = None,
         upload_retention_hours: int | None = None,
@@ -48,7 +80,21 @@ class ApiSettings:
     ) -> "ApiSettings":
         """Return one settings object with optional explicit overrides applied."""
         return ApiSettings(
+            database_provider=self.database_provider if database_provider is None else str(database_provider).strip().lower(),
             database_path=self.database_path if database_path is None else database_path,
+            postgres_admin_url=self.postgres_admin_url if postgres_admin_url is None else postgres_admin_url,
+            postgres_pooled_url=self.postgres_pooled_url if postgres_pooled_url is None else postgres_pooled_url,
+            postgres_schema=self.postgres_schema if postgres_schema is None else str(postgres_schema).strip() or "public",
+            auth_mode=self.auth_mode if auth_mode is None else str(auth_mode).strip().lower() or "local",
+            auth_secret=self.auth_secret if auth_secret is None else (str(auth_secret).strip() or None),
+            storage_provider=(
+                self.storage_provider if storage_provider is None else str(storage_provider).strip().lower() or "local"
+            ),
+            blob_read_write_token=(
+                self.blob_read_write_token
+                if blob_read_write_token is None
+                else (str(blob_read_write_token).strip() or None)
+            ),
             upload_root=self.upload_root if upload_root is None else Path(upload_root).expanduser(),
             export_root=self.export_root if export_root is None else Path(export_root).expanduser(),
             upload_retention_hours=(

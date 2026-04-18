@@ -9,11 +9,7 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
-from .runtime_storage import RuntimeStorage, StoredArtifact, StoredUpload
-
-
-class ExpiredUploadError(FileNotFoundError):
-    """Raised when a cached upload has expired and must be uploaded again."""
+from .runtime_storage import ExpiredUploadError, RuntimeStorage, StoredArtifact, StoredUpload
 
 
 class LocalRuntimeFileStore(RuntimeStorage):
@@ -200,6 +196,15 @@ class LocalRuntimeFileStore(RuntimeStorage):
             file_path=file_path,
         )
 
+    def delete_export_artifact(self, storage_ref: str) -> None:
+        """Delete one previously stored export artifact by storage reference."""
+        export_dir = self._resolve_storage_ref_dir(
+            root=self._export_root,
+            storage_ref=storage_ref,
+            expected_prefix="exports/",
+        )
+        self._delete_runtime_dir(self._export_root, export_dir)
+
     def save_profile_sync_export(
         self,
         *,
@@ -328,8 +333,12 @@ class LocalRuntimeFileStore(RuntimeStorage):
 
     def _delete_upload_dir(self, upload_dir: Path) -> None:
         """Delete one cached upload directory safely inside the configured upload root."""
-        resolved_dir = upload_dir.resolve()
-        resolved_dir.relative_to(self._upload_root)
+        self._delete_runtime_dir(self._upload_root, upload_dir)
+
+    def _delete_runtime_dir(self, root: Path, runtime_dir: Path) -> None:
+        """Delete one runtime-managed directory safely inside the configured root."""
+        resolved_dir = runtime_dir.resolve()
+        resolved_dir.relative_to(root)
         shutil.rmtree(resolved_dir, ignore_errors=True)
 
     def _normalize_timestamp(self, value: datetime) -> datetime:

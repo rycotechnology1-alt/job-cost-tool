@@ -260,6 +260,19 @@ Launch the API locally:
 python -m uvicorn api.asgi:app --reload
 ```
 
+### Postgres Env Prep
+
+Before the Postgres-backed runtime lands, you can stage the Neon connection strings now:
+
+1. Copy `.env.example` to `.env` in the repo root.
+2. Paste your Neon direct admin/migration string into `JOB_COST_API_POSTGRES_ADMIN_URL`.
+3. Paste your Neon pooled app string into `JOB_COST_API_POSTGRES_POOLED_URL`.
+
+Notes:
+- `.env` is already gitignored.
+- `JOB_COST_API_DATABASE_PROVIDER` should stay `sqlite` for now.
+- This repo does not consume those Postgres vars yet; this is a clean staging step so the next phase can wire them in without inventing names later.
+
 Launch the web app locally:
 
 ```powershell

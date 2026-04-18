@@ -39,6 +39,16 @@ function buildPublishedDetail(openDraftId: string | null = null, versionNumber =
       template_file_hash: "template-file-hash",
       template_filename: "recap_template.xlsx",
     },
+    template_metadata: {
+      template_filename: "recap_template.xlsx",
+      labor_slots_total: 4,
+      equipment_slots_total: 4,
+      workbook_title: "Recap Template",
+    },
+    labor_active_slot_count: 2,
+    labor_inactive_slot_count: 0,
+    equipment_active_slot_count: 2,
+    equipment_inactive_slot_count: 0,
     open_draft_id: openDraftId,
     deferred_domains: {
       vendor_normalization: { aliases: ["National Grid"] },
@@ -59,7 +69,13 @@ function buildDraftState() {
     version_label: "1.0",
     current_published_version: buildPublishedDetail().current_published_version,
     base_trusted_profile_version_id: "trusted-profile-version-1",
+    draft_revision: 1,
     draft_content_hash: "draft-content-hash",
+    template_metadata: clone(buildPublishedDetail().template_metadata),
+    labor_active_slot_count: 2,
+    labor_inactive_slot_count: 0,
+    equipment_active_slot_count: 2,
+    equipment_inactive_slot_count: 0,
     default_omit_rules: [
       {
         phase_code: "29 .999",
@@ -167,6 +183,13 @@ function buildDraftState() {
         rate: "210",
       },
     ],
+    export_settings: {
+      labor_minimum_hours: {
+        enabled: false,
+        threshold_hours: "",
+        minimum_hours: "",
+      },
+    },
     deferred_domains: buildPublishedDetail().deferred_domains,
     validation_errors: [],
   };
@@ -246,6 +269,58 @@ function installSettingsFetchMock(options?: {
     const url = typeof input === "string" ? input : input.toString();
     const method = init?.method ?? "GET";
 
+    function parseJsonBody<T extends Record<string, unknown>>(): T {
+      return JSON.parse(String(init?.body ?? "{}")) as T;
+    }
+
+    function staleDraftResponse(): Response {
+      return new Response(
+        JSON.stringify({
+          detail: {
+            message: "Refresh the draft and retry with the latest revision before saving.",
+            error_code: "profile_authoring_persistence_conflict",
+            field_errors: {
+              expected_draft_revision: ["Refresh the draft and retry with the latest revision before saving."],
+            },
+          },
+        }),
+        {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    function requireExpectedDraftRevision(payload: Record<string, unknown>): Response | null {
+      if (typeof payload.expected_draft_revision !== "number") {
+        return new Response(
+          JSON.stringify({
+            detail: [
+              {
+                type: "missing",
+                loc: ["body", "expected_draft_revision"],
+                msg: "Field required",
+                input: payload,
+              },
+            ],
+          }),
+          {
+            status: 422,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+      if (payload.expected_draft_revision !== state.draftState.draft_revision) {
+        return staleDraftResponse();
+      }
+      return null;
+    }
+
+    function advanceDraftRevision() {
+      state.draftState.draft_revision += 1;
+      state.draftState.draft_content_hash = `draft-content-hash-v${state.draftState.draft_revision}`;
+    }
+
     if ((url === "/api/trusted-profiles" || url === "/api/trusted-profiles?include_archived=true") && method === "GET") {
       return new Response(JSON.stringify(trustedProfilesPayload), {
         status: 200,
@@ -288,8 +363,16 @@ function installSettingsFetchMock(options?: {
     }
 
     if (url === "/api/profile-drafts/draft-1/default-omit" && method === "PATCH") {
-      const payload = JSON.parse(String(init?.body));
+      const payload = parseJsonBody<{
+        expected_draft_revision?: number;
+        default_omit_rules: ReturnType<typeof buildDraftState>["default_omit_rules"];
+      }>();
+      const revisionError = requireExpectedDraftRevision(payload);
+      if (revisionError) {
+        return revisionError;
+      }
       state.draftState.default_omit_rules = payload.default_omit_rules;
+      advanceDraftRevision();
       return new Response(JSON.stringify(state.draftState), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -297,8 +380,16 @@ function installSettingsFetchMock(options?: {
     }
 
     if (url === "/api/profile-drafts/draft-1/labor-mappings" && method === "PATCH") {
-      const payload = JSON.parse(String(init?.body));
+      const payload = parseJsonBody<{
+        expected_draft_revision?: number;
+        labor_mappings: ReturnType<typeof buildDraftState>["labor_mappings"];
+      }>();
+      const revisionError = requireExpectedDraftRevision(payload);
+      if (revisionError) {
+        return revisionError;
+      }
       state.draftState.labor_mappings = payload.labor_mappings;
+      advanceDraftRevision();
       return new Response(JSON.stringify(state.draftState), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -306,8 +397,16 @@ function installSettingsFetchMock(options?: {
     }
 
     if (url === "/api/profile-drafts/draft-1/equipment-mappings" && method === "PATCH") {
-      const payload = JSON.parse(String(init?.body));
+      const payload = parseJsonBody<{
+        expected_draft_revision?: number;
+        equipment_mappings: ReturnType<typeof buildDraftState>["equipment_mappings"];
+      }>();
+      const revisionError = requireExpectedDraftRevision(payload);
+      if (revisionError) {
+        return revisionError;
+      }
       state.draftState.equipment_mappings = payload.equipment_mappings;
+      advanceDraftRevision();
       return new Response(JSON.stringify(state.draftState), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -315,7 +414,15 @@ function installSettingsFetchMock(options?: {
     }
 
     if (url === "/api/profile-drafts/draft-1/classifications" && method === "PATCH") {
-      const payload = JSON.parse(String(init?.body));
+      const payload = parseJsonBody<{
+        expected_draft_revision?: number;
+        labor_slots: ReturnType<typeof buildDraftState>["labor_slots"];
+        equipment_slots: ReturnType<typeof buildDraftState>["equipment_slots"];
+      }>();
+      const revisionError = requireExpectedDraftRevision(payload);
+      if (revisionError) {
+        return revisionError;
+      }
       if (options?.enforceClassificationReferenceValidation) {
         const validationError = validateClassificationReferences(
           state.draftState,
@@ -331,6 +438,7 @@ function installSettingsFetchMock(options?: {
       }
       state.draftState.labor_slots = payload.labor_slots;
       state.draftState.equipment_slots = payload.equipment_slots;
+      advanceDraftRevision();
       return new Response(JSON.stringify(state.draftState), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -338,9 +446,18 @@ function installSettingsFetchMock(options?: {
     }
 
     if (url === "/api/profile-drafts/draft-1/rates" && method === "PATCH") {
-      const payload = JSON.parse(String(init?.body));
+      const payload = parseJsonBody<{
+        expected_draft_revision?: number;
+        labor_rates: ReturnType<typeof buildDraftState>["labor_rates"];
+        equipment_rates: ReturnType<typeof buildDraftState>["equipment_rates"];
+      }>();
+      const revisionError = requireExpectedDraftRevision(payload);
+      if (revisionError) {
+        return revisionError;
+      }
       state.draftState.labor_rates = payload.labor_rates;
       state.draftState.equipment_rates = payload.equipment_rates;
+      advanceDraftRevision();
       return new Response(JSON.stringify(state.draftState), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -348,6 +465,11 @@ function installSettingsFetchMock(options?: {
     }
 
     if (url === "/api/profile-drafts/draft-1/publish" && method === "POST") {
+      const payload = parseJsonBody<{ expected_draft_revision?: number }>();
+      const revisionError = requireExpectedDraftRevision(payload);
+      if (revisionError) {
+        return revisionError;
+      }
       if (state.publishFails) {
         return new Response(JSON.stringify({ detail: "Draft validation failed before publish." }), {
           status: 400,
@@ -401,7 +523,11 @@ function installSettingsFetchMock(options?: {
   return state;
 }
 
-function installSecondProfileCreationFetchMock() {
+function installSecondProfileCreationFetchMock(options?: {
+  deferFieldTeamDetailOnce?: boolean;
+  failFieldTeamDetailOnce?: boolean;
+  includeSecondProfileInitially?: boolean;
+}) {
   const defaultProfile = clone(trustedProfilesPayload[0]);
   const secondProfile = {
     trusted_profile_id: "trusted-profile:org-default:field-team",
@@ -474,13 +600,16 @@ function installSecondProfileCreationFetchMock() {
     validation_errors: [],
   };
   const state = {
-    activeTrustedProfiles: [defaultProfile],
+    activeTrustedProfiles: options?.includeSecondProfileInitially ? [defaultProfile, secondProfile] : [defaultProfile],
     archivedTrustedProfiles: [] as Array<typeof defaultProfile | typeof archivedSecondProfile>,
     defaultDetail,
     defaultDraft,
     secondDetail,
     secondDraft,
   };
+  let deferredFieldTeamDetailResolve: (() => void) | null = null;
+  let deferredFieldTeamDetailUsed = false;
+  let failedFieldTeamDetailUsed = false;
 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input.toString();
@@ -554,6 +683,25 @@ function installSecondProfileCreationFetchMock() {
     }
 
     if (url === "/api/profiles/trusted-profile:org-default:field-team" && method === "GET") {
+      if (options?.failFieldTeamDetailOnce && !failedFieldTeamDetailUsed) {
+        failedFieldTeamDetailUsed = true;
+        return new Response(JSON.stringify({ detail: "Internal Server Error" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (options?.deferFieldTeamDetailOnce && !deferredFieldTeamDetailUsed) {
+        deferredFieldTeamDetailUsed = true;
+        return new Promise<Response>((resolve) => {
+          deferredFieldTeamDetailResolve = () =>
+            resolve(
+              new Response(JSON.stringify(state.secondDetail), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              }),
+            );
+        });
+      }
       return new Response(JSON.stringify(state.secondDetail), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -633,7 +781,13 @@ function installSecondProfileCreationFetchMock() {
     throw new Error(`Unhandled fetch call for ${method} ${url}`);
   });
 
-  return state;
+  return {
+    state,
+    resolveDeferredFieldTeamDetail() {
+      deferredFieldTeamDetailResolve?.();
+      deferredFieldTeamDetailResolve = null;
+    },
+  };
 }
 
 function installCreateConflictFetchMock() {
@@ -1268,6 +1422,93 @@ describe("Profile settings workspace", () => {
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/labor-mappings" && init?.method === "PATCH")).toBe(true);
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/publish" && init?.method === "POST")).toBe(true);
+  });
+
+  it("re-enters profile settings under the newly selected review profile instead of reusing the prior profile editor context", async () => {
+    const user = userEvent.setup();
+    installSecondProfileCreationFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
+    await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
+    await screen.findByRole("heading", { name: "Field Team" });
+
+    await user.click(screen.getByRole("button", { name: "Default Profile" }));
+    await screen.findByRole("heading", { name: "Default Profile" });
+
+    await user.click(screen.getByRole("button", { name: /review workspace/i }));
+    const reviewTrustedProfileSelect = screen.getByRole("combobox", { name: /trusted profile/i });
+    await user.selectOptions(reviewTrustedProfileSelect, "field-team");
+    await waitFor(() => {
+      expect(reviewTrustedProfileSelect).toHaveValue("field-team");
+    });
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await screen.findByRole("heading", { name: "Field Team" });
+    expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^edit current profile$/i }));
+    await screen.findByText("Default Omit Rules");
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:field-team/draft" && init?.method === "POST")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-default" && (!init || !init.method || init.method === "GET"))).toBe(false);
+  });
+
+  it("re-enters profile settings cleanly after switching trusted profiles inside settings and leaving through review", async () => {
+    const user = userEvent.setup();
+    installSecondProfileCreationFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
+    await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
+    await screen.findByRole("heading", { name: "Field Team" });
+
+    await user.click(screen.getByRole("button", { name: "Default Profile" }));
+    await screen.findByRole("heading", { name: "Default Profile" });
+    await user.click(screen.getByRole("button", { name: "Field Team" }));
+    await screen.findByRole("heading", { name: "Field Team" });
+
+    await user.click(screen.getByRole("button", { name: /review workspace/i }));
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await screen.findByRole("heading", { name: "Field Team" });
+    expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^edit current profile$/i }));
+    await screen.findByText("Default Omit Rules");
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(
+      fetchCalls.filter(([url, init]) => url === "/api/profiles/trusted-profile:org-default:field-team" && (!init || !init.method || init.method === "GET")),
+    ).not.toHaveLength(0);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:field-team/draft" && init?.method === "POST")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-default" && (!init || !init.method || init.method === "GET"))).toBe(false);
+  });
+
+  it("recovers automatically when the first settings load for a newly selected startup profile hits a transient server error", async () => {
+    const user = userEvent.setup();
+    installSecondProfileCreationFetchMock({ failFieldTeamDetailOnce: true, includeSecondProfileInitially: true });
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    const reviewTrustedProfileSelect = screen.getByRole("combobox", { name: /trusted profile/i });
+    await user.selectOptions(reviewTrustedProfileSelect, "field-team");
+    await waitFor(() => {
+      expect(reviewTrustedProfileSelect).toHaveValue("field-team");
+    });
+
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await screen.findByRole("heading", { name: "Field Team" });
+    expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
+    expect(screen.queryByText(/internal server error/i)).not.toBeInTheDocument();
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(
+      fetchCalls.filter(([url, init]) => url === "/api/profiles/trusted-profile:org-default:field-team" && (!init || !init.method || init.method === "GET")),
+    ).toHaveLength(2);
   });
 
   it("archives a published user-created profile and removes it from the active selector list", async () => {

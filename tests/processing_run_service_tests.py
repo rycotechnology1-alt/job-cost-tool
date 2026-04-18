@@ -12,7 +12,12 @@ from unittest.mock import patch
 from core.config import ConfigLoader, ProfileManager
 from core.models import Record
 from infrastructure.persistence.sqlite_lineage_store import SqliteLineageStore
+from services.profile_authoring_errors import ProfileAuthoringPersistenceConflictError
+from services.profile_execution_compatibility_adapter import ProfileExecutionCompatibilityAdapter
+from services.profile_authoring_service import ProfileAuthoringService
 from services.processing_run_service import ProcessingRunService
+from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
+from services.trusted_profile_provisioning_service import TrustedProfileProvisioningService
 
 
 TEST_ROOT = Path("tests/_processing_run_tmp")
@@ -47,6 +52,27 @@ class ProcessingRunServiceTests(unittest.TestCase):
             legacy_config_root=TEST_ROOT / "legacy_config",
         )
         self.lineage_store = SqliteLineageStore()
+        self.repository = TrustedProfileAuthoringRepository(
+            lineage_store=self.lineage_store,
+            now_provider=lambda: self.created_at,
+        )
+        self.trusted_profile_provisioning_service = TrustedProfileProvisioningService(
+            lineage_store=self.lineage_store,
+            repository=self.repository,
+            profile_manager=self.profile_manager,
+            now_provider=lambda: self.created_at,
+        )
+        self.profile_execution_compatibility_adapter = ProfileExecutionCompatibilityAdapter(
+            lineage_store=self.lineage_store,
+            profile_manager=self.profile_manager,
+        )
+        self.profile_authoring_service = ProfileAuthoringService(
+            repository=self.repository,
+            trusted_profile_provisioning_service=self.trusted_profile_provisioning_service,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
+            profile_manager=self.profile_manager,
+            now_provider=lambda: self.created_at,
+        )
 
     def tearDown(self) -> None:
         self.lineage_store.close()
@@ -242,10 +268,61 @@ class ProcessingRunServiceTests(unittest.TestCase):
         )
         self.assertEqual(saved_rows[0]["is_observed"], True)
 
+    def test_processing_run_records_all_observations_when_one_draft_merge_hits_stale_conflict(self) -> None:
+        service = self._build_service()
+        parsed_records = [
+            self._make_unmapped_labor_record(raw_description="Labor line", union_code="104", labor_class_raw="EO"),
+            self._make_unmapped_equipment_record(raw_description="627/2025 crane truck"),
+        ]
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=parsed_records,
+        ):
+            with patch.object(
+                service._profile_authoring_service,
+                "_save_validated_bundle",
+                side_effect=ProfileAuthoringPersistenceConflictError("stale draft"),
+            ) as save_mock:
+                result = service.create_processing_run(self.source_document_path)
+
+        persisted_runs = self.lineage_store.list_processing_runs()
+        observations = self.lineage_store.list_trusted_profile_observations(result.trusted_profile.trusted_profile_id)
+
+        self.assertEqual(len(persisted_runs), 1)
+        self.assertEqual(persisted_runs[0].processing_run_id, result.processing_run.processing_run_id)
+        self.assertEqual(
+            {observation.canonical_raw_key for observation in observations},
+            {"104/EO", "CRANE TRUCK"},
+        )
+        self.assertEqual(save_mock.call_count, 2)
+
+    def test_processing_run_passes_exact_published_version_into_observation_capture(self) -> None:
+        service = self._build_service()
+        parsed_record = self._make_unmapped_labor_record(raw_description="Labor line", union_code="104", labor_class_raw="EO")
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[parsed_record],
+        ):
+            with patch.object(
+                service._profile_authoring_service,
+                "capture_unmapped_observations",
+            ) as capture_mock:
+                result = service.create_processing_run(self.source_document_path)
+
+        capture_mock.assert_called_once()
+        self.assertEqual(
+            capture_mock.call_args.kwargs["published_version"].trusted_profile_version_id,
+            result.processing_run.trusted_profile_version_id,
+        )
+
     def _build_service(self) -> ProcessingRunService:
         return ProcessingRunService(
             lineage_store=self.lineage_store,
-            profile_manager=self.profile_manager,
+            trusted_profile_provisioning_service=self.trusted_profile_provisioning_service,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
+            profile_authoring_service=self.profile_authoring_service,
             engine_version="engine-1",
             now_provider=lambda: self.created_at,
         )

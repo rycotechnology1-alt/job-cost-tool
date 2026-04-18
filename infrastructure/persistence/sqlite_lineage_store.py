@@ -22,8 +22,10 @@ from core.models.lineage import (
     TrustedProfileObservation,
     TrustedProfileSyncExport,
     TrustedProfileVersion,
+    User,
 )
 from services.lineage_service import canonicalize_json
+from services.profile_authoring_errors import ProfileAuthoringPersistenceConflictError
 
 
 class SqliteLineageStore:
@@ -66,7 +68,109 @@ class SqliteLineageStore:
                 "SELECT * FROM organizations WHERE organization_id = ?",
                 (organization_id,),
             ).fetchone()
+        else:
+            self._connection.execute(
+                """
+                UPDATE organizations
+                SET slug = ?,
+                    display_name = ?,
+                    is_seeded = ?
+                WHERE organization_id = ?
+                """,
+                (slug, display_name, int(is_seeded), organization_id),
+            )
+            self._connection.commit()
+            row = self._connection.execute(
+                "SELECT * FROM organizations WHERE organization_id = ?",
+                (organization_id,),
+            ).fetchone()
         return _organization_from_row(row)
+
+    def get_organization(self, organization_id: str) -> Organization:
+        """Fetch one persisted organization by id."""
+        row = self._connection.execute(
+            "SELECT * FROM organizations WHERE organization_id = ?",
+            (organization_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Organization '{organization_id}' was not found.")
+        return _organization_from_row(row)
+
+    def set_organization_default_trusted_profile(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_id: str,
+    ) -> Organization:
+        """Persist the default trusted profile selection for one organization."""
+        self._connection.execute(
+            """
+            UPDATE organizations
+            SET default_trusted_profile_id = ?
+            WHERE organization_id = ?
+            """,
+            (trusted_profile_id, organization_id),
+        )
+        self._connection.commit()
+        return self.get_organization(organization_id)
+
+    def ensure_user(self, user: User) -> User:
+        """Create or refresh one authenticated user within one organization."""
+        row = self._connection.execute(
+            "SELECT * FROM users WHERE user_id = ?",
+            (user.user_id,),
+        ).fetchone()
+        if row is None:
+            self._connection.execute(
+                """
+                INSERT INTO users (
+                    user_id,
+                    organization_id,
+                    email,
+                    display_name,
+                    auth_subject,
+                    is_active,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user.user_id,
+                    user.organization_id,
+                    user.email,
+                    user.display_name,
+                    user.auth_subject,
+                    int(user.is_active),
+                    _dt(user.created_at),
+                ),
+            )
+        else:
+            if row["organization_id"] != user.organization_id:
+                raise ValueError(
+                    f"User '{user.user_id}' is already assigned to organization '{row['organization_id']}'."
+                )
+            self._connection.execute(
+                """
+                UPDATE users
+                SET email = ?,
+                    display_name = ?,
+                    auth_subject = ?,
+                    is_active = ?
+                WHERE user_id = ?
+                """,
+                (
+                    user.email,
+                    user.display_name,
+                    user.auth_subject,
+                    int(user.is_active),
+                    user.user_id,
+                ),
+            )
+        self._connection.commit()
+        refreshed_row = self._connection.execute(
+            "SELECT * FROM users WHERE user_id = ?",
+            (user.user_id,),
+        ).fetchone()
+        return _user_from_row(refreshed_row)
 
     def get_or_create_trusted_profile(
         self,
@@ -168,6 +272,24 @@ class SqliteLineageStore:
         row = self._connection.execute(
             "SELECT * FROM trusted_profiles WHERE trusted_profile_id = ?",
             (trusted_profile_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"TrustedProfile '{trusted_profile_id}' was not found.")
+        return _trusted_profile_from_row(row)
+
+    def get_trusted_profile_for_organization(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_id: str,
+    ) -> TrustedProfile:
+        """Fetch one persisted trusted profile scoped to one organization."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM trusted_profiles
+            WHERE trusted_profile_id = ? AND organization_id = ?
+            """,
+            (trusted_profile_id, organization_id),
         ).fetchone()
         if row is None:
             raise KeyError(f"TrustedProfile '{trusted_profile_id}' was not found.")
@@ -360,6 +482,24 @@ class SqliteLineageStore:
             raise KeyError(f"TrustedProfileVersion '{trusted_profile_version_id}' was not found.")
         return _trusted_profile_version_from_row(row)
 
+    def get_trusted_profile_version_for_organization(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_version_id: str,
+    ) -> TrustedProfileVersion:
+        """Fetch one immutable published trusted-profile version scoped to one organization."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM trusted_profile_versions
+            WHERE trusted_profile_version_id = ? AND organization_id = ?
+            """,
+            (trusted_profile_version_id, organization_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"TrustedProfileVersion '{trusted_profile_version_id}' was not found.")
+        return _trusted_profile_version_from_row(row)
+
     def get_current_trusted_profile_version(self, trusted_profile_id: str) -> TrustedProfileVersion:
         """Fetch the current published version for one logical trusted profile."""
         row = self._connection.execute(
@@ -459,6 +599,24 @@ class SqliteLineageStore:
             raise KeyError(f"ProfileSnapshot '{profile_snapshot_id}' was not found.")
         return _profile_snapshot_from_row(row)
 
+    def get_profile_snapshot_for_organization(
+        self,
+        *,
+        organization_id: str,
+        profile_snapshot_id: str,
+    ) -> ProfileSnapshot:
+        """Fetch one persisted profile snapshot scoped to one organization."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM profile_snapshots
+            WHERE profile_snapshot_id = ? AND organization_id = ?
+            """,
+            (profile_snapshot_id, organization_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"ProfileSnapshot '{profile_snapshot_id}' was not found.")
+        return _profile_snapshot_from_row(row)
+
     def get_open_trusted_profile_draft(self, trusted_profile_id: str) -> TrustedProfileDraft:
         """Fetch the single open draft for one logical trusted profile."""
         row = self._connection.execute(
@@ -469,11 +627,47 @@ class SqliteLineageStore:
             raise KeyError(f"TrustedProfileDraft for '{trusted_profile_id}' was not found.")
         return _trusted_profile_draft_from_row(row)
 
+    def get_open_trusted_profile_draft_for_organization(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_id: str,
+    ) -> TrustedProfileDraft:
+        """Fetch the single open draft for one logical trusted profile scoped to one organization."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM trusted_profile_drafts
+            WHERE trusted_profile_id = ? AND organization_id = ?
+            """,
+            (trusted_profile_id, organization_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"TrustedProfileDraft for '{trusted_profile_id}' was not found.")
+        return _trusted_profile_draft_from_row(row)
+
     def get_trusted_profile_draft(self, trusted_profile_draft_id: str) -> TrustedProfileDraft:
         """Fetch one trusted-profile draft by id."""
         row = self._connection.execute(
             "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_draft_id = ?",
             (trusted_profile_draft_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"TrustedProfileDraft '{trusted_profile_draft_id}' was not found.")
+        return _trusted_profile_draft_from_row(row)
+
+    def get_trusted_profile_draft_for_organization(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_draft_id: str,
+    ) -> TrustedProfileDraft:
+        """Fetch one trusted-profile draft by id scoped to one organization."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM trusted_profile_drafts
+            WHERE trusted_profile_draft_id = ? AND organization_id = ?
+            """,
+            (trusted_profile_draft_id, organization_id),
         ).fetchone()
         if row is None:
             raise KeyError(f"TrustedProfileDraft '{trusted_profile_draft_id}' was not found.")
@@ -495,6 +689,7 @@ class SqliteLineageStore:
                     trusted_profile_draft_id,
                     organization_id,
                     trusted_profile_id,
+                    draft_revision,
                     base_trusted_profile_version_id,
                     bundle_json,
                     content_hash,
@@ -505,12 +700,13 @@ class SqliteLineageStore:
                     created_by_user_id,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     draft.trusted_profile_draft_id,
                     draft.organization_id,
                     draft.trusted_profile_id,
+                    draft.draft_revision,
                     draft.base_trusted_profile_version_id,
                     draft.canonical_bundle_json,
                     draft.content_hash,
@@ -533,33 +729,204 @@ class SqliteLineageStore:
     def save_trusted_profile_draft(
         self,
         draft: TrustedProfileDraft,
+        *,
+        expected_draft_revision: int,
     ) -> TrustedProfileDraft:
         """Persist the current mutable state for one trusted-profile draft."""
-        self._connection.execute(
-            """
-            UPDATE trusted_profile_drafts
-            SET bundle_json = ?,
-                content_hash = ?,
-                template_artifact_id = ?,
-                template_artifact_ref = ?,
-                template_file_hash = ?,
-                status = ?,
-                updated_at = ?
-            WHERE trusted_profile_draft_id = ?
-            """,
-            (
-                draft.canonical_bundle_json,
-                draft.content_hash,
-                draft.template_artifact_id,
-                draft.template_artifact_ref,
-                draft.template_file_hash,
-                draft.status,
-                _dt(draft.updated_at),
-                draft.trusted_profile_draft_id,
-            ),
-        )
-        self._connection.commit()
+        with self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE trusted_profile_drafts
+                SET bundle_json = ?,
+                    content_hash = ?,
+                    draft_revision = ?,
+                    template_artifact_id = ?,
+                    template_artifact_ref = ?,
+                    template_file_hash = ?,
+                    status = ?,
+                    updated_at = ?
+                WHERE trusted_profile_draft_id = ?
+                  AND draft_revision = ?
+                """,
+                (
+                    draft.canonical_bundle_json,
+                    draft.content_hash,
+                    draft.draft_revision,
+                    draft.template_artifact_id,
+                    draft.template_artifact_ref,
+                    draft.template_file_hash,
+                    draft.status,
+                    _dt(draft.updated_at),
+                    draft.trusted_profile_draft_id,
+                    expected_draft_revision,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise ProfileAuthoringPersistenceConflictError(
+                f"Trusted profile draft '{draft.trusted_profile_draft_id}' could not be saved because it is stale.",
+                field_errors={
+                    "expected_draft_revision": [
+                        "Refresh the draft and retry with the latest revision before saving.",
+                    ]
+                },
+            )
         return self.get_trusted_profile_draft(draft.trusted_profile_draft_id)
+
+    def publish_trusted_profile_draft(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_draft_id: str,
+        expected_draft_revision: int,
+        canonical_bundle_json: str,
+        content_hash: str,
+        template_artifact_id: str | None,
+        template_artifact_ref: str | None,
+        template_file_hash: str | None,
+        created_by_user_id: str | None,
+        created_at: datetime,
+    ) -> TrustedProfileVersion:
+        """Publish one draft through a single authoritative persistence transaction."""
+        with self._connection:
+            draft_row = self._connection.execute(
+                """
+                SELECT * FROM trusted_profile_drafts
+                WHERE trusted_profile_draft_id = ?
+                  AND organization_id = ?
+                  AND draft_revision = ?
+                """,
+                (
+                    trusted_profile_draft_id,
+                    organization_id,
+                    expected_draft_revision,
+                ),
+            ).fetchone()
+            if draft_row is None:
+                raise ProfileAuthoringPersistenceConflictError(
+                    f"Trusted profile draft '{trusted_profile_draft_id}' could not be published because it is stale.",
+                    field_errors={
+                        "expected_draft_revision": [
+                            "Refresh the draft and retry with the latest revision before publishing.",
+                        ]
+                    },
+                )
+            draft = _trusted_profile_draft_from_row(draft_row)
+
+            delete_cursor = self._connection.execute(
+                """
+                DELETE FROM trusted_profile_drafts
+                WHERE trusted_profile_draft_id = ?
+                  AND organization_id = ?
+                  AND draft_revision = ?
+                """,
+                (
+                    trusted_profile_draft_id,
+                    organization_id,
+                    expected_draft_revision,
+                ),
+            )
+            if delete_cursor.rowcount != 1:
+                raise ProfileAuthoringPersistenceConflictError(
+                    f"Trusted profile draft '{trusted_profile_draft_id}' could not be published because it is stale.",
+                    field_errors={
+                        "expected_draft_revision": [
+                            "Refresh the draft and retry with the latest revision before publishing.",
+                        ]
+                    },
+                )
+
+            profile_row = self._connection.execute(
+                """
+                SELECT * FROM trusted_profiles
+                WHERE trusted_profile_id = ? AND organization_id = ?
+                """,
+                (draft.trusted_profile_id, organization_id),
+            ).fetchone()
+            if profile_row is None:
+                raise KeyError(f"TrustedProfile '{draft.trusted_profile_id}' was not found.")
+            trusted_profile = _trusted_profile_from_row(profile_row)
+
+            version_row = self._connection.execute(
+                """
+                SELECT * FROM trusted_profile_versions
+                WHERE organization_id = ? AND trusted_profile_id = ? AND content_hash = ?
+                """,
+                (
+                    organization_id,
+                    draft.trusted_profile_id,
+                    content_hash,
+                ),
+            ).fetchone()
+            if version_row is None:
+                next_version_number_row = self._connection.execute(
+                    """
+                    SELECT COALESCE(MAX(version_number), 0) + 1 AS next_version_number
+                    FROM trusted_profile_versions
+                    WHERE trusted_profile_id = ?
+                    """,
+                    (draft.trusted_profile_id,),
+                ).fetchone()
+                version_number = int(next_version_number_row["next_version_number"] or 1)
+                trusted_profile_version_id = _build_trusted_profile_version_id(
+                    organization_id=organization_id,
+                    profile_name=trusted_profile.profile_name,
+                    version_number=version_number,
+                )
+                self._connection.execute(
+                    """
+                    INSERT INTO trusted_profile_versions (
+                        trusted_profile_version_id,
+                        organization_id,
+                        trusted_profile_id,
+                        version_number,
+                        base_trusted_profile_version_id,
+                        bundle_json,
+                        content_hash,
+                        template_artifact_id,
+                        template_artifact_ref,
+                        template_file_hash,
+                        source_kind,
+                        created_by_user_id,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        trusted_profile_version_id,
+                        organization_id,
+                        draft.trusted_profile_id,
+                        version_number,
+                        draft.base_trusted_profile_version_id,
+                        canonical_bundle_json,
+                        content_hash,
+                        template_artifact_id,
+                        template_artifact_ref,
+                        template_file_hash,
+                        "published_from_draft",
+                        created_by_user_id,
+                        _dt(created_at),
+                    ),
+                )
+                version_row = self._connection.execute(
+                    "SELECT * FROM trusted_profile_versions WHERE trusted_profile_version_id = ?",
+                    (trusted_profile_version_id,),
+                ).fetchone()
+
+            pointer_cursor = self._connection.execute(
+                """
+                UPDATE trusted_profiles
+                SET current_published_version_id = ?
+                WHERE trusted_profile_id = ? AND organization_id = ?
+                """,
+                (
+                    version_row["trusted_profile_version_id"],
+                    draft.trusted_profile_id,
+                    organization_id,
+                ),
+            )
+            if pointer_cursor.rowcount != 1:
+                raise KeyError(f"TrustedProfile '{draft.trusted_profile_id}' was not found.")
+
+        return _trusted_profile_version_from_row(version_row)
 
     def delete_trusted_profile_draft(self, trusted_profile_draft_id: str) -> None:
         """Delete one trusted-profile draft once it is no longer the open working copy."""
@@ -753,6 +1120,26 @@ class SqliteLineageStore:
             )
         return _trusted_profile_sync_export_from_row(row)
 
+    def get_trusted_profile_sync_export_for_organization(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_sync_export_id: str,
+    ) -> TrustedProfileSyncExport:
+        """Fetch one trusted-profile sync-export audit record scoped to one organization."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM trusted_profile_sync_exports
+            WHERE trusted_profile_sync_export_id = ? AND organization_id = ?
+            """,
+            (trusted_profile_sync_export_id, organization_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(
+                f"TrustedProfileSyncExport '{trusted_profile_sync_export_id}' was not found."
+            )
+        return _trusted_profile_sync_export_from_row(row)
+
     def get_or_create_source_document(
         self,
         source_document: SourceDocument,
@@ -801,6 +1188,24 @@ class SqliteLineageStore:
         row = self._connection.execute(
             "SELECT * FROM source_documents WHERE source_document_id = ?",
             (source_document_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"SourceDocument '{source_document_id}' was not found.")
+        return _source_document_from_row(row)
+
+    def get_source_document_for_organization(
+        self,
+        *,
+        organization_id: str,
+        source_document_id: str,
+    ) -> SourceDocument:
+        """Fetch one persisted source document scoped to one organization."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM source_documents
+            WHERE source_document_id = ? AND organization_id = ?
+            """,
+            (source_document_id, organization_id),
         ).fetchone()
         if row is None:
             raise KeyError(f"SourceDocument '{source_document_id}' was not found.")
@@ -887,11 +1292,46 @@ class SqliteLineageStore:
             raise KeyError(f"ProcessingRun '{processing_run_id}' was not found.")
         return _processing_run_from_row(row)
 
+    def get_processing_run_for_organization(
+        self,
+        *,
+        organization_id: str,
+        processing_run_id: str,
+    ) -> ProcessingRun:
+        """Fetch one persisted processing run scoped to one organization."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM processing_runs
+            WHERE processing_run_id = ? AND organization_id = ?
+            """,
+            (processing_run_id, organization_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"ProcessingRun '{processing_run_id}' was not found.")
+        return _processing_run_from_row(row)
+
     def list_run_records(self, processing_run_id: str) -> list[RunRecord]:
         """Fetch persisted run records in immutable emitted order."""
         rows = self._connection.execute(
             "SELECT * FROM run_records WHERE processing_run_id = ? ORDER BY record_index ASC",
             (processing_run_id,),
+        ).fetchall()
+        return [_run_record_from_row(row) for row in rows]
+
+    def list_run_records_for_processing_run(
+        self,
+        *,
+        organization_id: str,
+        processing_run_id: str,
+    ) -> list[RunRecord]:
+        """Fetch run records scoped to one organization and processing run."""
+        rows = self._connection.execute(
+            """
+            SELECT * FROM run_records
+            WHERE processing_run_id = ? AND organization_id = ?
+            ORDER BY record_index ASC
+            """,
+            (processing_run_id, organization_id),
         ).fetchall()
         return [_run_record_from_row(row) for row in rows]
 
@@ -958,25 +1398,51 @@ class SqliteLineageStore:
             raise KeyError(f"ReviewSession for ProcessingRun '{processing_run_id}' was not found.")
         return _review_session_from_row(row)
 
+    def get_review_session_for_run_for_organization(
+        self,
+        *,
+        organization_id: str,
+        processing_run_id: str,
+    ) -> ReviewSession:
+        """Fetch the primary review session for one organization-scoped processing run."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM review_sessions
+            WHERE processing_run_id = ? AND organization_id = ?
+            """,
+            (processing_run_id, organization_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"ReviewSession for ProcessingRun '{processing_run_id}' was not found.")
+        return _review_session_from_row(row)
+
     def save_review_session_edits(
         self,
         review_session: ReviewSession,
         reviewed_record_edits: list[ReviewedRecordEdit],
+        *,
+        expected_current_revision: int,
     ) -> ReviewSession:
         """Persist one accepted edit batch and the session revision it advanced."""
         with self._connection:
-            self._connection.execute(
+            cursor = self._connection.execute(
                 """
                 UPDATE review_sessions
                 SET current_revision = ?, updated_at = ?
-                WHERE review_session_id = ?
+                WHERE review_session_id = ? AND current_revision = ?
                 """,
                 (
                     review_session.current_revision,
                     _dt(review_session.updated_at),
                     review_session.review_session_id,
+                    expected_current_revision,
                 ),
             )
+            if cursor.rowcount != 1:
+                raise _review_session_conflict_error(
+                    review_session.review_session_id,
+                    expected_current_revision=expected_current_revision,
+                )
             self._connection.executemany(
                 """
                 INSERT INTO reviewed_record_edits (
@@ -1029,6 +1495,28 @@ class SqliteLineageStore:
         rows = self._connection.execute(query, parameters).fetchall()
         return [_reviewed_record_edit_from_row(row) for row in rows]
 
+    def list_reviewed_record_edits_for_review_session(
+        self,
+        *,
+        organization_id: str,
+        review_session_id: str,
+        up_to_revision: int | None = None,
+    ) -> list[ReviewedRecordEdit]:
+        """Fetch persisted review delta rows scoped to one organization and review session."""
+        query = (
+            "SELECT * FROM reviewed_record_edits WHERE review_session_id = ? AND organization_id = ? "
+            "ORDER BY session_revision ASC, created_at ASC, reviewed_record_edit_id ASC"
+        )
+        parameters: tuple[object, ...] = (review_session_id, organization_id)
+        if up_to_revision is not None:
+            query = (
+                "SELECT * FROM reviewed_record_edits WHERE review_session_id = ? AND organization_id = ? "
+                "AND session_revision <= ? ORDER BY session_revision ASC, created_at ASC, reviewed_record_edit_id ASC"
+            )
+            parameters = (review_session_id, organization_id, up_to_revision)
+        rows = self._connection.execute(query, parameters).fetchall()
+        return [_reviewed_record_edit_from_row(row) for row in rows]
+
     def create_export_artifact(self, export_artifact: ExportArtifact) -> ExportArtifact:
         """Persist export lineage for one exact review-session revision."""
         self._connection.execute(
@@ -1062,13 +1550,31 @@ class SqliteLineageStore:
             ),
         )
         self._connection.commit()
-        return self.get_export_artifact(export_artifact.export_artifact_id)
+        return export_artifact
 
     def get_export_artifact(self, export_artifact_id: str) -> ExportArtifact:
         """Fetch one persisted export artifact."""
         row = self._connection.execute(
             "SELECT * FROM export_artifacts WHERE export_artifact_id = ?",
             (export_artifact_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"ExportArtifact '{export_artifact_id}' was not found.")
+        return _export_artifact_from_row(row)
+
+    def get_export_artifact_for_organization(
+        self,
+        *,
+        organization_id: str,
+        export_artifact_id: str,
+    ) -> ExportArtifact:
+        """Fetch one persisted export artifact scoped to one organization."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM export_artifacts
+            WHERE export_artifact_id = ? AND organization_id = ?
+            """,
+            (export_artifact_id, organization_id),
         ).fetchone()
         if row is None:
             raise KeyError(f"ExportArtifact '{export_artifact_id}' was not found.")
@@ -1091,6 +1597,11 @@ class SqliteLineageStore:
         schema_path = Path(__file__).with_name("phase1_lineage_schema.sql")
         self._connection.executescript(schema_path.read_text(encoding="utf-8"))
         self._ensure_column(
+            "organizations",
+            "default_trusted_profile_id",
+            "TEXT",
+        )
+        self._ensure_column(
             "trusted_profiles",
             "current_published_version_id",
             "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
@@ -1101,6 +1612,11 @@ class SqliteLineageStore:
             "TEXT",
         )
         self._ensure_column(
+            "trusted_profile_drafts",
+            "draft_revision",
+            "INTEGER NOT NULL DEFAULT 1 CHECK (draft_revision > 0)",
+        )
+        self._ensure_column(
             "profile_snapshots",
             "trusted_profile_version_id",
             "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
@@ -1109,6 +1625,13 @@ class SqliteLineageStore:
             "processing_runs",
             "trusted_profile_version_id",
             "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
+        )
+        self._connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_users_auth_subject
+            ON users (auth_subject)
+            WHERE auth_subject IS NOT NULL
+            """
         )
         self._connection.commit()
 
@@ -1139,6 +1662,19 @@ def _organization_from_row(row: sqlite3.Row) -> Organization:
         slug=row["slug"],
         display_name=row["display_name"],
         is_seeded=bool(row["is_seeded"]),
+        created_at=_parse_dt(row["created_at"]),
+        default_trusted_profile_id=row["default_trusted_profile_id"],
+    )
+
+
+def _user_from_row(row: sqlite3.Row) -> User:
+    return User(
+        user_id=row["user_id"],
+        organization_id=row["organization_id"],
+        email=row["email"],
+        display_name=row["display_name"],
+        auth_subject=row["auth_subject"],
+        is_active=bool(row["is_active"]),
         created_at=_parse_dt(row["created_at"]),
     )
 
@@ -1197,6 +1733,34 @@ def _trusted_profile_draft_from_row(row: sqlite3.Row) -> TrustedProfileDraft:
         created_by_user_id=row["created_by_user_id"],
         created_at=_parse_dt(row["created_at"]),
         updated_at=_parse_dt(row["updated_at"]),
+        draft_revision=row["draft_revision"],
+    )
+
+
+def _build_trusted_profile_version_id(
+    *,
+    organization_id: str,
+    profile_name: str,
+    version_number: int,
+) -> str:
+    """Build a deterministic trusted-profile version id."""
+    return f"trusted-profile-version:{organization_id}:{profile_name}:v{version_number}"
+
+
+def _review_session_conflict_error(
+    review_session_id: str,
+    *,
+    expected_current_revision: int,
+) -> ProfileAuthoringPersistenceConflictError:
+    """Build the stable stale-review-session conflict used by hosted CAS writes."""
+    return ProfileAuthoringPersistenceConflictError(
+        f"Review session '{review_session_id}' is stale.",
+        error_code="review_session_persistence_conflict",
+        field_errors={
+            "expected_current_revision": [
+                "Refresh the review session and retry with the latest revision before saving edits.",
+            ]
+        },
     )
 
 

@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 
 from api.dependencies import ApiRuntime, get_runtime
 from api.errors import to_http_exception
+from api.request_context import get_request_context
 from api.schemas.profile_authoring import (
     ClassificationsPatchRequest,
     CreateTrustedProfileRequest,
@@ -16,6 +17,7 @@ from api.schemas.profile_authoring import (
     ExportSettingsPatchRequest,
     LaborMappingsPatchRequest,
     ProfileSyncExportResponse,
+    PublishDraftRequest,
     PublishedProfileDetailResponse,
     RatesPatchRequest,
 )
@@ -24,6 +26,7 @@ from api.serializers import (
     to_profile_sync_export_response,
     to_published_profile_detail_response,
 )
+from services.request_context import RequestContext
 
 
 profiles_router = APIRouter(prefix="/api/profiles", tags=["profiles"])
@@ -36,6 +39,7 @@ profile_sync_exports_router = APIRouter(prefix="/api/profile-sync-exports", tags
 def create_trusted_profile(
     request: CreateTrustedProfileRequest,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> PublishedProfileDetailResponse:
     """Create one new trusted profile seeded from an existing published profile."""
     try:
@@ -44,6 +48,7 @@ def create_trusted_profile(
             display_name=request.display_name,
             description=request.description,
             seed_trusted_profile_id=request.seed_trusted_profile_id,
+            request_context=request_context,
         )
         return to_published_profile_detail_response(detail)
     except Exception as exc:  # pragma: no cover - exercised via API tests
@@ -54,10 +59,14 @@ def create_trusted_profile(
 def get_profile_detail(
     trusted_profile_id: str,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> PublishedProfileDetailResponse:
     """Return read-only published profile detail for one logical trusted profile."""
     try:
-        detail = runtime.profile_authoring_service.get_profile_detail(trusted_profile_id)
+        detail = runtime.profile_authoring_service.get_profile_detail(
+            trusted_profile_id,
+            request_context=request_context,
+        )
         return to_published_profile_detail_response(detail)
     except Exception as exc:  # pragma: no cover - exercised via API tests
         raise to_http_exception(exc) from exc
@@ -67,10 +76,14 @@ def get_profile_detail(
 def archive_trusted_profile(
     trusted_profile_id: str,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> Response:
     """Archive one user-created trusted profile without deleting published lineage."""
     try:
-        runtime.profile_authoring_service.archive_trusted_profile(trusted_profile_id)
+        runtime.profile_authoring_service.archive_trusted_profile(
+            trusted_profile_id,
+            request_context=request_context,
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception as exc:  # pragma: no cover - exercised via API tests
         raise to_http_exception(exc) from exc
@@ -80,10 +93,14 @@ def archive_trusted_profile(
 def unarchive_trusted_profile(
     trusted_profile_id: str,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> Response:
     """Restore one archived user-created trusted profile to the active settings lists."""
     try:
-        runtime.profile_authoring_service.unarchive_trusted_profile(trusted_profile_id)
+        runtime.profile_authoring_service.unarchive_trusted_profile(
+            trusted_profile_id,
+            request_context=request_context,
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception as exc:  # pragma: no cover - exercised via API tests
         raise to_http_exception(exc) from exc
@@ -97,10 +114,14 @@ def unarchive_trusted_profile(
 def create_or_open_profile_draft(
     trusted_profile_id: str,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> DraftEditorStateResponse:
     """Create or return the single mutable draft for one logical trusted profile."""
     try:
-        state = runtime.profile_authoring_service.create_or_open_draft(trusted_profile_id)
+        state = runtime.profile_authoring_service.create_or_open_draft(
+            trusted_profile_id,
+            request_context=request_context,
+        )
         return to_draft_editor_state_response(state)
     except Exception as exc:  # pragma: no cover - exercised via API tests
         raise to_http_exception(exc) from exc
@@ -110,10 +131,14 @@ def create_or_open_profile_draft(
 def get_profile_draft(
     trusted_profile_draft_id: str,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> DraftEditorStateResponse:
     """Return full editor state for one trusted-profile draft."""
     try:
-        state = runtime.profile_authoring_service.get_draft_state(trusted_profile_draft_id)
+        state = runtime.profile_authoring_service.get_draft_state(
+            trusted_profile_draft_id,
+            request_context=request_context,
+        )
         return to_draft_editor_state_response(state)
     except Exception as exc:  # pragma: no cover - exercised via API tests
         raise to_http_exception(exc) from exc
@@ -123,10 +148,14 @@ def get_profile_draft(
 def discard_profile_draft(
     trusted_profile_draft_id: str,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> Response:
     """Discard one trusted-profile draft without changing published lineage."""
     try:
-        runtime.profile_authoring_service.discard_draft(trusted_profile_draft_id)
+        runtime.profile_authoring_service.discard_draft(
+            trusted_profile_draft_id,
+            request_context=request_context,
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception as exc:  # pragma: no cover - exercised via API tests
         raise to_http_exception(exc) from exc
@@ -137,12 +166,15 @@ def patch_default_omit(
     trusted_profile_draft_id: str,
     request: DefaultOmitPatchRequest,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> DraftEditorStateResponse:
     """Replace draft default-omit rules."""
     try:
         state = runtime.profile_authoring_service.update_default_omit_rules(
             trusted_profile_draft_id,
             [row.model_dump() for row in request.default_omit_rules],
+            expected_draft_revision=request.expected_draft_revision,
+            request_context=request_context,
         )
         return to_draft_editor_state_response(state)
     except Exception as exc:  # pragma: no cover - exercised via API tests
@@ -154,12 +186,15 @@ def patch_labor_mappings(
     trusted_profile_draft_id: str,
     request: LaborMappingsPatchRequest,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> DraftEditorStateResponse:
     """Replace draft labor mappings."""
     try:
         state = runtime.profile_authoring_service.update_labor_mappings(
             trusted_profile_draft_id,
             [row.model_dump() for row in request.labor_mappings],
+            expected_draft_revision=request.expected_draft_revision,
+            request_context=request_context,
         )
         return to_draft_editor_state_response(state)
     except Exception as exc:  # pragma: no cover - exercised via API tests
@@ -174,12 +209,15 @@ def patch_equipment_mappings(
     trusted_profile_draft_id: str,
     request: EquipmentMappingsPatchRequest,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> DraftEditorStateResponse:
     """Replace draft equipment mappings."""
     try:
         state = runtime.profile_authoring_service.update_equipment_mappings(
             trusted_profile_draft_id,
             [row.model_dump() for row in request.equipment_mappings],
+            expected_draft_revision=request.expected_draft_revision,
+            request_context=request_context,
         )
         return to_draft_editor_state_response(state)
     except Exception as exc:  # pragma: no cover - exercised via API tests
@@ -191,6 +229,7 @@ def patch_classifications(
     trusted_profile_draft_id: str,
     request: ClassificationsPatchRequest,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> DraftEditorStateResponse:
     """Replace draft labor/equipment slot rows."""
     try:
@@ -198,6 +237,8 @@ def patch_classifications(
             trusted_profile_draft_id,
             labor_slots=[row.model_dump() for row in request.labor_slots],
             equipment_slots=[row.model_dump() for row in request.equipment_slots],
+            expected_draft_revision=request.expected_draft_revision,
+            request_context=request_context,
         )
         return to_draft_editor_state_response(state)
     except Exception as exc:  # pragma: no cover - exercised via API tests
@@ -209,6 +250,7 @@ def patch_rates(
     trusted_profile_draft_id: str,
     request: RatesPatchRequest,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> DraftEditorStateResponse:
     """Replace draft labor/equipment rates."""
     try:
@@ -216,6 +258,8 @@ def patch_rates(
             trusted_profile_draft_id,
             labor_rows=[row.model_dump() for row in request.labor_rates],
             equipment_rows=[row.model_dump() for row in request.equipment_rates],
+            expected_draft_revision=request.expected_draft_revision,
+            request_context=request_context,
         )
         return to_draft_editor_state_response(state)
     except Exception as exc:  # pragma: no cover - exercised via API tests
@@ -227,12 +271,15 @@ def patch_export_settings(
     trusted_profile_draft_id: str,
     request: ExportSettingsPatchRequest,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> DraftEditorStateResponse:
     """Replace draft export-only settings."""
     try:
         state = runtime.profile_authoring_service.update_export_settings(
             trusted_profile_draft_id,
             request.export_settings.model_dump(),
+            expected_draft_revision=request.expected_draft_revision,
+            request_context=request_context,
         )
         return to_draft_editor_state_response(state)
     except Exception as exc:  # pragma: no cover - exercised via API tests
@@ -245,11 +292,17 @@ def patch_export_settings(
 )
 def publish_profile_draft(
     trusted_profile_draft_id: str,
+    request: PublishDraftRequest,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> PublishedProfileDetailResponse:
     """Validate and publish one trusted-profile draft."""
     try:
-        detail = runtime.profile_authoring_service.publish_draft(trusted_profile_draft_id)
+        detail = runtime.profile_authoring_service.publish_draft(
+            trusted_profile_draft_id,
+            expected_draft_revision=request.expected_draft_revision,
+            request_context=request_context,
+        )
         return to_published_profile_detail_response(detail)
     except Exception as exc:  # pragma: no cover - exercised via API tests
         raise to_http_exception(exc) from exc
@@ -263,10 +316,14 @@ def publish_profile_draft(
 def create_profile_sync_export(
     trusted_profile_version_id: str,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> ProfileSyncExportResponse:
     """Build one manual desktop-sync archive from one immutable published trusted-profile version."""
     try:
-        result = runtime.profile_authoring_service.create_desktop_sync_export(trusted_profile_version_id)
+        result = runtime.profile_authoring_service.create_desktop_sync_export(
+            trusted_profile_version_id,
+            request_context=request_context,
+        )
         return to_profile_sync_export_response(result)
     except Exception as exc:  # pragma: no cover - exercised via API tests
         raise to_http_exception(exc) from exc
@@ -276,11 +333,13 @@ def create_profile_sync_export(
 def download_profile_sync_export(
     trusted_profile_sync_export_id: str,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> FileResponse:
     """Download one previously generated desktop-sync archive."""
     try:
         artifact_payload = runtime.profile_authoring_service.resolve_desktop_sync_export_payload(
-            trusted_profile_sync_export_id
+            trusted_profile_sync_export_id,
+            request_context=request_context,
         )
         return FileResponse(
             path=artifact_payload.file_path,

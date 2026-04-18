@@ -47,6 +47,7 @@ interface ProfileSettingsWorkspaceProps {
   selectedTrustedProfile: TrustedProfileResponse | null;
   profileDetail: PublishedProfileDetailResponse | null;
   draftState: DraftEditorStateResponse | null;
+  profileDetailLoading: boolean;
   draftSyncToken: DraftSyncToken;
   busy: boolean;
   settingsErrorMessage: string;
@@ -660,6 +661,7 @@ export function ProfileSettingsWorkspace({
   selectedTrustedProfile,
   profileDetail,
   draftState,
+  profileDetailLoading,
   draftSyncToken,
   busy,
   settingsErrorMessage,
@@ -738,9 +740,13 @@ export function ProfileSettingsWorkspace({
   }
 
   const selectedTrustedProfileId = selectedTrustedProfile?.trusted_profile_id ?? "";
+  const selectedProfileDetail =
+    profileDetail && profileDetail.trusted_profile_id === selectedTrustedProfileId ? profileDetail : null;
+  const selectedProfileDraft =
+    draftState && draftState.trusted_profile_id === selectedTrustedProfileId ? draftState : null;
 
   useEffect(() => {
-    if (!selectedTrustedProfileId || !draftState || draftState.trusted_profile_id !== selectedTrustedProfileId) {
+    if (!selectedTrustedProfileId || !selectedProfileDraft) {
       clearLocalEditorState();
       lastDraftIdRef.current = null;
       hydratedDraftKeyRef.current = null;
@@ -750,15 +756,15 @@ export function ProfileSettingsWorkspace({
       return;
     }
 
-    const isNewDraft = lastDraftIdRef.current !== draftState.trusted_profile_draft_id;
-    lastDraftIdRef.current = draftState.trusted_profile_draft_id;
+    const isNewDraft = lastDraftIdRef.current !== selectedProfileDraft.trusted_profile_draft_id;
+    lastDraftIdRef.current = selectedProfileDraft.trusted_profile_draft_id;
     const retainedDraftState = retainedDraftStates[selectedTrustedProfileId];
 
     if (
       isNewDraft &&
       retainedDraftState &&
-      retainedDraftState.trusted_profile_draft_id === draftState.trusted_profile_draft_id &&
-      retainedDraftState.draft_content_hash === draftState.draft_content_hash &&
+      retainedDraftState.trusted_profile_draft_id === selectedProfileDraft.trusted_profile_draft_id &&
+      retainedDraftState.draft_content_hash === selectedProfileDraft.draft_content_hash &&
       draftSyncToken.reason === "open"
     ) {
       syncAllFromRetainedDraft(retainedDraftState);
@@ -771,7 +777,7 @@ export function ProfileSettingsWorkspace({
     setRestoredDraftNotice("");
 
     if (isNewDraft || draftSyncToken.reason === "reset") {
-      syncAllFromDraft(draftState);
+      syncAllFromDraft(selectedProfileDraft);
       return;
     }
 
@@ -780,34 +786,34 @@ export function ProfileSettingsWorkspace({
       case "profileSwitch":
         break;
       case "defaultOmit":
-        setDefaultOmitRules(cloneRows(draftState.default_omit_rules));
+        setDefaultOmitRules(cloneRows(selectedProfileDraft.default_omit_rules));
         break;
       case "laborMappings":
-        setLaborMappings(cloneRows(draftState.labor_mappings));
+        setLaborMappings(cloneRows(selectedProfileDraft.labor_mappings));
         break;
       case "equipmentMappings":
-        setEquipmentMappings(cloneRows(draftState.equipment_mappings));
+        setEquipmentMappings(cloneRows(selectedProfileDraft.equipment_mappings));
         break;
       case "classifications":
-        setLaborSlots(cloneRows(draftState.labor_slots));
-        setEquipmentSlots(cloneRows(draftState.equipment_slots));
-        setLaborMappings(cloneRows(draftState.labor_mappings));
-        setEquipmentMappings(cloneRows(draftState.equipment_mappings));
-        setLaborRates(cloneRows(draftState.labor_rates));
-        setEquipmentRates(cloneRows(draftState.equipment_rates));
+        setLaborSlots(cloneRows(selectedProfileDraft.labor_slots));
+        setEquipmentSlots(cloneRows(selectedProfileDraft.equipment_slots));
+        setLaborMappings(cloneRows(selectedProfileDraft.labor_mappings));
+        setEquipmentMappings(cloneRows(selectedProfileDraft.equipment_mappings));
+        setLaborRates(cloneRows(selectedProfileDraft.labor_rates));
+        setEquipmentRates(cloneRows(selectedProfileDraft.equipment_rates));
         break;
       case "exportSettings":
-        setExportSettings({ labor_minimum_hours: { ...draftState.export_settings.labor_minimum_hours } });
+        setExportSettings({ labor_minimum_hours: { ...selectedProfileDraft.export_settings.labor_minimum_hours } });
         break;
       case "rates":
-        setLaborRates(cloneRows(draftState.labor_rates));
-        setEquipmentRates(cloneRows(draftState.equipment_rates));
+        setLaborRates(cloneRows(selectedProfileDraft.labor_rates));
+        setEquipmentRates(cloneRows(selectedProfileDraft.equipment_rates));
         break;
       default:
-        syncAllFromDraft(draftState);
+        syncAllFromDraft(selectedProfileDraft);
         break;
     }
-  }, [draftState, draftSyncToken, selectedTrustedProfileId]);
+  }, [selectedProfileDraft, draftSyncToken, selectedTrustedProfileId]);
 
   useEffect(() => {
     setNewProfileDisplayName("");
@@ -822,7 +828,7 @@ export function ProfileSettingsWorkspace({
   }, [newProfileDisplayName, newProfileDescription]);
 
   useEffect(() => {
-    if (draftSyncToken.reason !== "reset" || !selectedTrustedProfileId || draftState) {
+    if (draftSyncToken.reason !== "reset" || !selectedTrustedProfileId || selectedProfileDraft) {
       return;
     }
     setRetainedDraftStates((current) => {
@@ -833,10 +839,10 @@ export function ProfileSettingsWorkspace({
       delete next[selectedTrustedProfileId];
       return next;
     });
-  }, [draftState, draftSyncToken.reason, selectedTrustedProfileId]);
+  }, [selectedProfileDraft, draftSyncToken.reason, selectedTrustedProfileId]);
 
-  const detailToRender = draftState ?? profileDetail;
-  const openDraftId = draftState?.trusted_profile_draft_id ?? profileDetail?.open_draft_id ?? null;
+  const detailToRender = selectedProfileDraft ?? selectedProfileDetail;
+  const openDraftId = selectedProfileDraft?.trusted_profile_draft_id ?? selectedProfileDetail?.open_draft_id ?? null;
   const templateMetadata = detailToRender?.template_metadata ?? null;
   const laborActiveCapacity = templateMetadata?.labor_active_slot_capacity ?? 0;
   const equipmentActiveCapacity = templateMetadata?.equipment_active_slot_capacity ?? 0;
@@ -911,50 +917,56 @@ export function ProfileSettingsWorkspace({
   );
   const exportSettingsValidation = useMemo(() => buildExportSettingsValidation(exportSettings), [exportSettings]);
   const effectiveLaborRates = useMemo(
-    () => (draftState ? filterLaborRatesForCurrentSlots(laborRates, draftState.labor_slots, laborSlots) : laborRates),
-    [draftState, laborRates, laborSlots],
+    () =>
+      selectedProfileDraft
+        ? filterLaborRatesForCurrentSlots(laborRates, selectedProfileDraft.labor_slots, laborSlots)
+        : laborRates,
+    [selectedProfileDraft, laborRates, laborSlots],
   );
   const effectiveEquipmentRates = useMemo(
     () =>
-      draftState
-        ? filterEquipmentRatesForCurrentSlots(equipmentRates, draftState.equipment_slots, equipmentSlots)
+      selectedProfileDraft
+        ? filterEquipmentRatesForCurrentSlots(equipmentRates, selectedProfileDraft.equipment_slots, equipmentSlots)
         : equipmentRates,
-    [draftState, equipmentRates, equipmentSlots],
+    [selectedProfileDraft, equipmentRates, equipmentSlots],
   );
   const retiredLaborRateLabels = useMemo(
-    () => (draftState ? buildRetiredLaborRateLabels(laborRates, draftState.labor_slots, laborSlots) : []),
-    [draftState, laborRates, laborSlots],
+    () =>
+      selectedProfileDraft
+        ? buildRetiredLaborRateLabels(laborRates, selectedProfileDraft.labor_slots, laborSlots)
+        : [],
+    [selectedProfileDraft, laborRates, laborSlots],
   );
   const retiredEquipmentRateLabels = useMemo(
     () =>
-      draftState
-        ? buildRetiredEquipmentRateLabels(equipmentRates, draftState.equipment_slots, equipmentSlots)
+      selectedProfileDraft
+        ? buildRetiredEquipmentRateLabels(equipmentRates, selectedProfileDraft.equipment_slots, equipmentSlots)
         : [],
-    [draftState, equipmentRates, equipmentSlots],
+    [selectedProfileDraft, equipmentRates, equipmentSlots],
   );
   const classificationIssueCount =
     laborClassificationValidation.messages.length + equipmentClassificationValidation.messages.length;
   const ratesValidation = useMemo(() => buildRatesValidation(laborRates, equipmentRates), [equipmentRates, laborRates]);
 
-  const defaultOmitDirty = draftState ? !compareRows(defaultOmitRules, draftState.default_omit_rules) : false;
-  const laborMappingsDirty = draftState ? !compareRows(laborMappings, draftState.labor_mappings) : false;
-  const equipmentMappingsDirty = draftState ? !compareRows(equipmentMappings, draftState.equipment_mappings) : false;
+  const defaultOmitDirty = selectedProfileDraft ? !compareRows(defaultOmitRules, selectedProfileDraft.default_omit_rules) : false;
+  const laborMappingsDirty = selectedProfileDraft ? !compareRows(laborMappings, selectedProfileDraft.labor_mappings) : false;
+  const equipmentMappingsDirty = selectedProfileDraft ? !compareRows(equipmentMappings, selectedProfileDraft.equipment_mappings) : false;
   const classificationsDirty =
-    draftState &&
-    (!compareRows(laborSlots, draftState.labor_slots) || !compareRows(equipmentSlots, draftState.equipment_slots));
+    selectedProfileDraft &&
+    (!compareRows(laborSlots, selectedProfileDraft.labor_slots) || !compareRows(equipmentSlots, selectedProfileDraft.equipment_slots));
   const localRatesDirty =
-    draftState &&
-    (!compareRows(laborRates, draftState.labor_rates) || !compareRows(equipmentRates, draftState.equipment_rates));
+    selectedProfileDraft &&
+    (!compareRows(laborRates, selectedProfileDraft.labor_rates) || !compareRows(equipmentRates, selectedProfileDraft.equipment_rates));
   const exportSettingsDirty =
-    draftState &&
-    !compareValue(exportSettings, draftState.export_settings);
+    selectedProfileDraft &&
+    !compareValue(exportSettings, selectedProfileDraft.export_settings);
   const retiredRatesDirty =
-    draftState &&
-    (!compareRows(effectiveLaborRates, draftState.labor_rates) ||
-      !compareRows(effectiveEquipmentRates, draftState.equipment_rates));
+    selectedProfileDraft &&
+    (!compareRows(effectiveLaborRates, selectedProfileDraft.labor_rates) ||
+      !compareRows(effectiveEquipmentRates, selectedProfileDraft.equipment_rates));
   const ratesDirty = Boolean(localRatesDirty || retiredRatesDirty);
-  const currentDraftHydrationKey = draftState
-    ? `${draftState.trusted_profile_draft_id}:${draftState.draft_content_hash}`
+  const currentDraftHydrationKey = selectedProfileDraft
+    ? `${selectedProfileDraft.trusted_profile_draft_id}:${selectedProfileDraft.draft_content_hash}`
     : null;
 
   const dirtySections = [
@@ -976,21 +988,21 @@ export function ProfileSettingsWorkspace({
 
   const saveProfileDisabled =
     busy ||
-    !draftState ||
+    !selectedProfileDraft ||
     hasLocalValidationIssues ||
-    draftState.validation_errors.length > 0;
+    selectedProfileDraft.validation_errors.length > 0;
 
-  const saveReadinessLabel = !draftState
+  const saveReadinessLabel = !selectedProfileDraft
     ? "Select Edit current profile"
-    : draftState.validation_errors.length > 0 || hasLocalValidationIssues
+    : selectedProfileDraft.validation_errors.length > 0 || hasLocalValidationIssues
       ? "Fix validation issues"
       : dirtySections.length === 0
         ? "Save to clear unpublished changes"
         : "Ready to save profile settings";
 
-  const saveReadinessTone = !draftState
+  const saveReadinessTone = !selectedProfileDraft
     ? "neutral"
-    : draftState.validation_errors.length > 0 || hasLocalValidationIssues
+    : selectedProfileDraft.validation_errors.length > 0 || hasLocalValidationIssues
       ? "error"
       : "success";
   const createProfileValidation = useMemo(
@@ -1007,15 +1019,15 @@ export function ProfileSettingsWorkspace({
     createServerFieldErrors.display_name,
   );
   const currentPublishedVersionNumber =
-    profileDetail?.current_published_version.version_number ??
-    draftState?.current_published_version.version_number ??
+    selectedProfileDetail?.current_published_version.version_number ??
+    selectedProfileDraft?.current_published_version.version_number ??
     selectedTrustedProfile?.current_published_version_number ??
     null;
   const selectedProfileSourceLabel = selectedTrustedProfile ? profileSourceLabel(selectedTrustedProfile.source_kind) : "";
   const canArchiveSelectedProfile =
     selectedTrustedProfile?.source_kind === "published_clone" &&
     !openDraftId &&
-    !draftState;
+    !selectedProfileDraft;
   const createProfileDisabled =
     busy ||
     !selectedTrustedProfile ||
@@ -1023,10 +1035,11 @@ export function ProfileSettingsWorkspace({
   const selectedRetainedDraftState = selectedTrustedProfileId
     ? retainedDraftStates[selectedTrustedProfileId] ?? null
     : null;
-  const workspaceViewLabel = draftState
+  const workspaceViewLabel = selectedProfileDraft
     ? "Editing current profile"
     : "Viewing live profile";
-  const workspaceViewTone = draftState ? "warning" : "neutral";
+  const workspaceViewTone = selectedProfileDraft ? "warning" : "neutral";
+  const canOpenCurrentProfile = Boolean(selectedTrustedProfile && selectedProfileDetail);
 
   useEffect(() => {
     const validKeys = new Set(laborMappingEntries.map((entry) => entry.rowKey));
@@ -1046,9 +1059,8 @@ export function ProfileSettingsWorkspace({
 
   useEffect(() => {
     if (
-      !draftState ||
+      !selectedProfileDraft ||
       !selectedTrustedProfileId ||
-      draftState.trusted_profile_id !== selectedTrustedProfileId ||
       !currentDraftHydrationKey
     ) {
       hydratedDraftKeyRef.current = null;
@@ -1057,10 +1069,10 @@ export function ProfileSettingsWorkspace({
     if (dirtySections.length === 0) {
       hydratedDraftKeyRef.current = currentDraftHydrationKey;
     }
-  }, [currentDraftHydrationKey, dirtySections.length, draftState, selectedTrustedProfileId]);
+  }, [currentDraftHydrationKey, dirtySections.length, selectedProfileDraft, selectedTrustedProfileId]);
 
   useEffect(() => {
-    if (!selectedTrustedProfileId || !draftState || draftState.trusted_profile_id !== selectedTrustedProfileId) {
+    if (!selectedTrustedProfileId || !selectedProfileDraft) {
       return;
     }
     if (!currentDraftHydrationKey || hydratedDraftKeyRef.current !== currentDraftHydrationKey) {
@@ -1079,10 +1091,10 @@ export function ProfileSettingsWorkspace({
       }
 
       const nextState: RetainedDraftWorkspaceState = {
-        trusted_profile_id: draftState.trusted_profile_id,
-        trusted_profile_draft_id: draftState.trusted_profile_draft_id,
-        draft_content_hash: draftState.draft_content_hash,
-        published_version_number: draftState.current_published_version.version_number,
+        trusted_profile_id: selectedProfileDraft.trusted_profile_id,
+        trusted_profile_draft_id: selectedProfileDraft.trusted_profile_draft_id,
+        draft_content_hash: selectedProfileDraft.draft_content_hash,
+        published_version_number: selectedProfileDraft.current_published_version.version_number,
         default_omit_rules: cloneRows(defaultOmitRules),
         labor_mappings: cloneRows(laborMappings),
         equipment_mappings: cloneRows(equipmentMappings),
@@ -1106,7 +1118,7 @@ export function ProfileSettingsWorkspace({
   }, [
     defaultOmitRules,
     dirtySections,
-    draftState,
+    selectedProfileDraft,
     equipmentMappings,
     equipmentRates,
     equipmentSlots,
@@ -1193,7 +1205,7 @@ export function ProfileSettingsWorkspace({
   }
 
   async function saveAllDirtySections(): Promise<boolean> {
-    if (!draftState) {
+    if (!selectedProfileDraft) {
       return true;
     }
     if (defaultOmitDirty && defaultOmitValidation.messages.length > 0) {
@@ -1237,7 +1249,7 @@ export function ProfileSettingsWorkspace({
   }
 
   async function handlePrimarySettingsAction() {
-    if (!draftState) {
+    if (!selectedProfileDraft) {
       await onOpenDraft();
       return;
     }
@@ -1245,7 +1257,7 @@ export function ProfileSettingsWorkspace({
     if (!saved) {
       return;
     }
-    await onPublishDraft(draftState.trusted_profile_draft_id);
+    await onPublishDraft(selectedProfileDraft.trusted_profile_draft_id);
   }
 
   async function discardCurrentDraft(): Promise<boolean> {
@@ -1376,9 +1388,9 @@ export function ProfileSettingsWorkspace({
               <button
                 type="button"
                 onClick={() => void handlePrimarySettingsAction()}
-                disabled={draftState ? saveProfileDisabled : busy || !selectedTrustedProfile}
+                disabled={selectedProfileDraft ? saveProfileDisabled : busy || profileDetailLoading || !canOpenCurrentProfile}
               >
-                {draftState ? "Save profile settings" : "Edit current profile"}
+                {selectedProfileDraft ? "Save profile settings" : "Edit current profile"}
               </button>
             </div>
             <p className="muted">
@@ -1566,15 +1578,15 @@ export function ProfileSettingsWorkspace({
             <div className="banner error" role="alert">
               <strong>Settings workflow needs attention</strong>
               <p>{settingsErrorMessage}</p>
-              {draftState ? (
+              {selectedProfileDraft ? (
                 <p className="muted">Unsaved browser edits remain on screen while you retry or continue adjusting the current profile.</p>
               ) : null}
               <div className="actions">
-                {!profileDetail ? (
+                {!selectedProfileDetail ? (
                   <button type="button" className="secondary-button" onClick={() => void onReloadProfileDetail()} disabled={busy}>
                     Retry loading live profile
                   </button>
-                ) : !draftState ? (
+                ) : !selectedProfileDraft ? (
                   <button type="button" className="secondary-button" onClick={() => void onOpenDraft()} disabled={busy}>
                     Retry editing current profile
                   </button>
@@ -1587,22 +1599,22 @@ export function ProfileSettingsWorkspace({
             </div>
           ) : null}
 
-          {profileDetail ? (
+          {selectedProfileDetail ? (
             <div className="settings-grid settings-content-grid">
               <div className="panel settings-main settings-console-main">
             <div className="settings-status-strip">
               <div className="status-block settings-status-card">
                 <strong>Live profile</strong>
-                <p>Live version v{profileDetail.current_published_version.version_number} remains the web-processing source.</p>
+                <p>Live version v{selectedProfileDetail.current_published_version.version_number} remains the web-processing source.</p>
               </div>
               <div className="status-block settings-status-card">
                 <strong>Editing state</strong>
-                <p>{draftState ? "Editing current profile settings." : "Viewing live profile settings only."}</p>
+                <p>{selectedProfileDraft ? "Editing current profile settings." : "Viewing live profile settings only."}</p>
               </div>
               <div className="status-block settings-status-card">
                 <strong>Browser changes</strong>
                 <p>
-                  {draftState
+                  {selectedProfileDraft
                     ? dirtySections.length > 0
                       ? `${dirtySections.length} section(s) still need saving.`
                       : "All browser edits match the current unpublished profile changes."
@@ -1617,7 +1629,7 @@ export function ProfileSettingsWorkspace({
               </div>
             </div>
 
-            {!draftState && selectedRetainedDraftState ? (
+            {!selectedProfileDraft && selectedRetainedDraftState ? (
               <div className="workspace-callout">
                 <strong>Unpublished profile changes are retained for this profile.</strong>
                 <p>

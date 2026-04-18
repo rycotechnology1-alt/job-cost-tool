@@ -179,6 +179,7 @@ class DraftEditorStateResponse(ApiModel):
     version_label: str | None = None
     current_published_version: ProfileVersionSummaryResponse
     base_trusted_profile_version_id: str | None = None
+    draft_revision: int
     draft_content_hash: str
     template_metadata: TemplateMetadataResponse
     labor_active_slot_count: int = 0
@@ -198,39 +199,49 @@ class DraftEditorStateResponse(ApiModel):
     validation_errors: list[str]
 
 
-class DefaultOmitPatchRequest(ApiModel):
+class ExpectedDraftRevisionRequest(ApiModel):
+    """Shared optimistic-concurrency guard for mutable draft requests."""
+
+    expected_draft_revision: int = Field(ge=1)
+
+
+class DefaultOmitPatchRequest(ExpectedDraftRevisionRequest):
     """Request body for replacing draft default-omit rows."""
 
     default_omit_rules: list[DefaultOmitRuleRow] = Field(default_factory=list)
 
 
-class LaborMappingsPatchRequest(ApiModel):
+class LaborMappingsPatchRequest(ExpectedDraftRevisionRequest):
     """Request body for replacing draft labor mappings."""
 
     labor_mappings: list[LaborMappingRow] = Field(default_factory=list)
 
 
-class EquipmentMappingsPatchRequest(ApiModel):
+class EquipmentMappingsPatchRequest(ExpectedDraftRevisionRequest):
     """Request body for replacing draft equipment mappings."""
 
     equipment_mappings: list[EquipmentMappingRow] = Field(default_factory=list)
 
 
-class ClassificationsPatchRequest(ApiModel):
+class ClassificationsPatchRequest(ExpectedDraftRevisionRequest):
     """Request body for replacing draft labor/equipment slot rows."""
 
     labor_slots: list[ClassificationSlotRow] = Field(default_factory=list)
     equipment_slots: list[ClassificationSlotRow] = Field(default_factory=list)
 
 
-class RatesPatchRequest(ApiModel):
+class RatesPatchRequest(ExpectedDraftRevisionRequest):
     """Request body for replacing draft labor/equipment rate rows."""
 
     labor_rates: list[LaborRateRow] = Field(default_factory=list)
     equipment_rates: list[EquipmentRateRow] = Field(default_factory=list)
 
 
-class ExportSettingsPatchRequest(ApiModel):
+class ExportSettingsPatchRequest(ExpectedDraftRevisionRequest):
     """Request body for replacing draft export-only settings."""
 
     export_settings: ExportSettingsResponse = Field(default_factory=ExportSettingsResponse)
+
+
+class PublishDraftRequest(ExpectedDraftRevisionRequest):
+    """Request body for publishing one draft through optimistic concurrency."""

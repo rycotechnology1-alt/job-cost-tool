@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from core.config import ProfileManager
+from services.request_context import RequestContext
 from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
+from services.trusted_profile_provisioning_service import TrustedProfileProvisioningService
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,22 +34,45 @@ class TrustedProfileService:
         self,
         *,
         repository: TrustedProfileAuthoringRepository,
-        profile_manager: ProfileManager | None = None,
+        trusted_profile_provisioning_service: TrustedProfileProvisioningService,
     ) -> None:
         self._repository = repository
-        self._profile_manager = profile_manager or ProfileManager()
+        self._trusted_profile_provisioning_service = trusted_profile_provisioning_service
 
-    def list_trusted_profiles(self, *, include_archived: bool = False) -> list[TrustedProfileSummary]:
+    def list_trusted_profiles(
+        self,
+        *,
+        include_archived: bool = False,
+        request_context: RequestContext | None = None,
+    ) -> list[TrustedProfileSummary]:
         """Return read-only summaries for the available trusted profiles."""
-        active_profile_name = str(self._profile_manager.get_active_profile_name() or "").strip()
+        active_profile_name = self._trusted_profile_provisioning_service.get_selected_profile_name(
+            request_context=request_context
+        )
         return [
-            self._to_summary(profile, active_profile_name)
-            for profile in self._repository.list_trusted_profiles(include_archived=include_archived)
+            self._to_summary(
+                profile,
+                active_profile_name,
+                request_context=request_context,
+            )
+            for profile in self._trusted_profile_provisioning_service.list_trusted_profiles(
+                include_archived=include_archived,
+                request_context=request_context,
+            )
         ]
 
-    def _to_summary(self, trusted_profile, active_profile_name: str) -> TrustedProfileSummary:
+    def _to_summary(
+        self,
+        trusted_profile,
+        active_profile_name: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> TrustedProfileSummary:
         """Normalize one persisted trusted profile into the phase-1 API shape."""
-        current_published_version = self._repository.get_current_published_version(trusted_profile.trusted_profile_id)
+        current_published_version = self._trusted_profile_provisioning_service.get_current_published_version(
+            trusted_profile.trusted_profile_id,
+            request_context=request_context,
+        )
         behavioral_bundle = current_published_version.bundle_payload.get("behavioral_bundle", {})
         template_payload = behavioral_bundle.get("template", {}) if isinstance(behavioral_bundle, dict) else {}
         return TrustedProfileSummary(
@@ -60,15 +84,18 @@ class TrustedProfileService:
             template_filename=str(template_payload.get("template_filename") or "") or None,
             source_kind=trusted_profile.source_kind,
             current_published_version_number=current_published_version.version_number,
-            has_open_draft=self._has_open_draft(trusted_profile.trusted_profile_id),
+            has_open_draft=self._has_open_draft(
+                trusted_profile.organization_id,
+                trusted_profile.trusted_profile_id,
+            ),
             is_active_profile=trusted_profile.profile_name == active_profile_name,
             archived_at=trusted_profile.archived_at,
         )
 
-    def _has_open_draft(self, trusted_profile_id: str) -> bool:
+    def _has_open_draft(self, organization_id: str, trusted_profile_id: str) -> bool:
         """Return whether one logical trusted profile currently has an open draft."""
         try:
-            self._repository.get_open_draft(trusted_profile_id)
+            self._repository.get_open_draft(organization_id, trusted_profile_id)
             return True
         except KeyError:
             return False

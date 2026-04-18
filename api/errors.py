@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException, status
 
-from infrastructure.storage.local_runtime_file_store import ExpiredUploadError
+from infrastructure.storage import ExpiredUploadError
 from services.profile_authoring_errors import ProfileAuthoringConflictError
 from services.review_session_service import HistoricalExportUnavailableError
 

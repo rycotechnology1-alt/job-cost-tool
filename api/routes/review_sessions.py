@@ -6,9 +6,11 @@ from fastapi import APIRouter, Depends
 
 from api.dependencies import ApiRuntime, get_runtime
 from api.errors import to_http_exception
+from api.request_context import get_request_context
 from api.schemas.review_sessions import AppendReviewEditsRequest, ReviewSessionResponse
 from api.serializers import to_review_session_response
 from core.models import PendingRecordEdit
+from services.request_context import RequestContext
 
 
 router = APIRouter(prefix="/api/runs/{processing_run_id}/review-session", tags=["review-sessions"])
@@ -18,10 +20,14 @@ router = APIRouter(prefix="/api/runs/{processing_run_id}/review-session", tags=[
 def get_review_session(
     processing_run_id: str,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> ReviewSessionResponse:
     """Open or fetch the phase-1 review session for one immutable processing run."""
     try:
-        state = runtime.review_session_service.open_review_session(processing_run_id)
+        state = runtime.review_session_service.open_review_session(
+            processing_run_id,
+            request_context=request_context,
+        )
         return to_review_session_response(state)
     except Exception as exc:  # pragma: no cover - exercised through API tests
         raise to_http_exception(exc) from exc
@@ -32,6 +38,7 @@ def append_review_edits(
     processing_run_id: str,
     request: AppendReviewEditsRequest,
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> ReviewSessionResponse:
     """Append one accepted review-edit batch by run-scoped record key."""
     try:
@@ -44,6 +51,8 @@ def append_review_edits(
                 )
                 for edit in request.edits
             ],
+            expected_current_revision=request.expected_current_revision,
+            request_context=request_context,
         )
         return to_review_session_response(state)
     except Exception as exc:  # pragma: no cover - exercised through API tests
