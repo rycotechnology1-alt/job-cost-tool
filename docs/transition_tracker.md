@@ -44,6 +44,96 @@ Historical migration notes, retired planning sections, and older long-form chang
 
 ## Recent Meaningful Changes
 
+### [2026-04-18] Browser settings now retries the first trusted-profile detail load once after a transient 5xx so startup profile switches do not strand operators behind a refresh-only recovery
+- **What changed:** The browser app now retries trusted-profile detail loading once when the settings workspace hits a transient 5xx while opening the selected profile. Regression coverage now includes the exact startup path where the app opens on the default profile in review, the operator switches to another profile before ever visiting settings, and the first settings detail request for that newly selected profile fails once before succeeding on retry without surfacing a lasting `500 Internal Server Error`.
+- **Why:** A final startup-only variant of the stale/recoverable settings bug could still survive the settings-session reset hardening. The operator could switch profiles in review before the first settings visit, hit a one-time `500`, and only recover by refreshing the page. Since refresh immediately fixed the state, the browser should perform that one recoverable retry itself.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** This retry is intentionally narrow and only for transient settings detail load failures. If a persistent backend error remains, the browser still surfaces it normally instead of hiding it behind indefinite retries.
+
+### [2026-04-18] Browser settings now start a fresh settings-session on each re-entry from review to prevent stale editor context from surviving across workspace exits
+- **What changed:** Re-entering the browser profile-settings workspace now resets settings-scoped detail, draft, loading, and local workspace instance state before the new profile detail is loaded. The settings workspace is keyed by a re-entry session counter so internal browser-only editor state cannot survive a leave-to-review / return-to-settings cycle. Regression coverage now includes the exact path of entering settings on profile A, switching to profile B inside settings, leaving to review without taking review actions, and reopening settings under profile B.
+- **Why:** The earlier profile-context guard removed the common stale-profile path, but a harder-to-reproduce variant could still surface `500 Internal Server Error` after a settings-side profile switch followed by leaving to review and reopening settings. The remaining issue was stale browser-only settings workspace state surviving across workspace exits.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** If we later want unsaved browser-only settings state to persist across leaving the settings workspace entirely, move that retained state to an explicit app-level session store instead of relying on component lifetime.
+
+### [2026-04-18] Browser settings now re-enter under the newly selected review profile instead of reusing stale profile editor context
+- **What changed:** The browser app now clears and reloads settings-scoped profile detail/draft state when the review-side trusted profile selection changes or when the operator re-enters the profile-settings workspace. Settings actions now scope themselves to the currently selected trusted profile, and a new regression proves that switching from one profile in review to another profile before reopening settings edits against the newly selected profile's draft API path instead of reusing the prior profile's editor context.
+- **Why:** Operators could hit a trust-eroding browser state bug where entering settings for profile A, returning to review, switching to profile B, and reopening settings could surface a transient `500 Internal Server Error` until the page was refreshed. The root issue was stale settings context surviving a review-side profile switch.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** If future browser workflow work adds richer loading or optimistic profile prefetching, keep settings actions gated on the selected profile's current detail state so review-side profile switches cannot revive stale editor context.
+
+### [2026-04-18] Browser review export now invalidates after any successful profile-settings save until reprocess
+- **What changed:** The web app now uses the existing review export-invalidation seam to mark the loaded review stale immediately after any successful profile-settings save/publish while a review session is open. Returning to the review workspace shows the stale-export banner, disables `Export and Download`, clears any previously downloaded export artifact, and keeps export blocked until the user reprocesses. Browser workflow coverage now exercises the full process -> save settings -> blocked export -> rerun -> export re-enabled flow.
+- **Why:** A loaded review is a fixed snapshot of the profile version used during processing. Allowing export after later saved profile changes made it too easy to export a run that no longer matched the operator's current saved settings without forcing a fresh processing run.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** This is intentionally a browser workflow guard, not a backend lineage change. If the product later needs server-enforced export invalidation across tabs or devices, add a persisted run-versus-profile freshness check instead of duplicating more browser-only state.
+
+### [2026-04-18] Browser profile-settings saves now send draft revision CAS state on every draft mutation and publish
+- **What changed:** The web profile-settings client and app save workflow now carry `draft_revision` in browser draft state, include `expected_draft_revision` on every draft mutation and publish request, and keep the latest returned draft revision in a live ref so multi-step save flows do not reuse stale revision values between awaited requests. The settings workspace regression tests now enforce the same revision requirement the API enforces and cover the end-to-end save/publish workflow under that stricter contract.
+- **Why:** Phase 7 hardened the API to require fail-fast draft compare-and-swap, but the browser settings client was still sending the pre-hardening request shape, which caused every profile-settings save attempt to fail at request validation with HTTP 422.
+- **Area:** Web delivery / Tests / Config/docs
+- **Follow-up needed:** Review edits in local mode still rely on the older client shape because the API keeps a local fallback there; if hosted review editing becomes the default browser mode, align that client path with the hosted `expected_current_revision` contract too.
+
+### [2026-04-18] Hosted trusted-profile draft edits now use compare-and-swap revisions
+- **What changed:** Draft editor states and hosted draft mutation requests now carry `draft_revision` / `expected_draft_revision`, and every hosted profile-authoring save path compares the caller's expected revision before persisting. The SQLite/Postgres lineage stores now reject stale draft writes with the existing persistence conflict error, which the API maps to HTTP 409.
+- **Why:** Phase 7 draft concurrency hardening needs fail-fast optimistic locking for web-authored profile edits without starting publish compare-and-swap yet.
+- **Area:** Application services / Persistence/API / Tests
+- **Follow-up needed:** Publish still uses the existing path for now; if publish hardening becomes necessary later, keep its revision guard separate so the current draft CAS behavior stays lean.
+
+### [2026-04-18] Trusted-profile drafts now carry a persisted revision counter for later conflict-safe writes
+- **What changed:** Added `draft_revision` to the trusted-profile draft model, seeded new drafts at revision `1`, taught the normal draft-save path to advance the persisted revision, and taught both lineage stores plus the SQLite/Postgres schema paths to persist and hydrate that value. A focused Postgres lineage-store test now proves a real save round-trips with revision `2`, and a forward Postgres migration now safely backfills already-upgraded schemas.
+- **Why:** Phase 1 of the draft/review conflict-safety work needs a stable persisted revision primitive before any compare-and-swap behavior is introduced.
+- **Area:** Persistence/API / Tests / Config/docs
+- **Follow-up needed:** Later tasks can use the revision field to detect stale draft writes and review-session conflicts without widening the store protocol prematurely.
+
+### [2026-04-18] Hosted uploads and generated artifacts can now survive across API instances through shared runtime storage
+- **What changed:** Added a shared `VercelBlobRuntimeStorage` implementation behind the existing `RuntimeStorage` seam and updated API runtime composition so deployments can select `local` or `vercel_blob` storage without changing routes or services. Hosted-compatible upload, export-workbook, and profile-sync archive flows now persist artifact bytes plus explicit metadata in shared storage and materialize per-instance local cache files only when the existing processing/download pipeline needs a `Path`. New regression coverage proves one instance can upload/process/export while another instance later resolves and downloads the same artifacts.
+- **Why:** Phase 6 needed hosted-safe artifact storage and multi-instance runtime behavior without reopening the persistence/auth architecture or reintroducing hosted assumptions that the same machine which saved a file will later read it.
+- **Area:** Persistence/API / Tests / Config/docs
+- **Follow-up needed:** Long-term shared-deployment hardening still needs operational retention/sweeping outside request paths, eventual object-storage lifecycle policy decisions, and a future cleanup of temporary local materialization once processing/export flows can consume persisted artifacts more directly.
+
+### [2026-04-18] Hosted API requests now resolve through authenticated org/user context with persisted org default-profile state
+- **What changed:** Added a real bearer-token request-context provider for hosted API mode, persisted org/user lifecycle support, and an organization-level `default_trusted_profile_id` that is seeded once from the bundled default baseline. Hosted trusted-profile listing, create-profile default seeding, processing/review/export audit fields, and cross-org access now run through authenticated org/user context instead of relying on `org-default` or `ProfileManager.get_active_profile_name()` as hosted fallbacks.
+- **Why:** Phase 5 needed real hosted org/user behavior and a persisted org-scoped default profile before moving on to broader shared deployment hardening, without reintroducing filesystem profiles as the hosted source of truth.
+- **Area:** Application services / Persistence/API / Tests / Config/docs
+- **Follow-up needed:** Shared-deployment hardening still needs stronger token/secret operational handling, upload/export storage scoping beyond local runtime files, and eventual auth-provider/product rollout beyond the current signed bearer-token compatibility step.
+
+### [2026-04-18] Hosted reads now use organization-scoped persistence instead of raw-ID fetch plus service-side assertion
+- **What changed:** Added org-aware lineage-store methods for hosted reads of trusted profiles, versions, drafts, sync exports, source documents, processing runs, snapshots, review sessions, run records, reviewed edits, and export artifacts. `ProcessingRunService`, `ReviewSessionService`, `ProfileAuthoringService`, `TrustedProfileProvisioningService`, and `TrustedProfileService` now resolve the request organization first and read through organization-scoped persistence methods instead of loading by raw id and checking organization afterward. New API and Postgres integration tests now verify cross-org access fails closed as not found.
+- **Why:** Phase 4 needed tenant safety at the repository/store boundary so shared-hosting mode does not depend on route-layer checks or post-fetch assertions to block cross-organization reads.
+- **Area:** Application services / Persistence/API / Tests / Config/docs
+- **Follow-up needed:** Full auth-backed request-context resolution still remains later, and concrete-store compatibility helpers like raw-id reads/global listings still exist for local tests and desktop-style flows even though hosted services no longer rely on them.
+
+### [2026-04-18] Postgres lineage persistence now exists behind the existing store seam in compatibility single-org mode
+- **What changed:** Added a `PostgresLineageStore` implementation behind the existing `LineageStore` contract, real Postgres schema migrations, runtime provider selection via API settings, and a SQLite-to-Postgres import utility that preserves current text IDs and lineage rows. Focused Postgres integration tests now cover runtime selection, immutable runs, append-only review edits, exact-revision exports, draft/publish immutability, and SQLite import fidelity.
+- **Why:** Phase 3 needed a real Postgres-backed persistence path without reopening service architecture work or changing current single-org/local-web behavior.
+- **Area:** Persistence/API / Tests / Config/docs
+- **Follow-up needed:** Phase 4 still needs org-aware store methods instead of post-fetch assertions, runtime/storage scoping beyond the current local-default org behavior, and eventual cleanup of compatibility choices like text timestamp storage and temp filesystem execution bundles.
+
+### [2026-04-18] Postgres connection variables are now staged in a repo-root env template
+- **What changed:** Added a checked-in `.env.example` with explicit placeholders for the Neon admin/migration connection string and the Neon pooled application connection string, and documented the paste locations in `README.md`. The runtime still stays on SQLite for now.
+- **Why:** This sets the Postgres connection contract in one place before the next persistence phase without prematurely rewiring services or application startup.
+- **Area:** Config/docs
+- **Follow-up needed:** The next Postgres phase still needs actual settings/runtime consumption and a Postgres-backed lineage store implementation.
+
+### [2026-04-18] Workspace settings now point VS Code Python terminals at the repo `.env`
+- **What changed:** Added a workspace `.vscode/settings.json` that sets `python.envFile` to the repo-root `.env` and enables `python.terminal.useEnvFile`.
+- **Why:** This makes the staged Postgres environment variables available to new VS Code Python terminals without changing application runtime code.
+- **Area:** Config/docs
+- **Follow-up needed:** Existing terminals still need to be reopened, and future runtime phases still need actual application settings consumption for the Postgres variables.
+
+### [2026-04-18] Trusted-profile bootstrap/materialization moved out of persistence-facing code
+- **What changed:** Trusted-profile persistence is now cleanly narrowed to persisted profiles, versions, drafts, observations, and sync-export rows. Local filesystem bootstrap/provisioning moved into `TrustedProfileProvisioningService`, and temp config-bundle execution materialization moved into `ProfileExecutionCompatibilityAdapter`. `ProcessingRunService`, `ReviewSessionService`, and desktop sync export now consume those explicit seams instead of letting repositories or services hide bootstrap/materialization policy.
+- **Why:** Phase 2 of the SQLite-to-Postgres transition needed bootstrap, provisioning, and temp-bundle compatibility logic separated from persistence so Postgres can replace SQLite later without dragging local filesystem policy and execution shims through the repository boundary.
+- **Area:** Application services / Persistence/API / Tests / Config/docs
+- **Follow-up needed:** Phase 3+ still need org-aware persistence methods, storage scoping, and eventual removal of temp filesystem compatibility once parser/review/export flows can consume persisted bundles directly.
+
+### [2026-04-18] API/runtime composition now uses a lineage protocol seam and request-scoped organization context
+- **What changed:** Extracted a shared `LineageStore` protocol for the current web/API persistence surface, introduced an explicit `RequestContext` seam with a local default dependency in `api/`, and rewired API runtime composition so `ProcessingRunService` receives its trusted-profile repository/profile-authoring collaborators through composition instead of instantiating them internally. API-facing run, review, export, trusted-profile, and profile-authoring routes/services now accept request context and enforce organization scope without changing the default `org-default` local behavior.
+- **Why:** This creates the dependency-inversion and request-context boundary needed for upcoming Postgres and multi-organization work without piling new layers on top of SQLite-specific wiring or changing current operator-visible behavior.
+- **Area:** Application services / Persistence/API / Tests / Config/docs
+- **Follow-up needed:** Phase 2 still needs a real organization-aware store implementation, auth-backed request-context resolution, and consistent upload/storage scoping beyond the current local-default context seam.
+
 ### [2026-04-13] Phase 3 profile export now uses template metadata, export settings, and inactive-slot compaction
 - **What changed:** Trusted-profile authoring now persists template metadata and export-only settings alongside the draft/published bundle, profile classification slots can keep inactive overflow rows beyond active template capacity, and recap export now compacts active labor/equipment slots into contiguous template rows so inactive middle slots no longer leave blank workbook gaps. The web settings surface now exposes template capacity and the first export-only rule for labor minimum-hours shaping.
 - **Why:** Phase 3 needed to preserve lineage-ready template context, unblock future multi-template work without starting it yet, and fix the trust-eroding blank-row export behavior caused by inactive classifications in the middle of the slot list.
@@ -55,117 +145,3 @@ Historical migration notes, retired planning sections, and older long-form chang
 - **Why:** The prior stacked header was consuming more vertical space than needed and pushed useful review canvas space downward without adding much operator value.
 - **Area:** Web delivery / Config/docs
 - **Follow-up needed:** If more review-shell compression happens later, keep the top summary row readable and avoid reintroducing secondary helper copy that competes with the actual metrics.
-
-### [2026-04-11] Review export now invalidates when the selected staged PDF changes after processing
-- **What changed:** The browser review workspace now treats queued source-PDF selection changes the same way it already treats trusted-profile changes for export safety. If an operator processes one staged PDF and then clicks a different staged report, export is immediately disabled, the workspace explains that the loaded review still belongs to the prior source document, and the operator must reprocess before exporting.
-- **Why:** Operators could previously process one queued report, switch the selected staged PDF in the left rail, and still export the earlier run, which made the export action look like it followed the newly selected source file when it did not.
-- **Area:** Web delivery / Tests / Config/docs
-- **Follow-up needed:** If future review-shell polish adds more queue actions, keep export invalidation tied to whichever staged PDF and trusted profile were actually used for the loaded processing run.
-
-### [2026-04-11] Review export moved into the left staging rail and the review canvas now uses more horizontal space
-- **What changed:** The browser review shell now places the export action directly beneath `Process Source PDF` in the left rail, shortens the label to `Export and Download`, removes the separate right-rail export card, and narrows the row-details rail so the bulk action bar and grouped review table can stretch farther across the workspace.
-- **Why:** Export is a workspace-level action that pairs more naturally with processing/staging than with selected-row inspection, and the old right-side export card was consuming space that made the review canvas feel tighter than necessary.
-- **Area:** Web delivery / Tests / Config/docs
-- **Follow-up needed:** If later review-shell polishing continues, keep workspace-level actions grouped in the left rail and avoid rebuilding a second competing export surface in the row-details area.
-
-### [2026-04-11] Profile settings now retires inactive-classification rates before classification save while keeping mapping cleanup explicit
-- **What changed:** The browser settings workspace now treats rates as part of the same retirement flow when a labor or equipment classification is marked inactive. Save batches now send `/rates` before `/classifications`, and the rates payload automatically omits rows for slots that were just marked inactive. The UI also warns that those rates will be retired on save, while mappings remain untouched and must still be cleared or reassigned manually.
-- **Why:** Operators could previously deactivate a classification, clear or intend to clear its rates locally, and still hit a backend `Update rates first` blocker because the browser was persisting classifications before rates. That made the profile draft effectively unsavable for a common cleanup workflow.
-- **Area:** Web delivery / Tests / Config/docs
-- **Follow-up needed:** If later settings polish revisits the rates table, keep inactive-slot retirement behavior explicit and do not silently erase semantic mappings during the same save flow.
-
-### [2026-04-11] Merge-readiness cleanup now keeps legacy review sessions open, drops tracked runtime artifacts, and aligns repo docs with the web-first product
-- **What changed:** Review sessions for legacy runs without captured template artifacts now still open and expose `historical_export_status`, while exact historical export continues to fail closed. The Python regression suite was realigned with current equipment-observation behavior, tracked `runtime/api` outputs were removed from the repo path, and repo guidance like `README.md` now reflects the actual web-first plus desktop-fallback stance.
-- **Why:** The branch was functionally ready to become the new baseline, but legacy review openness, stale runtime artifacts, and outdated top-level docs were still undermining merge confidence.
-- **Area:** Application services / Tests / Config/docs
-- **Follow-up needed:** Keep future runtime storage outputs out of source control and preserve the distinction between review availability and exact historical export reproducibility for older runs.
-
-### [2026-04-11] Profile settings now forces open drafts to resolve before leaving and auto-discards them on browser exit
-- **What changed:** The browser settings workspace now treats any open profile draft as a blocking unpublished change, even when no local sections are currently dirty. Leaving settings for review or another trusted profile now always forces `Save and leave`, `Don't save`, or `Stay here`, and browser/tab exit uses a keepalive draft-discard request so unpublished badges do not survive normal browser navigation away from the page.
-- **Why:** Operators could previously leave settings with a clean-but-open draft still attached to the profile, which let the `Unpublished changes` badge linger and undermined trust in whether profile edits were truly resolved.
-- **Area:** Web delivery / Tests / Config/docs
-- **Follow-up needed:** Browser-exit discard remains best-effort because it depends on the platform delivering the keepalive request, so keep future workflow changes explicit about save/discard resolution before leaving settings.
-
-### [2026-04-11] Active trusted-profile switching rows and creation flow now center display names in settings
-- **What changed:** The browser settings sidebar now renders `Profiles in this organization` as denser two-row quick-pick cards: row one shows display name plus version, row two shows only remaining status badges like `Unpublished changes`, and the previous source badge was removed. Profile creation now asks operators only for a display name; the browser derives the stable backend key from that name by replacing spaces with hyphens and stripping unsupported characters.
-- **Why:** The earlier full-card treatment scaled poorly once an organization had many trusted profiles, and exposing backend-style profile keys in the create flow added clutter without helping operators.
-- **Area:** Web delivery / Tests / Config/docs
-- **Follow-up needed:** If later settings polish continues, revisit whether the top trusted-profile dropdown is still useful once the compact row selector has been exercised with broader operator data.
-
-### [2026-04-11] Clean unpublished profile drafts can now be explicitly saved away
-- **What changed:** The browser settings workspace now keeps `Save profile settings` available for a valid open draft even when the on-screen editor matches the live/unpublished baseline again, so operators can clear the lingering `Unpublished changes` state without making a throwaway edit. Added a browser regression covering edit-then-revert followed by no-op publish.
-- **Why:** The prior dirty-section gating could strand a valid open draft with the unpublished badge still visible after an operator reverted their edits before saving, which undermined trust in the settings workflow.
-- **Area:** Web delivery / Tests / Config/docs
-- **Follow-up needed:** Keep future settings-status copy explicit about the difference between local unsaved browser edits and persisted unpublished draft state.
-
-### [2026-04-10] Profile settings now shares the review workspace console-style shell
-- **What changed:** The browser profile-settings page now uses the same dark console-style shell language as review, with a persistent settings side rail for profile controls and lifecycle cards while the existing authoring sections remain in the main content column.
-- **Why:** The old settings layout was functionally complete but visually disconnected from the newer review workspace and harder to scan as one product surface.
-- **Area:** Web delivery / Config/docs
-- **Follow-up needed:** If more settings polish continues later, keep the console shell aligned with review without reintroducing redundant controls or changing the current profile-authoring workflow.
-
-### [2026-04-10] Review launch action moved to the top bar and the left rail was simplified
-- **What changed:** The review page now launches processing from a top-bar `Process Source PDF` button, and the left staging rail no longer shows the redundant trusted-profile summary card.
-- **Why:** The profile summary duplicated information already visible elsewhere, and the processing action is easier to find in the top status area.
-- **Area:** Web delivery / Tests / Config/docs
-- **Follow-up needed:** If more review-shell cleanup continues, keep launch and queue controls distinct so the staged-file rail remains focused on selection and status rather than mixed actions.
-
-### [2026-04-10] Review workspace now uses a consolidated dashboard-style shell
-- **What changed:** The browser review page now presents staging in a persistent left rail, keeps the grouped review table and bulk actions in the center, and uses a darker dashboard-style layout inspired by the pilot mockup while preserving the existing staging, review-edit, and export workflows.
-- **Why:** The earlier stacked layout worked functionally but felt visually disconnected and harder to scan during review.
-- **Area:** Web delivery / Tests / Config/docs
-- **Follow-up needed:** If later polishing continues, revisit whether the right rail should surface richer readiness summaries without duplicating backend/export-state concepts.
-
-### [2026-04-10] Review export is now visible immediately when the workspace opens
-- **What changed:** The browser review sidebar now keeps the export card visible as soon as a review session loads instead of hiding export behind selected-row details.
-- **Why:** Export readiness is a workspace-level action, so gating the button behind row selection was unnecessary and confusing.
-- **Area:** Web delivery / Tests
-- **Follow-up needed:** If the sidebar keeps shrinking later, consider whether export and other workspace-level actions should stay in the sidebar or move into a dedicated header actions region.
-
-### [2026-04-10] Review vendor editing now lives in the top action bar with bulk support
-- **What changed:** The browser review workspace now applies vendor-name edits from the same top action bar used for omit/include and labor/equipment bulk edits, and the redundant right-sidebar `Edit selected row` editor has been removed.
-- **Why:** After the earlier bulk-edit work, the sidebar editor was down to a single vendor-only use case and was making the review workflow feel split and redundant.
-- **Area:** Web delivery / Tests
-- **Follow-up needed:** If row-editing polish continues later, consider hiding incompatible top-bar actions more aggressively when the current checkbox selection mixes vendor, labor, and equipment rows.
-
-### [2026-04-09] Phase 2 added bulk review classification actions and prioritized mapping guidance
-- **What changed:** The web review workspace can now bulk-apply one labor classification or equipment category across compatible selected rows, and the profile-settings mapping tables now surface required unresolved observations first, support bulk target assignment, and show advisory equipment suggestions.
-- **Why:** This lands the second operator-throughput slice from the advanced-feature roadmap and reduces repetitive mapping/review work without changing lineage or published-version rules.
-- **Area:** Application services / Persistence/API / Web delivery / Tests
-- **Follow-up needed:** If later review polishing continues, consider hiding irrelevant bulk controls more aggressively for mixed selections and refine equipment-suggestion heuristics against broader pilot data.
-
-### [2026-04-09] Review workflow now supports staged PDF queueing, grouped families, totals, and bulk omit/include
-- **What changed:** The browser review launch flow now stages up to 10 PDFs in a reusable queue, review rows render grouped by family with full raw/included/omitted totals, and batch omit/include actions submit one append-only edit batch across the selected rows.
-- **Why:** This lands the first operator-throughput slice from the advanced-feature roadmap without widening into later template/model work.
-- **Area:** Web delivery / Tests
-- **Follow-up needed:** Later phases can build on the staged queue and grouped-row selection model for bulk classification/category changes and mapping-priority workflows.
-
-### [2026-04-09] Web settings now uses a simpler current-profile edit/save flow
-- **What changed:** The browser settings workspace now presents `Edit current profile` and `Save profile settings` instead of exposing create/open/publish draft terminology. Saving batches dirty section saves and publishes in one operator-facing flow.
-- **Why:** The earlier draft lifecycle wording was correct technically but confusing operationally.
-- **Area:** Web delivery / Tests
-- **Follow-up needed:** Keep future settings UX changes in operator-facing language instead of reintroducing backend draft jargon.
-
-### [2026-04-09] Web settings now blocks unsafe leave-with-unsaved changes and no longer restores false empty draft state
-- **What changed:** Fixed the remount bug that could reopen saved settings as if they were blank, and added an explicit leave-settings dialog with save, discard, and stay actions.
-- **Why:** The old behavior undermined trust in saved profile settings.
-- **Area:** Application services / Persistence/API / Web delivery / Tests
-- **Follow-up needed:** Browser/tab-close warnings are still a separate decision if later requested.
-
-### [2026-04-08] Uploaded source PDFs now expire from temporary web storage
-- **What changed:** Added a short-retention upload lifecycle with cleanup and clear stale-upload messaging.
-- **Why:** Cached source PDFs were lingering in runtime storage longer than intended.
-- **Area:** Persistence/API / Web delivery / Tests
-- **Follow-up needed:** Revisit only if the product later needs longer-lived source-document retrieval.
-
-### [2026-04-08] Review classification edits now stay constrained to run-bound trusted-profile options
-- **What changed:** Browser review classification edits now use run-snapshot-backed options and reject values outside the run's trusted-profile snapshot.
-- **Why:** Freeform classification editing in web was diverging from the intended product rules.
-- **Area:** Application services / Persistence/API / Web delivery / Tests
-- **Follow-up needed:** If review-editor polish continues later, hide irrelevant selectors by row type without weakening snapshot validation.
-
-### [2026-04-08] Export now invalidates immediately when trusted-profile selection changes after processing
-- **What changed:** The browser review workflow now blocks export as soon as the selected trusted profile no longer matches the processed run context.
-- **Why:** Operators could otherwise export stale review state under a different visible profile selection.
-- **Area:** Web delivery / Tests
-- **Follow-up needed:** If needed later, surface more run-profile snapshot detail for extra operator trust.

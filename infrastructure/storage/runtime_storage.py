@@ -32,6 +32,10 @@ class StoredArtifact:
     file_path: Path
 
 
+class ExpiredUploadError(FileNotFoundError):
+    """Raised when a cached upload expired and must be uploaded again."""
+
+
 class RuntimeStorage(Protocol):
     """Storage seam for uploaded source documents and generated export artifacts."""
 
@@ -63,6 +67,9 @@ class RuntimeStorage(Protocol):
 
     def get_export_artifact(self, storage_ref: str) -> StoredArtifact:
         """Resolve one previously stored export artifact by storage reference."""
+
+    def delete_export_artifact(self, storage_ref: str) -> None:
+        """Delete one previously stored export artifact by storage reference."""
 
     def save_profile_sync_export(
         self,

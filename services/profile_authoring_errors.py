@@ -28,3 +28,20 @@ class ProfileAuthoringConflictError(ValueError):
             "error_code": self.error_code,
             "field_errors": self.field_errors,
         }
+
+
+class ProfileAuthoringPersistenceConflictError(ProfileAuthoringConflictError):
+    """Raised when persisted draft state no longer matches the caller's expected revision."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "profile_authoring_persistence_conflict",
+        field_errors: dict[str, list[str]] | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            error_code=error_code,
+            field_errors=field_errors,
+        )

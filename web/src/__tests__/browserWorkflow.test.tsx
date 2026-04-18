@@ -45,6 +45,116 @@ const reviewOptionSets = {
   },
 } as const;
 
+function buildPublishedProfileDetail(versionNumber = 1, openDraftId: string | null = null) {
+  return {
+    trusted_profile_id: "trusted-profile:org-default:default",
+    profile_name: "default",
+    display_name: "Default Profile",
+    description: "Default trusted profile",
+    version_label: "1.0",
+    current_published_version: {
+      trusted_profile_version_id: `trusted-profile-version-${versionNumber}`,
+      version_number: versionNumber,
+      content_hash: `profile-hash-v${versionNumber}`,
+      template_artifact_ref: "template-artifact:default",
+      template_file_hash: "template-file-hash",
+      template_filename: "recap_template.xlsx",
+    },
+    template_metadata: {
+      template_filename: "recap_template.xlsx",
+      labor_slots_total: 4,
+      equipment_slots_total: 4,
+      workbook_title: "Recap Template",
+    },
+    labor_active_slot_count: 2,
+    labor_inactive_slot_count: 0,
+    equipment_active_slot_count: 1,
+    equipment_inactive_slot_count: 0,
+    open_draft_id: openDraftId,
+    deferred_domains: {
+      vendor_normalization: { aliases: ["Vendor Alias"] },
+      phase_mapping: { "29 .999": "labor_non_job_related" },
+      input_model: { transaction_codes: ["JC", "AP"] },
+      recap_template_map: { labor_section_start: "B12" },
+    },
+  };
+}
+
+function buildProfileDraftState() {
+  return {
+    trusted_profile_draft_id: "draft-1",
+    trusted_profile_id: "trusted-profile:org-default:default",
+    profile_name: "default",
+    display_name: "Default Profile",
+    description: "Default trusted profile",
+    version_label: "1.0",
+    current_published_version: buildPublishedProfileDetail().current_published_version,
+    base_trusted_profile_version_id: "trusted-profile-version-1",
+    draft_revision: 1,
+    draft_content_hash: "draft-content-hash-v1",
+    template_metadata: buildPublishedProfileDetail().template_metadata,
+    labor_active_slot_count: 2,
+    labor_inactive_slot_count: 0,
+    equipment_active_slot_count: 1,
+    equipment_inactive_slot_count: 0,
+    default_omit_rules: [],
+    default_omit_phase_options: [
+      { phase_code: "20", phase_name: "Labor" },
+      { phase_code: "50", phase_name: "Other Job Cost" },
+    ],
+    labor_mappings: [
+      {
+        raw_value: "NEW OBSERVED LABOR",
+        target_classification: "",
+        notes: "",
+        is_observed: true,
+        is_required_for_recent_processing: true,
+      },
+      {
+        raw_value: "CARPENTER",
+        target_classification: "103 Journeyman",
+        notes: "Baseline row",
+        is_observed: false,
+      },
+    ],
+    equipment_mappings: [
+      {
+        raw_description: "PICK-UP TRUCK",
+        target_category: "Pick-up Truck",
+        is_observed: false,
+      },
+    ],
+    labor_slots: [
+      { slot_id: "labor_1", label: "103 Journeyman", active: true },
+      { slot_id: "labor_2", label: "103 Foreman", active: true },
+    ],
+    equipment_slots: [{ slot_id: "equipment_1", label: "Pick-up Truck", active: true }],
+    export_settings: {
+      labor_minimum_hours: {
+        enabled: false,
+        threshold_hours: "",
+        minimum_hours: "",
+      },
+    },
+    labor_rates: [
+      {
+        classification: "103 Journeyman",
+        standard_rate: "45",
+        overtime_rate: "67.5",
+        double_time_rate: "90",
+      },
+    ],
+    equipment_rates: [
+      {
+        category: "Pick-up Truck",
+        rate: "125",
+      },
+    ],
+    deferred_domains: buildPublishedProfileDetail().deferred_domains,
+    validation_errors: [],
+  };
+}
+
 interface MockOptions {
   expireCachedUploadOnSecondRun?: boolean;
 }
@@ -338,6 +448,7 @@ function installFetchMock(
   options: MockOptions & { initialReviewRecords?: ReturnType<typeof buildBaseReviewRecords> } = {},
 ) {
   const state = {
+    trustedProfiles: JSON.parse(JSON.stringify(trustedProfilesPayload)) as typeof trustedProfilesPayload,
     currentRunProfileName: "default" as "default" | "alternate",
     currentRunSourceFilename: "report.pdf",
     currentReviewRevision: 0,
@@ -347,13 +458,81 @@ function installFetchMock(
     uploadCounter: 0,
     uploadFilenamesById: new Map<string, string>(),
     runAttemptsByUploadId: new Map<string, number>(),
+    publishedProfileDetail: buildPublishedProfileDetail(),
+    draftState: buildProfileDraftState(),
   };
 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input.toString();
 
     if (url === "/api/trusted-profiles" && (!init || !init.method || init.method === "GET")) {
-      return jsonResponse(trustedProfilesPayload);
+      return jsonResponse(state.trustedProfiles);
+    }
+
+    if (url === "/api/profiles/trusted-profile:org-default:default" && (!init || !init.method || init.method === "GET")) {
+      return jsonResponse(state.publishedProfileDetail);
+    }
+
+    if (url === "/api/profiles/trusted-profile:org-default:default/draft" && init?.method === "POST") {
+      state.publishedProfileDetail.open_draft_id = state.draftState.trusted_profile_draft_id;
+      return jsonResponse(state.draftState, 201);
+    }
+
+    if (url === "/api/profile-drafts/draft-1" && (!init || !init.method || init.method === "GET")) {
+      return jsonResponse(state.draftState);
+    }
+
+    if (url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH") {
+      const payload = JSON.parse(String(init.body ?? "{}")) as {
+        expected_draft_revision?: number;
+        labor_mappings: typeof state.draftState.labor_mappings;
+      };
+      if (payload.expected_draft_revision !== state.draftState.draft_revision) {
+        return jsonResponse(
+          {
+            detail: {
+              message: "Refresh the draft and retry with the latest revision before saving.",
+              error_code: "profile_authoring_persistence_conflict",
+              field_errors: {
+                expected_draft_revision: ["Refresh the draft and retry with the latest revision before saving."],
+              },
+            },
+          },
+          409,
+        );
+      }
+      state.draftState = {
+        ...state.draftState,
+        labor_mappings: payload.labor_mappings,
+        draft_revision: state.draftState.draft_revision + 1,
+        draft_content_hash: `draft-content-hash-v${state.draftState.draft_revision + 1}`,
+      };
+      return jsonResponse(state.draftState);
+    }
+
+    if (url === "/api/profile-drafts/draft-1/publish" && init?.method === "POST") {
+      const payload = JSON.parse(String(init.body ?? "{}")) as { expected_draft_revision?: number };
+      if (payload.expected_draft_revision !== state.draftState.draft_revision) {
+        return jsonResponse(
+          {
+            detail: {
+              message: "Refresh the draft and retry with the latest revision before publishing.",
+              error_code: "profile_authoring_persistence_conflict",
+              field_errors: {
+                expected_draft_revision: ["Refresh the draft and retry with the latest revision before publishing."],
+              },
+            },
+          },
+          409,
+        );
+      }
+      state.publishedProfileDetail = buildPublishedProfileDetail(2, null);
+      state.trustedProfiles[0] = {
+        ...state.trustedProfiles[0],
+        current_published_version_number: 2,
+        has_open_draft: false,
+      };
+      return jsonResponse(state.publishedProfileDetail);
     }
 
     if (url === "/api/source-documents/uploads" && init?.method === "POST") {
@@ -636,6 +815,49 @@ describe("App", () => {
     const runRequests = fetchCalls.filter(([url]) => url === "/api/runs");
     expect(runRequests).toHaveLength(2);
     expect(JSON.parse(String(runRequests[1]?.[1]?.body)).trusted_profile_name).toBe("alternate");
+  });
+
+  it("invalidates export after profile settings are saved until processing is rerun", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    const exportButton = screen.getByRole("button", { name: /export and download/i });
+    expect(exportButton).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await screen.findByText(/live version v1 remains the web-processing source/i);
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Labor Mappings");
+    await user.clear(screen.getByLabelText(/labor raw value 2/i));
+    await user.type(screen.getByLabelText(/labor raw value 2/i), "SAVED-LABOR");
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
+    await screen.findByText(/saved profile settings and published live version v2 for default profile/i);
+
+    await user.click(screen.getByRole("button", { name: /review workspace/i }));
+
+    expect(await screen.findByText(/review context is stale for export/i)).toBeInTheDocument();
+    expect(screen.getByText(/profile settings were saved after this review was processed/i)).toBeInTheDocument();
+    const staleExportButton = screen.getByRole("button", { name: /export and download/i });
+    expect(staleExportButton).toBeDisabled();
+
+    const fetchCallsBeforeRerun = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.filter(([url]) => url === "/api/runs/processing-run-1/exports").length;
+    await user.click(staleExportButton);
+    expect(
+      vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/runs/processing-run-1/exports").length,
+    ).toBe(fetchCallsBeforeRerun);
+
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByText("No current blockers.");
+    expect(screen.queryByText(/review context is stale for export/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeEnabled();
   });
 
   it("forces a reprocess before export when the selected staged source PDF changes after a run", async () => {

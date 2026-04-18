@@ -26,6 +26,7 @@ class ReviewEditDelta(ApiModel):
 class AppendReviewEditsRequest(ApiModel):
     """Request body for appending one accepted review-edit batch."""
 
+    expected_current_revision: int | None = Field(default=None, ge=0)
     edits: list[ReviewEditDelta] = Field(min_length=1)
 
 

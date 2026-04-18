@@ -6,8 +6,10 @@ from fastapi import APIRouter, Depends, Query
 
 from api.dependencies import ApiRuntime, get_runtime
 from api.errors import to_http_exception
+from api.request_context import get_request_context
 from api.schemas.trusted_profiles import TrustedProfileResponse
 from api.serializers import to_trusted_profile_response
+from services.request_context import RequestContext
 
 
 router = APIRouter(prefix="/api/trusted-profiles", tags=["trusted-profiles"])
@@ -17,13 +19,15 @@ router = APIRouter(prefix="/api/trusted-profiles", tags=["trusted-profiles"])
 def list_trusted_profiles(
     include_archived: bool = Query(False, description="Include archived trusted profiles in the read-only listing."),
     runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
 ) -> list[TrustedProfileResponse]:
     """Return the available trusted profiles for the current phase-1 deployment."""
     try:
         return [
             to_trusted_profile_response(profile)
             for profile in runtime.trusted_profile_service.list_trusted_profiles(
-                include_archived=include_archived
+                include_archived=include_archived,
+                request_context=request_context,
             )
         ]
     except Exception as exc:  # pragma: no cover - exercised through API tests

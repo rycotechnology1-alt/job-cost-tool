@@ -259,6 +259,7 @@ export interface DraftEditorStateResponse {
   version_label: string | null;
   current_published_version: ProfileVersionSummaryResponse;
   base_trusted_profile_version_id: string | null;
+  draft_revision: number;
   draft_content_hash: string;
   template_metadata: TemplateMetadataResponse;
   labor_active_slot_count: number;

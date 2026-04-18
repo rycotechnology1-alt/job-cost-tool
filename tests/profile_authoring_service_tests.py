@@ -15,10 +15,16 @@ from core.config import ConfigLoader, ProfileManager
 from core.models import Record
 from infrastructure.persistence import SqliteLineageStore
 from infrastructure.storage import LocalRuntimeFileStore
+from services.profile_execution_compatibility_adapter import ProfileExecutionCompatibilityAdapter
 from services.processing_run_service import ProcessingRunService
-from services.profile_authoring_errors import ProfileAuthoringConflictError
+from services.profile_authoring_errors import (
+    ProfileAuthoringConflictError,
+    ProfileAuthoringPersistenceConflictError,
+)
 from services.profile_authoring_service import ProfileAuthoringService
+from services.request_context import RequestContext
 from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
+from services.trusted_profile_provisioning_service import TrustedProfileProvisioningService
 
 
 TEST_ROOT = Path("tests/_profile_authoring_tmp")
@@ -58,8 +64,17 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.lineage_store = SqliteLineageStore()
         self.repository = TrustedProfileAuthoringRepository(
             lineage_store=self.lineage_store,
+            now_provider=lambda: self.created_at,
+        )
+        self.trusted_profile_provisioning_service = TrustedProfileProvisioningService(
+            lineage_store=self.lineage_store,
+            repository=self.repository,
             profile_manager=self.profile_manager,
             now_provider=lambda: self.created_at,
+        )
+        self.profile_execution_compatibility_adapter = ProfileExecutionCompatibilityAdapter(
+            lineage_store=self.lineage_store,
+            profile_manager=self.profile_manager,
         )
         self.artifact_store = LocalRuntimeFileStore(
             upload_root=TEST_ROOT / "runtime" / "uploads",
@@ -67,13 +82,17 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         )
         self.service = ProfileAuthoringService(
             repository=self.repository,
+            trusted_profile_provisioning_service=self.trusted_profile_provisioning_service,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
             profile_manager=self.profile_manager,
             artifact_store=self.artifact_store,
             now_provider=lambda: self.created_at,
         )
         self.processing_run_service = ProcessingRunService(
             lineage_store=self.lineage_store,
-            profile_manager=self.profile_manager,
+            trusted_profile_provisioning_service=self.trusted_profile_provisioning_service,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
+            profile_authoring_service=self.service,
             engine_version="engine-1",
             now_provider=lambda: self.created_at,
         )
@@ -109,6 +128,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.assertEqual(first_state.default_omit_phase_options[0]["phase_code"], "20")
         self.assertEqual(first_state.labor_mappings[0]["target_classification"], "Default Journeyman")
         self.assertEqual(first_state.labor_slots[0]["slot_id"], "labor_1")
+        self.assertEqual(first_state.draft_revision, 1)
         self.assertFalse(first_state.export_settings["labor_minimum_hours"]["enabled"])
         self.assertEqual(first_state.template_metadata["labor_active_slot_capacity"], 1)
         self.assertEqual(first_state.validation_errors, [])
@@ -126,11 +146,103 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
                     "minimum_hours": "4",
                 }
             },
+            expected_draft_revision=draft_state.draft_revision,
         )
 
         self.assertTrue(updated_state.export_settings["labor_minimum_hours"]["enabled"])
         self.assertEqual(updated_state.export_settings["labor_minimum_hours"]["threshold_hours"], "2")
         self.assertEqual(updated_state.export_settings["labor_minimum_hours"]["minimum_hours"], "4")
+        self.assertEqual(updated_state.draft_revision, draft_state.draft_revision + 1)
+
+    def test_update_export_settings_rejects_stale_expected_draft_revision(self) -> None:
+        trusted_profile_id = "trusted-profile:org-default:default"
+        draft_state = self.service.create_or_open_draft(trusted_profile_id)
+
+        self.service.update_export_settings(
+            draft_state.trusted_profile_draft_id,
+            {
+                "labor_minimum_hours": {
+                    "enabled": True,
+                    "threshold_hours": "2",
+                    "minimum_hours": "4",
+                }
+            },
+            expected_draft_revision=draft_state.draft_revision,
+        )
+
+        with self.assertRaises(ProfileAuthoringPersistenceConflictError):
+            self.service.update_export_settings(
+                draft_state.trusted_profile_draft_id,
+                {
+                    "labor_minimum_hours": {
+                        "enabled": False,
+                        "threshold_hours": "",
+                        "minimum_hours": "",
+                    }
+                },
+                expected_draft_revision=draft_state.draft_revision,
+            )
+
+    def test_publish_rejects_stale_expected_draft_revision(self) -> None:
+        trusted_profile_id = "trusted-profile:org-default:default"
+        draft_state = self.service.create_or_open_draft(trusted_profile_id)
+
+        updated_state = self.service.update_default_omit_rules(
+            draft_state.trusted_profile_draft_id,
+            [{"phase_code": "20", "phase_name": "Labor"}],
+            expected_draft_revision=draft_state.draft_revision,
+        )
+
+        with self.assertRaises(ProfileAuthoringPersistenceConflictError):
+            self.service.publish_draft(
+                updated_state.trusted_profile_draft_id,
+                expected_draft_revision=draft_state.draft_revision,
+                request_context=RequestContext(
+                    organization_id="org-default",
+                    user_id="user-1",
+                    role="member",
+                ),
+            )
+
+    def test_publish_rejects_retry_after_same_draft_revision_was_already_published(self) -> None:
+        trusted_profile_id = "trusted-profile:org-default:default"
+        draft_state = self.service.create_or_open_draft(trusted_profile_id)
+
+        updated_state = self.service.update_default_omit_rules(
+            draft_state.trusted_profile_draft_id,
+            [{"phase_code": "20", "phase_name": "Labor"}],
+            expected_draft_revision=draft_state.draft_revision,
+        )
+
+        self.service.publish_draft(
+            updated_state.trusted_profile_draft_id,
+            expected_draft_revision=updated_state.draft_revision,
+        )
+
+        with self.assertRaises(ProfileAuthoringPersistenceConflictError):
+            self.service.publish_draft(
+                updated_state.trusted_profile_draft_id,
+                expected_draft_revision=updated_state.draft_revision,
+                request_context=RequestContext(
+                    organization_id="org-default",
+                    user_id="user-1",
+                    role="member",
+                ),
+            )
+
+    def test_publish_requires_expected_draft_revision_for_hosted_request_with_local_sentinel_values(self) -> None:
+        trusted_profile_id = "trusted-profile:org-default:default"
+        draft_state = self.service.create_or_open_draft(trusted_profile_id)
+
+        with self.assertRaisesRegex(ValueError, "expected_draft_revision"):
+            self.service.publish_draft(
+                draft_state.trusted_profile_draft_id,
+                request_context=RequestContext(
+                    organization_id="org-default",
+                    user_id="dev-local-user",
+                    role="developer",
+                ),
+            )
 
     def test_create_trusted_profile_seeds_second_profile_and_keeps_default_profile_independent(self) -> None:
         default_profile_id = "trusted-profile:org-default:default"
@@ -146,6 +258,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.service.update_default_omit_rules(
             draft_state.trusted_profile_draft_id,
             [{"phase_code": "20", "phase_name": "Labor"}],
+            expected_draft_revision=draft_state.draft_revision,
         )
         published_detail = self.service.publish_draft(draft_state.trusted_profile_draft_id)
         default_after = self.service.get_profile_detail(default_profile_id)
@@ -155,11 +268,13 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.assertEqual(draft_state.current_published_version_number, 1)
         self.assertEqual(published_detail.current_published_version_number, 2)
         self.assertEqual(
-            self.repository.get_current_published_version(created_detail.trusted_profile_id).version_number,
+            self.trusted_profile_provisioning_service.get_current_published_version(
+                created_detail.trusted_profile_id
+            ).version_number,
             2,
         )
         self.assertEqual(
-            self.repository.get_current_published_version(default_profile_id).version_number,
+            self.trusted_profile_provisioning_service.get_current_published_version(default_profile_id).version_number,
             default_detail.current_published_version_number,
         )
         self.assertEqual(default_after.current_published_version_id, default_detail.current_published_version_id)
@@ -201,13 +316,17 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
 
         self.service.archive_trusted_profile(created_detail.trusted_profile_id)
 
-        active_profiles = {profile.profile_name for profile in self.repository.list_trusted_profiles()}
-        archived_profile = self.repository.get_trusted_profile(created_detail.trusted_profile_id)
+        active_profiles = {
+            profile.profile_name for profile in self.trusted_profile_provisioning_service.list_trusted_profiles()
+        }
+        archived_profile = self.repository.get_trusted_profile("org-default", created_detail.trusted_profile_id)
 
         self.assertNotIn("field-team", active_profiles)
         self.assertIsNotNone(archived_profile.archived_at)
         self.assertEqual(
-            self.repository.get_current_published_version(created_detail.trusted_profile_id).version_number,
+            self.trusted_profile_provisioning_service.get_current_published_version(
+                created_detail.trusted_profile_id
+            ).version_number,
             1,
         )
         with self.assertRaises(ValueError):
@@ -225,8 +344,10 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
 
         self.service.unarchive_trusted_profile(created_detail.trusted_profile_id)
 
-        active_profiles = {profile.profile_name for profile in self.repository.list_trusted_profiles()}
-        restored_profile = self.repository.get_trusted_profile(created_detail.trusted_profile_id)
+        active_profiles = {
+            profile.profile_name for profile in self.trusted_profile_provisioning_service.list_trusted_profiles()
+        }
+        restored_profile = self.repository.get_trusted_profile("org-default", created_detail.trusted_profile_id)
 
         self.assertIn("field-team", active_profiles)
         self.assertIsNone(restored_profile.archived_at)
@@ -260,11 +381,13 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
                 {"slot_id": "labor_1", "label": "Updated Journeyman", "active": True},
             ],
             equipment_slots=draft_state.equipment_slots,
+            expected_draft_revision=draft_state.draft_revision,
         )
 
         self.assertEqual(updated_state.labor_slots[0]["label"], "Updated Journeyman")
         self.assertEqual(updated_state.labor_mappings[0]["target_classification"], "Updated Journeyman")
         self.assertEqual(updated_state.labor_rates[0]["classification"], "Updated Journeyman")
+        self.assertEqual(updated_state.draft_revision, draft_state.draft_revision + 1)
         self.assertIn(
             "Default Journeyman",
             updated_state.deferred_domains["recap_template_map"]["labor_rows"],
@@ -278,6 +401,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.service.update_default_omit_rules(
             draft_state.trusted_profile_draft_id,
             [{"phase_code": "20", "phase_name": "Labor"}],
+            expected_draft_revision=draft_state.draft_revision,
         )
         published_detail = self.service.publish_draft(draft_state.trusted_profile_draft_id)
 
@@ -299,7 +423,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.assertEqual(previous_version.version_number, 1)
         self.assertEqual(previous_version.bundle_payload["behavioral_bundle"]["review_rules"]["default_omit_rules"], [])
         with self.assertRaises(KeyError):
-            self.repository.get_draft(draft_state.trusted_profile_draft_id)
+            self.repository.get_draft("org-default", draft_state.trusted_profile_draft_id)
 
     def test_discard_draft_removes_open_draft_without_changing_current_published_version(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
@@ -320,7 +444,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         )
         self.assertIsNone(refreshed_detail.open_draft_id)
         with self.assertRaises(KeyError):
-            self.repository.get_draft(draft_state.trusted_profile_draft_id)
+            self.repository.get_draft("org-default", draft_state.trusted_profile_draft_id)
 
     def test_draft_changes_do_not_affect_processing_until_publish(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
@@ -331,6 +455,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
                 {"slot_id": "labor_1", "label": "Published Later Journeyman", "active": True},
             ],
             equipment_slots=draft_state.equipment_slots,
+            expected_draft_revision=draft_state.draft_revision,
         )
         parsed_record = self._make_labor_record(raw_description="Line item")
 
@@ -358,7 +483,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
 
     def test_unresolved_labor_observation_creates_draft_and_merges_one_blank_observed_row(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
-        published_before = self.repository.get_current_published_version(trusted_profile_id)
+        published_before = self.trusted_profile_provisioning_service.get_current_published_version(trusted_profile_id)
         processing_run_id = self._create_reference_processing_run_id()
 
         self.service.capture_unmapped_observations(
@@ -367,10 +492,10 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             records=[self._make_unmapped_labor_record(raw_description="Labor line", union_code="104", labor_class_raw="EO")],
         )
 
-        draft = self.repository.get_open_draft(trusted_profile_id)
+        draft = self.repository.get_open_draft("org-default", trusted_profile_id)
         draft_state = self.service.get_draft_state(draft.trusted_profile_draft_id)
         observations = self.repository.list_observations(trusted_profile_id)
-        published_after = self.repository.get_current_published_version(trusted_profile_id)
+        published_after = self.trusted_profile_provisioning_service.get_current_published_version(trusted_profile_id)
 
         self.assertEqual(published_before.bundle_payload, published_after.bundle_payload)
         self.assertEqual(len(observations), 1)
@@ -404,7 +529,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             records=[record],
         )
 
-        draft = self.repository.get_open_draft(trusted_profile_id)
+        draft = self.repository.get_open_draft("org-default", trusted_profile_id)
         draft_state = self.service.get_draft_state(draft.trusted_profile_draft_id)
         observations = self.repository.list_observations(
             trusted_profile_id,
@@ -434,7 +559,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.assertEqual(len(observations), 1)
         self.assertTrue(observations[0].is_resolved)
         with self.assertRaises(KeyError):
-            self.repository.get_open_draft(trusted_profile_id)
+            self.repository.get_open_draft("org-default", trusted_profile_id)
 
     def test_observation_after_publish_creates_fresh_draft_from_current_published_version(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
@@ -448,12 +573,14 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             records=[self._make_unmapped_equipment_record(raw_description="627/2025 crane truck")],
         )
 
-        new_draft = self.repository.get_open_draft(trusted_profile_id)
+        new_draft = self.repository.get_open_draft("org-default", trusted_profile_id)
         draft_state = self.service.get_draft_state(new_draft.trusted_profile_draft_id)
 
         self.assertEqual(
             new_draft.base_trusted_profile_version_id,
-            self.repository.get_current_published_version(trusted_profile_id).trusted_profile_version_id,
+            self.trusted_profile_provisioning_service.get_current_published_version(
+                trusted_profile_id
+            ).trusted_profile_version_id,
         )
         self.assertIn(
             {
@@ -468,6 +595,48 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             draft_state.equipment_mappings,
         )
 
+    def test_capture_unmapped_observations_can_use_processing_snapshot_version_instead_of_current_published_version(self) -> None:
+        trusted_profile_id = "trusted-profile:org-default:default"
+        snapshot_version = self.trusted_profile_provisioning_service.get_current_published_version(trusted_profile_id)
+        draft = self.service.create_or_open_draft(trusted_profile_id)
+        updated_state = self.service.update_labor_mappings(
+            draft.trusted_profile_draft_id,
+            [
+                {
+                    "raw_value": "103/J",
+                    "target_classification": "Default Journeyman",
+                    "notes": "",
+                },
+                {
+                    "raw_value": "104/EO",
+                    "target_classification": "Default Journeyman",
+                    "notes": "resolved later",
+                },
+            ],
+            expected_draft_revision=draft.draft_revision,
+        )
+        self.service.publish_draft(updated_state.trusted_profile_draft_id)
+
+        self.service.capture_unmapped_observations(
+            trusted_profile_id,
+            processing_run_id=self._create_reference_processing_run_id(),
+            records=[self._make_unmapped_labor_record(raw_description="Labor line", union_code="104", labor_class_raw="EO")],
+            published_version=snapshot_version,
+        )
+
+        observations = self.repository.list_observations(
+            trusted_profile_id,
+            observation_domain="labor_mapping",
+        )
+        current_version = self.trusted_profile_provisioning_service.get_current_published_version(trusted_profile_id)
+
+        self.assertEqual(len(observations), 1)
+        self.assertFalse(observations[0].is_resolved)
+        self.assertEqual(
+            current_version.bundle_payload["behavioral_bundle"]["labor_mapping"]["raw_mappings"]["104/EO"],
+            "Default Journeyman",
+        )
+
     def test_unmapped_equipment_rows_surface_required_priority_and_prediction_metadata(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
         processing_run_id = self._create_reference_processing_run_id()
@@ -478,7 +647,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             records=[self._make_unmapped_equipment_record(raw_description="pickup")],
         )
 
-        draft = self.repository.get_open_draft(trusted_profile_id)
+        draft = self.repository.get_open_draft("org-default", trusted_profile_id)
         draft_state = self.service.get_draft_state(draft.trusted_profile_draft_id)
         predicted_row = next(
             row for row in draft_state.equipment_mappings if row["raw_description"] == "PICKUP"
@@ -503,7 +672,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             processing_run_id=first_processing_run_id,
             records=[record],
         )
-        initial_draft = self.repository.get_open_draft(trusted_profile_id)
+        initial_draft = self.repository.get_open_draft("org-default", trusted_profile_id)
 
         self.service.discard_draft(initial_draft.trusted_profile_draft_id)
 
@@ -514,7 +683,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.assertEqual(len(observations_after_discard), 1)
         self.assertFalse(observations_after_discard[0].is_resolved)
         with self.assertRaises(KeyError):
-            self.repository.get_open_draft(trusted_profile_id)
+            self.repository.get_open_draft("org-default", trusted_profile_id)
 
         second_processing_run_id = self._create_reference_processing_run_id()
         self.service.capture_unmapped_observations(
@@ -523,7 +692,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             records=[record],
         )
 
-        recreated_draft = self.repository.get_open_draft(trusted_profile_id)
+        recreated_draft = self.repository.get_open_draft("org-default", trusted_profile_id)
         recreated_state = self.service.get_draft_state(recreated_draft.trusted_profile_draft_id)
 
         self.assertEqual(recreated_draft.trusted_profile_draft_id, initial_draft.trusted_profile_draft_id)
@@ -546,7 +715,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             processing_run_id=first_processing_run_id,
             records=[self._make_unmapped_labor_record(raw_description="Labor line", union_code="104", labor_class_raw="EO")],
         )
-        draft = self.repository.get_open_draft(trusted_profile_id)
+        draft = self.repository.get_open_draft("org-default", trusted_profile_id)
         self.service.update_labor_mappings(
             draft.trusted_profile_draft_id,
             [
@@ -562,6 +731,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
                     "is_observed": True,
                 },
             ],
+            expected_draft_revision=draft.draft_revision,
         )
         self.service.publish_draft(draft.trusted_profile_draft_id)
 
@@ -576,7 +746,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             trusted_profile_id,
             observation_domain="labor_mapping",
         )
-        current_version = self.repository.get_current_published_version(trusted_profile_id)
+        current_version = self.trusted_profile_provisioning_service.get_current_published_version(trusted_profile_id)
 
         self.assertEqual(len(observations), 1)
         self.assertTrue(observations[0].is_resolved)
@@ -585,7 +755,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             "Default Journeyman",
         )
         with self.assertRaises(KeyError):
-            self.repository.get_open_draft(trusted_profile_id)
+            self.repository.get_open_draft("org-default", trusted_profile_id)
 
     def test_create_desktop_sync_export_builds_archive_from_exact_published_version_and_manifest(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
@@ -593,6 +763,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         self.service.update_default_omit_rules(
             draft_state.trusted_profile_draft_id,
             [{"phase_code": "20", "phase_name": "Labor"}],
+            expected_draft_revision=draft_state.draft_revision,
         )
         published_detail = self.service.publish_draft(draft_state.trusted_profile_draft_id)
 
@@ -624,7 +795,7 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
 
     def test_create_desktop_sync_export_fails_when_template_artifact_identity_is_missing(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
-        current_version = self.repository.get_current_published_version(trusted_profile_id)
+        current_version = self.trusted_profile_provisioning_service.get_current_published_version(trusted_profile_id)
         self.lineage_store._connection.execute(
             """
             UPDATE trusted_profile_versions

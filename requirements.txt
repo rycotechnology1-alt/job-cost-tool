@@ -5,3 +5,5 @@ fastapi
 httpx
 python-multipart
 uvicorn
+psycopg[binary]
+vercel

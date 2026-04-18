@@ -152,14 +152,22 @@ export default function App() {
   const [settingsStatusMessage, setSettingsStatusMessage] = useState(
     "Inspect the live trusted profile and select Edit current profile when you are ready to make changes.",
   );
+  const [settingsProfileDetailLoading, setSettingsProfileDetailLoading] = useState(false);
+  const [settingsWorkspaceSession, setSettingsWorkspaceSession] = useState(0);
   const [leaveSettingsPrompt, setLeaveSettingsPrompt] = useState<LeaveSettingsPromptState | null>(null);
   const settingsLeaveGuardRef = useRef<ProfileSettingsLeaveGuard | null>(null);
   const pageExitCleanupDraftIdRef = useRef<string | null>(null);
+  const draftStateRef = useRef<DraftEditorStateResponse | null>(null);
 
   const selectedTrustedProfile =
     trustedProfiles.find((profile) => profile.profile_name === selectedTrustedProfileName) ?? null;
   const selectedTrustedProfileId = selectedTrustedProfile?.trusted_profile_id ?? "";
-  const activeProfileDraftId = draftState?.trusted_profile_draft_id ?? profileDetail?.open_draft_id ?? null;
+  const activeSettingsProfileDetail =
+    profileDetail && profileDetail.trusted_profile_id === selectedTrustedProfileId ? profileDetail : null;
+  const activeSettingsDraftState =
+    draftState && draftState.trusted_profile_id === selectedTrustedProfileId ? draftState : null;
+  const activeProfileDraftId =
+    activeSettingsDraftState?.trusted_profile_draft_id ?? activeSettingsProfileDetail?.open_draft_id ?? null;
   const activeStagedReport =
     stagedReports.find((report) => report.stagedReportId === activeStagedReportId) ?? stagedReports[0] ?? null;
   const rows = buildWorkspaceRows(runDetail, reviewSession);
@@ -194,12 +202,37 @@ export default function App() {
     }));
   }
 
+  useEffect(() => {
+    draftStateRef.current = draftState;
+  }, [draftState]);
+
   function registerSettingsLeaveGuard(guard: ProfileSettingsLeaveGuard | null) {
     settingsLeaveGuardRef.current = guard;
   }
 
   function clearSettingsDraftView() {
     setDraftState(null);
+  }
+
+  function resetSettingsWorkspaceState(options?: { resetStatusMessage?: boolean }) {
+    setProfileDetail(null);
+    setDraftState(null);
+    draftStateRef.current = null;
+    setLastDownloadedProfileSyncFilename("");
+    setSettingsProfileDetailLoading(false);
+    if (options?.resetStatusMessage) {
+      setSettingsStatusMessage(
+        "Inspect the live trusted profile and select Edit current profile when you are ready to make changes.",
+      );
+    }
+  }
+
+  function enterSettingsWorkspace() {
+    resetSettingsWorkspaceState();
+    setSettingsWorkspaceSession((current) => current + 1);
+    advanceDraftSync("profileSwitch");
+    setActiveWorkspace("settings");
+    setErrorMessage("");
   }
 
   function completeSettingsProfileSwitch(nextProfileName: string) {
@@ -209,9 +242,7 @@ export default function App() {
     const nextProfile =
       trustedProfiles.find((profile) => profile.profile_name === nextProfileName) ?? null;
     setSelectedTrustedProfileName(nextProfileName);
-    setProfileDetail(null);
-    clearSettingsDraftView();
-    setLastDownloadedProfileSyncFilename("");
+    resetSettingsWorkspaceState();
     advanceDraftSync("profileSwitch");
     setSettingsStatusMessage(
       nextProfile
@@ -221,7 +252,7 @@ export default function App() {
   }
 
   function completeLeaveSettingsToReview() {
-    clearSettingsDraftView();
+    resetSettingsWorkspaceState({ resetStatusMessage: true });
     setLeaveSettingsPrompt(null);
     setActiveWorkspace("review");
     setErrorMessage("");
@@ -280,6 +311,17 @@ export default function App() {
 
   async function loadSettingsProfileDetail(trustedProfileId: string): Promise<PublishedProfileDetailResponse> {
     return fetchProfileDetail(trustedProfileId);
+  }
+
+  async function loadSettingsProfileDetailWithRetry(trustedProfileId: string): Promise<PublishedProfileDetailResponse> {
+    try {
+      return await loadSettingsProfileDetail(trustedProfileId);
+    } catch (error) {
+      if (!(error instanceof ApiRequestError) || error.status < 500) {
+        throw error;
+      }
+      return loadSettingsProfileDetail(trustedProfileId);
+    }
   }
 
   function updateStagedReportUpload(stagedReportId: string, upload: SourceUploadResponse | null) {
@@ -489,6 +531,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeWorkspace !== "settings") {
+      setSettingsProfileDetailLoading(false);
       return;
     }
 
@@ -496,11 +539,13 @@ export default function App() {
     setLastDownloadedProfileSyncFilename("");
     if (!selectedTrustedProfile || !selectedTrustedProfileId) {
       setProfileDetail(null);
+      setSettingsProfileDetailLoading(false);
       return;
     }
 
     let cancelled = false;
     setProfileDetail(null);
+    setSettingsProfileDetailLoading(true);
     setErrorMessage("");
     const trustedProfileId = selectedTrustedProfileId;
     const selectedProfileName = selectedTrustedProfile.profile_name;
@@ -510,11 +555,12 @@ export default function App() {
         if (cancelled) {
           return;
         }
-        const detail = await loadSettingsProfileDetail(trustedProfileId);
+        const detail = await loadSettingsProfileDetailWithRetry(trustedProfileId);
         if (cancelled) {
           return;
         }
         setProfileDetail(detail);
+        setSettingsProfileDetailLoading(false);
         patchTrustedProfileSummary(selectedProfileName, {
           current_published_version_number: detail.current_published_version.version_number,
           has_open_draft: Boolean(detail.open_draft_id),
@@ -526,6 +572,7 @@ export default function App() {
         if (cancelled) {
           return;
         }
+        setSettingsProfileDetailLoading(false);
         setErrorMessage(error instanceof Error ? error.message : "Failed to load profile settings.");
       }
     }
@@ -563,15 +610,20 @@ export default function App() {
       if (!selectedTrustedProfile) {
         throw new Error("Choose a trusted profile before reloading profile settings.");
       }
-      const detail = await loadSettingsProfileDetail(selectedTrustedProfile.trusted_profile_id);
-      setProfileDetail(detail);
-      patchTrustedProfileSummary(selectedTrustedProfile.profile_name, {
-        current_published_version_number: detail.current_published_version.version_number,
-        has_open_draft: Boolean(detail.open_draft_id),
-      });
-      setSettingsStatusMessage(
-        `Inspecting live version v${detail.current_published_version.version_number} for ${detail.display_name}.`,
-      );
+      setSettingsProfileDetailLoading(true);
+      try {
+        const detail = await loadSettingsProfileDetailWithRetry(selectedTrustedProfile.trusted_profile_id);
+        setProfileDetail(detail);
+        patchTrustedProfileSummary(selectedTrustedProfile.profile_name, {
+          current_published_version_number: detail.current_published_version.version_number,
+          has_open_draft: Boolean(detail.open_draft_id),
+        });
+        setSettingsStatusMessage(
+          `Inspecting live version v${detail.current_published_version.version_number} for ${detail.display_name}.`,
+        );
+      } finally {
+        setSettingsProfileDetailLoading(false);
+      }
     });
   }
 
@@ -671,6 +723,12 @@ export default function App() {
     const hasActiveReview = Boolean(runDetail && reviewSession);
 
     setSelectedTrustedProfileName(nextProfileName);
+    setProfileDetail(null);
+    setDraftState(null);
+    draftStateRef.current = null;
+    setLastDownloadedProfileSyncFilename("");
+    setSettingsProfileDetailLoading(false);
+    advanceDraftSync("profileSwitch");
 
     if (!hasActiveReview) {
       return;
@@ -926,12 +984,15 @@ export default function App() {
       if (!selectedTrustedProfile) {
         throw new Error("Choose a trusted profile before editing the current profile.");
       }
+      if (settingsProfileDetailLoading || !activeSettingsProfileDetail) {
+        throw new Error("Wait for the selected live profile to finish loading before editing the current profile.");
+      }
 
       let usedFallbackCreate = false;
       let draft: DraftEditorStateResponse;
-      if (profileDetail?.open_draft_id) {
+      if (activeSettingsProfileDetail.open_draft_id) {
         try {
-          draft = await fetchProfileDraft(profileDetail.open_draft_id);
+          draft = await fetchProfileDraft(activeSettingsProfileDetail.open_draft_id);
         } catch (error) {
           if (!(error instanceof ApiRequestError) || error.status !== 404) {
             throw error;
@@ -945,7 +1006,7 @@ export default function App() {
       setDraftState(draft);
       advanceDraftSync("open");
       setProfileDetail((current) =>
-        current
+        current && current.trusted_profile_id === draft.trusted_profile_id
           ? {
               ...current,
               open_draft_id: draft.trusted_profile_draft_id,
@@ -965,10 +1026,16 @@ export default function App() {
 
   async function handleSaveDefaultOmit(rowsToSave: DefaultOmitRuleRow[]): Promise<boolean> {
     return runAction("Saving default omit rules...", async () => {
-      if (!draftState) {
+      const currentDraft = draftStateRef.current;
+      if (!currentDraft) {
         throw new Error("Edit the current profile before saving default omit rules.");
       }
-      const nextDraft = await updateDraftDefaultOmit(draftState.trusted_profile_draft_id, rowsToSave);
+      const nextDraft = await updateDraftDefaultOmit(
+        currentDraft.trusted_profile_draft_id,
+        rowsToSave,
+        currentDraft.draft_revision,
+      );
+      draftStateRef.current = nextDraft;
       setDraftState(nextDraft);
       advanceDraftSync("defaultOmit");
       setSettingsStatusMessage("Saved default omit rules into the current unpublished profile changes.");
@@ -977,10 +1044,16 @@ export default function App() {
 
   async function handleSaveLaborMappings(rowsToSave: LaborMappingRow[]): Promise<boolean> {
     return runAction("Saving labor mappings...", async () => {
-      if (!draftState) {
+      const currentDraft = draftStateRef.current;
+      if (!currentDraft) {
         throw new Error("Edit the current profile before saving labor mappings.");
       }
-      const nextDraft = await updateDraftLaborMappings(draftState.trusted_profile_draft_id, rowsToSave);
+      const nextDraft = await updateDraftLaborMappings(
+        currentDraft.trusted_profile_draft_id,
+        rowsToSave,
+        currentDraft.draft_revision,
+      );
+      draftStateRef.current = nextDraft;
       setDraftState(nextDraft);
       advanceDraftSync("laborMappings");
       setSettingsStatusMessage("Saved labor mappings into the current unpublished profile changes.");
@@ -989,10 +1062,16 @@ export default function App() {
 
   async function handleSaveEquipmentMappings(rowsToSave: EquipmentMappingRow[]): Promise<boolean> {
     return runAction("Saving equipment mappings...", async () => {
-      if (!draftState) {
+      const currentDraft = draftStateRef.current;
+      if (!currentDraft) {
         throw new Error("Edit the current profile before saving equipment mappings.");
       }
-      const nextDraft = await updateDraftEquipmentMappings(draftState.trusted_profile_draft_id, rowsToSave);
+      const nextDraft = await updateDraftEquipmentMappings(
+        currentDraft.trusted_profile_draft_id,
+        rowsToSave,
+        currentDraft.draft_revision,
+      );
+      draftStateRef.current = nextDraft;
       setDraftState(nextDraft);
       advanceDraftSync("equipmentMappings");
       setSettingsStatusMessage("Saved equipment mappings into the current unpublished profile changes.");
@@ -1004,14 +1083,17 @@ export default function App() {
     equipmentSlots: ClassificationSlotRow[],
   ): Promise<boolean> {
     return runAction("Saving classifications...", async () => {
-      if (!draftState) {
+      const currentDraft = draftStateRef.current;
+      if (!currentDraft) {
         throw new Error("Edit the current profile before saving classifications.");
       }
       const nextDraft = await updateDraftClassifications(
-        draftState.trusted_profile_draft_id,
+        currentDraft.trusted_profile_draft_id,
         laborSlots,
         equipmentSlots,
+        currentDraft.draft_revision,
       );
+      draftStateRef.current = nextDraft;
       setDraftState(nextDraft);
       advanceDraftSync("classifications");
       setSettingsStatusMessage("Saved labor and equipment classifications into the current unpublished profile changes.");
@@ -1020,10 +1102,17 @@ export default function App() {
 
   async function handleSaveRates(laborRates: LaborRateRow[], equipmentRates: EquipmentRateRow[]): Promise<boolean> {
     return runAction("Saving rates...", async () => {
-      if (!draftState) {
+      const currentDraft = draftStateRef.current;
+      if (!currentDraft) {
         throw new Error("Edit the current profile before saving rates.");
       }
-      const nextDraft = await updateDraftRates(draftState.trusted_profile_draft_id, laborRates, equipmentRates);
+      const nextDraft = await updateDraftRates(
+        currentDraft.trusted_profile_draft_id,
+        laborRates,
+        equipmentRates,
+        currentDraft.draft_revision,
+      );
+      draftStateRef.current = nextDraft;
       setDraftState(nextDraft);
       advanceDraftSync("rates");
       setSettingsStatusMessage("Saved rates into the current unpublished profile changes.");
@@ -1032,10 +1121,16 @@ export default function App() {
 
   async function handleSaveExportSettings(exportSettings: ExportSettingsResponse): Promise<boolean> {
     return runAction("Saving export settings...", async () => {
-      if (!draftState) {
+      const currentDraft = draftStateRef.current;
+      if (!currentDraft) {
         throw new Error("Edit the current profile before saving export settings.");
       }
-      const nextDraft = await updateDraftExportSettings(draftState.trusted_profile_draft_id, exportSettings);
+      const nextDraft = await updateDraftExportSettings(
+        currentDraft.trusted_profile_draft_id,
+        exportSettings,
+        currentDraft.draft_revision,
+      );
+      draftStateRef.current = nextDraft;
       setDraftState(nextDraft);
       advanceDraftSync("exportSettings");
       setSettingsStatusMessage("Saved export settings into the current unpublished profile changes.");
@@ -1066,12 +1161,14 @@ export default function App() {
 
   async function handlePublishDraft(trustedProfileDraftId?: string): Promise<boolean> {
     return runAction("Saving and publishing profile settings...", async () => {
-      const draftIdToPublish = trustedProfileDraftId ?? draftState?.trusted_profile_draft_id;
-      if (!draftIdToPublish) {
+      const currentDraft = draftStateRef.current;
+      const draftIdToPublish = trustedProfileDraftId ?? currentDraft?.trusted_profile_draft_id;
+      if (!draftIdToPublish || !currentDraft || currentDraft.trusted_profile_draft_id !== draftIdToPublish) {
         throw new Error("Edit the current profile before saving profile settings.");
       }
 
-      const publishedDetail = await publishProfileDraft(draftIdToPublish);
+      const publishedDetail = await publishProfileDraft(draftIdToPublish, currentDraft.draft_revision);
+      draftStateRef.current = null;
       setDraftState(null);
       advanceDraftSync("reset");
 
@@ -1091,6 +1188,16 @@ export default function App() {
           current_published_version_number: refreshedDetail.current_published_version.version_number,
           has_open_draft: false,
         });
+      }
+      if (runDetail && reviewSession) {
+        setReviewContextInvalidationMessage(
+          "Profile settings were saved after this review was processed. Reprocess before export is allowed.",
+        );
+        setExportArtifact(null);
+        setLastDownloadedFilename("");
+        setStatusMessage(
+          `Profile settings were saved for ${refreshedDetail.display_name}. The loaded review must be reprocessed before export is allowed.`,
+        );
       }
       setSettingsStatusMessage(
         refreshConfirmed
@@ -1281,8 +1388,7 @@ export default function App() {
         type="button"
         className={activeWorkspace === "settings" ? "toggle-button active" : "toggle-button"}
         onClick={() => {
-          setActiveWorkspace("settings");
-          setErrorMessage("");
+          enterSettingsWorkspace();
         }}
         aria-pressed={activeWorkspace === "settings"}
       >
@@ -1422,12 +1528,14 @@ export default function App() {
         </section>
       ) : (
         <ProfileSettingsWorkspace
+          key={`settings-session-${settingsWorkspaceSession}`}
           trustedProfiles={trustedProfiles}
           archivedTrustedProfiles={archivedTrustedProfiles}
           selectedTrustedProfileName={selectedTrustedProfileName}
           selectedTrustedProfile={selectedTrustedProfile}
-          profileDetail={profileDetail}
-          draftState={draftState}
+          profileDetail={activeSettingsProfileDetail}
+          draftState={activeSettingsDraftState}
+          profileDetailLoading={settingsProfileDetailLoading}
           draftSyncToken={draftSyncToken}
           busy={busy}
           settingsErrorMessage={errorMessage}

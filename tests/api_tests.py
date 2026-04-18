@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import io
 import json
+import os
 import shutil
 import unittest
 import zipfile
@@ -19,6 +23,10 @@ from core.config import ConfigLoader, ProfileManager
 from core.models import MATERIAL, Record
 from core.models.lineage import TrustedProfile
 from infrastructure.persistence import SqliteLineageStore
+from infrastructure.storage import VercelBlobRuntimeStorage
+from services.profile_authoring_errors import ProfileAuthoringPersistenceConflictError
+from services.request_context import RequestContext
+from tests.runtime_storage_test_helpers import FakeBlobObjectClient
 
 
 TEST_ROOT = Path("tests/_api_tmp")
@@ -137,6 +145,213 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertIsNone(payload[1]["archived_at"])
         self.assertEqual(payload[1]["template_filename"], "recap_template.xlsx")
 
+    def test_request_context_provider_can_scope_listing_to_a_different_organization_without_auth(self) -> None:
+        self._set_request_context_org("org-alt")
+
+        response = self.client.get("/api/trusted-profiles")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([profile["profile_name"] for profile in payload], ["default"])
+        self.assertEqual(payload[0]["trusted_profile_id"], "trusted-profile:org-alt:default")
+
+    def test_bearer_auth_requires_token_for_hosted_api(self) -> None:
+        hosted_client = self._create_hosted_client()
+        try:
+            response = hosted_client.get("/api/trusted-profiles")
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_bearer_auth_provisions_org_user_and_scoped_default_profile(self) -> None:
+        self._write_json(self.settings_path, {"active_profile": "alternate"})
+        hosted_client = self._create_hosted_client()
+        try:
+            response = hosted_client.get(
+                "/api/trusted-profiles",
+                headers=self._auth_headers(
+                    organization_id="org-acme",
+                    organization_slug="acme",
+                    organization_name="Acme Organization",
+                    user_id="user-acme-1",
+                    email="acme.user@example.com",
+                    display_name="Acme User",
+                    role="member",
+                ),
+            )
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([profile["profile_name"] for profile in payload], ["default"])
+        self.assertEqual(payload[0]["trusted_profile_id"], "trusted-profile:org-acme:default")
+        self.assertTrue(payload[0]["is_active_profile"])
+
+        user_row = self.lineage_store._connection.execute(
+            "SELECT organization_id, email, auth_subject FROM users WHERE user_id = ?",
+            ("user-acme-1",),
+        ).fetchone()
+        organization_row = self.lineage_store._connection.execute(
+            "SELECT slug, display_name, default_trusted_profile_id FROM organizations WHERE organization_id = ?",
+            ("org-acme",),
+        ).fetchone()
+
+        self.assertEqual(user_row["organization_id"], "org-acme")
+        self.assertEqual(user_row["email"], "acme.user@example.com")
+        self.assertEqual(user_row["auth_subject"], "auth-user-acme-1")
+        self.assertEqual(organization_row["slug"], "acme")
+        self.assertEqual(organization_row["display_name"], "Acme Organization")
+        self.assertEqual(
+            organization_row["default_trusted_profile_id"],
+            "trusted-profile:org-acme:default",
+        )
+
+    def test_bearer_auth_with_local_sentinel_values_still_uses_hosted_org_profile_resolution(self) -> None:
+        self._write_json(self.settings_path, {"active_profile": "alternate"})
+        hosted_client = self._create_hosted_client()
+        try:
+            response = hosted_client.get(
+                "/api/trusted-profiles",
+                headers=self._auth_headers(
+                    organization_id="org-acme",
+                    organization_slug="acme",
+                    organization_name="Acme Organization",
+                    user_id="dev-local-user",
+                    email="dev.local@example.com",
+                    display_name="Dev Local User",
+                    role="developer",
+                ),
+            )
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([profile["profile_name"] for profile in payload], ["default"])
+        self.assertEqual(payload[0]["trusted_profile_id"], "trusted-profile:org-acme:default")
+
+    def test_hosted_profile_creation_without_seed_uses_org_default_not_local_active_profile(self) -> None:
+        self._write_json(self.settings_path, {"active_profile": "alternate"})
+        hosted_client = self._create_hosted_client()
+        headers = self._auth_headers(
+            organization_id="org-acme",
+            organization_slug="acme",
+            organization_name="Acme Organization",
+            user_id="user-acme-1",
+            email="acme.user@example.com",
+            display_name="Acme User",
+            role="member",
+        )
+        try:
+            bootstrap_response = hosted_client.get("/api/trusted-profiles", headers=headers)
+            create_response = hosted_client.post(
+                "/api/profiles",
+                headers=headers,
+                json={
+                    "profile_name": "field-team",
+                    "display_name": "Field Team",
+                    "description": "Created from hosted default profile",
+                },
+            )
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(bootstrap_response.status_code, 200)
+        self.assertEqual(create_response.status_code, 201)
+        self.assertEqual(
+            create_response.json()["current_published_version"]["template_filename"],
+            "recap_template.xlsx",
+        )
+
+    def test_bearer_auth_same_org_access_succeeds_and_cross_org_access_fails_closed(self) -> None:
+        hosted_client = self._create_hosted_client()
+        acme_headers = self._auth_headers(
+            organization_id="org-acme",
+            organization_slug="acme",
+            organization_name="Acme Organization",
+            user_id="user-acme-1",
+            email="acme.user@example.com",
+            display_name="Acme User",
+            role="member",
+        )
+        beta_headers = self._auth_headers(
+            organization_id="org-beta",
+            organization_slug="beta",
+            organization_name="Beta Organization",
+            user_id="user-beta-1",
+            email="beta.user@example.com",
+            display_name="Beta User",
+            role="member",
+        )
+        try:
+            processing_run_id = self._create_processing_run_via_api(
+                client=hosted_client,
+                headers=acme_headers,
+            )
+            same_org_response = hosted_client.get(f"/api/runs/{processing_run_id}", headers=acme_headers)
+            cross_org_response = hosted_client.get(f"/api/runs/{processing_run_id}", headers=beta_headers)
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(same_org_response.status_code, 200)
+        self.assertEqual(cross_org_response.status_code, 404)
+
+    def test_processing_run_routes_fail_closed_for_cross_org_reads(self) -> None:
+        processing_run_id = self._create_processing_run_via_api()
+
+        self._set_request_context_org("org-alt")
+
+        run_response = self.client.get(f"/api/runs/{processing_run_id}")
+        review_response = self.client.get(f"/api/runs/{processing_run_id}/review-session")
+
+        self.assertEqual(run_response.status_code, 404)
+        self.assertEqual(review_response.status_code, 404)
+        self.assertIn(processing_run_id, run_response.json()["detail"])
+
+    def test_hosted_processing_run_with_local_sentinel_values_still_persists_authenticated_user_id(self) -> None:
+        hosted_client = self._create_hosted_client()
+        headers = self._auth_headers(
+            organization_id="org-acme",
+            organization_slug="acme",
+            organization_name="Acme Organization",
+            user_id="dev-local-user",
+            email="dev.local@example.com",
+            display_name="Dev Local User",
+            role="developer",
+        )
+        try:
+            processing_run_id = self._create_processing_run_via_api(
+                client=hosted_client,
+                headers=headers,
+            )
+        finally:
+            hosted_client.close()
+
+        persisted_run = self.lineage_store.get_processing_run(processing_run_id)
+        self.assertEqual(persisted_run.organization_id, "org-acme")
+        self.assertEqual(persisted_run.created_by_user_id, "dev-local-user")
+
+    def test_profile_draft_routes_fail_closed_for_cross_org_reads(self) -> None:
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_payload = draft_response.json()
+        draft_id = draft_payload["trusted_profile_draft_id"]
+        self.assertEqual(draft_payload["draft_revision"], 1)
+
+        self._set_request_context_org("org-alt")
+
+        detail_response = self.client.get(f"/api/profile-drafts/{draft_id}")
+        publish_response = self.client.post(
+            f"/api/profile-drafts/{draft_id}/publish",
+            json={"expected_draft_revision": draft_payload["draft_revision"]},
+        )
+
+        self.assertEqual(detail_response.status_code, 404)
+        self.assertEqual(publish_response.status_code, 404)
+        self.assertIn(draft_id, detail_response.json()["detail"])
+
     def test_create_second_profile_lists_opens_saves_and_publishes_independently(self) -> None:
         create_response = self.client.post(
             "/api/profiles",
@@ -159,7 +374,9 @@ class Phase1ApiTests(unittest.TestCase):
 
         draft_response = self.client.post("/api/profiles/trusted-profile:org-default:field-team/draft")
         self.assertEqual(draft_response.status_code, 201)
-        draft_id = draft_response.json()["trusted_profile_draft_id"]
+        draft_payload = draft_response.json()
+        draft_id = draft_payload["trusted_profile_draft_id"]
+        self.assertEqual(draft_payload["draft_revision"], 1)
 
         listing_with_draft = self.client.get("/api/trusted-profiles")
         self.assertTrue(listing_with_draft.json()[2]["has_open_draft"])
@@ -167,6 +384,7 @@ class Phase1ApiTests(unittest.TestCase):
         save_response = self.client.patch(
             f"/api/profile-drafts/{draft_id}/default-omit",
             json={
+                "expected_draft_revision": draft_payload["draft_revision"],
                 "default_omit_rules": [
                     {"phase_code": "50", "phase_name": "Other Job Cost"},
                 ]
@@ -174,7 +392,10 @@ class Phase1ApiTests(unittest.TestCase):
         )
         self.assertEqual(save_response.status_code, 200)
 
-        publish_response = self.client.post(f"/api/profile-drafts/{draft_id}/publish")
+        publish_response = self.client.post(
+            f"/api/profile-drafts/{draft_id}/publish",
+            json={"expected_draft_revision": save_response.json()["draft_revision"]},
+        )
         self.assertEqual(publish_response.status_code, 200)
         published_payload = publish_response.json()
 
@@ -191,6 +412,105 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertEqual(default_detail.json()["current_published_version"]["version_number"], 1)
         self.assertIsNone(published_payload["open_draft_id"])
         self.assertEqual(published_payload["profile_name"], "field-team")
+
+    def test_profile_draft_patch_returns_conflict_for_stale_revision(self) -> None:
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_payload = draft_response.json()
+
+        first_response = self.client.patch(
+            f"/api/profile-drafts/{draft_payload['trusted_profile_draft_id']}/export-settings",
+            json={
+                "expected_draft_revision": draft_payload["draft_revision"],
+                "export_settings": {
+                    "labor_minimum_hours": {
+                        "enabled": True,
+                        "threshold_hours": "2",
+                        "minimum_hours": "4",
+                    }
+                },
+            },
+        )
+        stale_response = self.client.patch(
+            f"/api/profile-drafts/{draft_payload['trusted_profile_draft_id']}/export-settings",
+            json={
+                "expected_draft_revision": draft_payload["draft_revision"],
+                "export_settings": {
+                    "labor_minimum_hours": {
+                        "enabled": False,
+                        "threshold_hours": "",
+                        "minimum_hours": "",
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(stale_response.status_code, 409)
+        self.assertEqual(
+            stale_response.json()["detail"]["error_code"],
+            "profile_authoring_persistence_conflict",
+        )
+
+    def test_profile_draft_publish_returns_conflict_for_stale_revision(self) -> None:
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_payload = draft_response.json()
+
+        save_response = self.client.patch(
+            f"/api/profile-drafts/{draft_payload['trusted_profile_draft_id']}/default-omit",
+            json={
+                "expected_draft_revision": draft_payload["draft_revision"],
+                "default_omit_rules": [
+                    {"phase_code": "20", "phase_name": "Labor"},
+                ],
+            },
+        )
+        self.assertEqual(save_response.status_code, 200)
+
+        stale_publish_response = self.client.post(
+            f"/api/profile-drafts/{draft_payload['trusted_profile_draft_id']}/publish",
+            json={"expected_draft_revision": draft_payload["draft_revision"]},
+        )
+
+        self.assertEqual(stale_publish_response.status_code, 409)
+        self.assertEqual(
+            stale_publish_response.json()["detail"]["error_code"],
+            "profile_authoring_persistence_conflict",
+        )
+
+    def test_profile_draft_publish_retry_returns_conflict_after_first_publish_succeeds(self) -> None:
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_payload = draft_response.json()
+
+        save_response = self.client.patch(
+            f"/api/profile-drafts/{draft_payload['trusted_profile_draft_id']}/default-omit",
+            json={
+                "expected_draft_revision": draft_payload["draft_revision"],
+                "default_omit_rules": [
+                    {"phase_code": "20", "phase_name": "Labor"},
+                ],
+            },
+        )
+        self.assertEqual(save_response.status_code, 200)
+        current_revision = save_response.json()["draft_revision"]
+
+        first_publish_response = self.client.post(
+            f"/api/profile-drafts/{draft_payload['trusted_profile_draft_id']}/publish",
+            json={"expected_draft_revision": current_revision},
+        )
+        retry_publish_response = self.client.post(
+            f"/api/profile-drafts/{draft_payload['trusted_profile_draft_id']}/publish",
+            json={"expected_draft_revision": current_revision},
+        )
+
+        self.assertEqual(first_publish_response.status_code, 200)
+        self.assertEqual(retry_publish_response.status_code, 409)
+        self.assertEqual(
+            retry_publish_response.json()["detail"]["error_code"],
+            "profile_authoring_persistence_conflict",
+        )
 
     def test_create_second_profile_rejects_duplicate_key_and_duplicate_active_display_name(self) -> None:
         first_create = self.client.post(
@@ -355,6 +675,132 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertEqual(session_response.status_code, 200)
         self.assertEqual(session_response.json()["current_revision"], 0)
 
+    def test_hosted_review_edit_returns_conflict_for_stale_expected_current_revision(self) -> None:
+        hosted_client = self._create_hosted_client()
+        headers = self._auth_headers(
+            organization_id="org-acme",
+            organization_slug="acme",
+            organization_name="Acme Organization",
+            user_id="user-acme-1",
+            email="acme.user@example.com",
+            display_name="Acme User",
+            role="member",
+        )
+        try:
+            processing_run_id = self._create_processing_run_via_api(
+                client=hosted_client,
+                headers=headers,
+            )
+            session_response = hosted_client.get(
+                f"/api/runs/{processing_run_id}/review-session",
+                headers=headers,
+            )
+            self.assertEqual(session_response.status_code, 200)
+
+            first_edit_response = hosted_client.post(
+                f"/api/runs/{processing_run_id}/review-session/edits",
+                headers=headers,
+                json={
+                    "expected_current_revision": session_response.json()["current_revision"],
+                    "edits": [
+                        {
+                            "record_key": "record-0",
+                            "changed_fields": {"vendor_name_normalized": "Vendor Rev 1"},
+                        }
+                    ],
+                },
+            )
+            stale_edit_response = hosted_client.post(
+                f"/api/runs/{processing_run_id}/review-session/edits",
+                headers=headers,
+                json={
+                    "expected_current_revision": session_response.json()["current_revision"],
+                    "edits": [
+                        {
+                            "record_key": "record-0",
+                            "changed_fields": {"vendor_name_normalized": "Vendor Rev 2"},
+                        }
+                    ],
+                },
+            )
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(first_edit_response.status_code, 200)
+        self.assertEqual(stale_edit_response.status_code, 409)
+        self.assertEqual(
+            stale_edit_response.json()["detail"]["error_code"],
+            "review_session_persistence_conflict",
+        )
+
+    def test_hosted_review_edit_requires_expected_current_revision(self) -> None:
+        hosted_client = self._create_hosted_client()
+        headers = self._auth_headers(
+            organization_id="org-acme",
+            organization_slug="acme",
+            organization_name="Acme Organization",
+            user_id="user-acme-1",
+            email="acme.user@example.com",
+            display_name="Acme User",
+            role="member",
+        )
+        try:
+            processing_run_id = self._create_processing_run_via_api(
+                client=hosted_client,
+                headers=headers,
+            )
+            response = hosted_client.post(
+                f"/api/runs/{processing_run_id}/review-session/edits",
+                headers=headers,
+                json={
+                    "edits": [
+                        {
+                            "record_key": "record-0",
+                            "changed_fields": {"vendor_name_normalized": "Vendor Rev 1"},
+                        }
+                    ],
+                },
+            )
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("expected_current_revision", response.json()["detail"])
+
+    def test_hosted_review_edit_with_local_sentinel_values_still_requires_expected_current_revision(self) -> None:
+        hosted_client = self._create_hosted_client()
+        headers = self._auth_headers(
+            organization_id="org-acme",
+            organization_slug="acme",
+            organization_name="Acme Organization",
+            user_id="dev-local-user",
+            email="dev.local@example.com",
+            display_name="Dev Local User",
+            role="developer",
+        )
+        try:
+            processing_run_id = self._create_processing_run_via_api(
+                client=hosted_client,
+                headers=headers,
+            )
+            response = hosted_client.post(
+                f"/api/runs/{processing_run_id}/review-session/edits",
+                headers=headers,
+                json={
+                    "edits": [
+                        {
+                            "record_key": "record-0",
+                            "changed_fields": {"vendor_name_normalized": "Vendor Rev 1"},
+                        }
+                    ],
+                },
+            )
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("expected_current_revision", response.json()["detail"])
+
     def test_expired_upload_returns_clear_reupload_message_when_creating_run(self) -> None:
         upload_response = self.client.post(
             "/api/source-documents/uploads",
@@ -441,6 +887,23 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertNotEqual(worksheet["G27"].value, "Vendor Rev 2")
         self.assertIn('filename="report-recap-rev-1.xlsx"', download_response.headers["content-disposition"])
 
+    def test_export_artifact_download_fails_closed_for_cross_org_reads(self) -> None:
+        processing_run_id = self._create_processing_run_via_api()
+
+        export_response = self.client.post(
+            f"/api/runs/{processing_run_id}/exports",
+            json={"session_revision": 0},
+        )
+        self.assertEqual(export_response.status_code, 201)
+        download_url = export_response.json()["download_url"]
+
+        self._set_request_context_org("org-alt")
+
+        download_response = self.client.get(download_url)
+
+        self.assertEqual(download_response.status_code, 404)
+        self.assertIn(export_response.json()["export_artifact_id"], download_response.json()["detail"])
+
     def test_legacy_runs_are_reported_non_reproducible_and_exact_export_fails_closed(self) -> None:
         processing_run_id = self._create_processing_run_via_api()
         run_detail = self.client.get(f"/api/runs/{processing_run_id}")
@@ -514,6 +977,7 @@ class Phase1ApiTests(unittest.TestCase):
         labor_mapping_response = self.client.patch(
             f"/api/profile-drafts/{draft_id}/labor-mappings",
             json={
+                "expected_draft_revision": draft_payload["draft_revision"],
                 "labor_mappings": [
                     {
                         "raw_value": "103/J",
@@ -528,10 +992,12 @@ class Phase1ApiTests(unittest.TestCase):
             labor_mapping_response.json()["labor_mappings"][0]["notes"],
             "Mapped in web authoring",
         )
+        self.assertEqual(labor_mapping_response.json()["draft_revision"], draft_payload["draft_revision"] + 1)
 
         equipment_mapping_response = self.client.patch(
             f"/api/profile-drafts/{draft_id}/equipment-mappings",
             json={
+                "expected_draft_revision": labor_mapping_response.json()["draft_revision"],
                 "equipment_mappings": [
                     {
                         "raw_description": "pickup truck",
@@ -555,7 +1021,10 @@ class Phase1ApiTests(unittest.TestCase):
             },
         )
 
-        publish_response = self.client.post(f"/api/profile-drafts/{draft_id}/publish")
+        publish_response = self.client.post(
+            f"/api/profile-drafts/{draft_id}/publish",
+            json={"expected_draft_revision": equipment_mapping_response.json()["draft_revision"]},
+        )
         self.assertEqual(publish_response.status_code, 200)
         publish_payload = publish_response.json()
         self.assertEqual(publish_payload["current_published_version"]["version_number"], 2)
@@ -661,6 +1130,47 @@ class Phase1ApiTests(unittest.TestCase):
             },
             draft_response.json()["labor_mappings"],
         )
+
+    def test_processing_run_returns_created_and_records_all_observations_when_one_draft_merge_is_stale(self) -> None:
+        upload_response = self.client.post(
+            "/api/source-documents/uploads",
+            files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        upload_payload = upload_response.json()
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[
+                self._make_unmapped_labor_record(raw_description="Labor line", union_code="104", labor_class_raw="EO"),
+                self._make_unmapped_equipment_record(raw_description="627/2025 crane truck"),
+            ],
+        ):
+            with patch.object(
+                self.client.app.state.runtime.profile_authoring_service,
+                "_save_validated_bundle",
+                side_effect=ProfileAuthoringPersistenceConflictError("stale draft"),
+            ) as save_mock:
+                run_response = self.client.post(
+                    "/api/runs",
+                    json={
+                        "upload_id": upload_payload["upload_id"],
+                        "trusted_profile_name": "default",
+                    },
+                )
+
+        self.assertEqual(run_response.status_code, 201)
+        run_payload = run_response.json()
+        persisted_runs = self.lineage_store.list_processing_runs()
+        observations = self.lineage_store.list_trusted_profile_observations("trusted-profile:org-default:default")
+
+        self.assertEqual(len(persisted_runs), 1)
+        self.assertEqual(persisted_runs[0].processing_run_id, run_payload["processing_run_id"])
+        self.assertEqual(
+            {observation.canonical_raw_key for observation in observations},
+            {"104/EO", "CRANE TRUCK"},
+        )
+        self.assertEqual(save_mock.call_count, 2)
 
     def test_processing_run_observation_capture_exposes_equipment_prediction_metadata_in_draft_state(self) -> None:
         self._write_json(
@@ -773,10 +1283,74 @@ class Phase1ApiTests(unittest.TestCase):
         response = self.client.get("/api/profile-sync-exports/does-not-exist/download")
         self.assertEqual(response.status_code, 404)
 
-    def _create_processing_run_via_api(self, *, trusted_profile_name: str = "default") -> str:
-        upload_response = self.client.post(
+    def test_shared_blob_storage_supports_cross_instance_upload_process_export_and_download(self) -> None:
+        shared_blob_client = FakeBlobObjectClient()
+        instance_one = self._create_multi_instance_client(
+            runtime_root=TEST_ROOT / "blob-instance-one",
+            blob_client=shared_blob_client,
+        )
+        instance_two = self._create_multi_instance_client(
+            runtime_root=TEST_ROOT / "blob-instance-two",
+            blob_client=shared_blob_client,
+        )
+        try:
+            upload_response = instance_one.post(
+                "/api/source-documents/uploads",
+                files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
+            )
+            self.assertEqual(upload_response.status_code, 201)
+
+            with patch(
+                "services.review_workflow_service.parse_pdf",
+                return_value=[self._make_material_record(vendor_name_normalized="Vendor A")],
+            ):
+                run_response = instance_two.post(
+                    "/api/runs",
+                    json={
+                        "upload_id": upload_response.json()["upload_id"],
+                        "trusted_profile_name": "default",
+                    },
+                )
+            self.assertEqual(run_response.status_code, 201)
+            processing_run_id = run_response.json()["processing_run_id"]
+
+            export_response = instance_one.post(
+                f"/api/runs/{processing_run_id}/exports",
+                json={"session_revision": 0},
+            )
+            self.assertEqual(export_response.status_code, 201)
+            export_download = instance_two.get(export_response.json()["download_url"])
+            self.assertEqual(export_download.status_code, 200)
+            self.assertTrue(export_download.content)
+
+            profile_detail = instance_one.get("/api/profiles/trusted-profile:org-default:default")
+            self.assertEqual(profile_detail.status_code, 200)
+            version_id = profile_detail.json()["current_published_version"]["trusted_profile_version_id"]
+            sync_export_response = instance_one.post(
+                f"/api/profile-versions/{version_id}/desktop-sync-export"
+            )
+            self.assertEqual(sync_export_response.status_code, 201)
+
+            sync_download = instance_two.get(sync_export_response.json()["download_url"])
+            self.assertEqual(sync_download.status_code, 200)
+            self.assertTrue(sync_download.content)
+        finally:
+            instance_one.close()
+            instance_two.close()
+
+    def _create_processing_run_via_api(
+        self,
+        *,
+        trusted_profile_name: str = "default",
+        client: TestClient | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> str:
+        active_client = client or self.client
+        request_headers = headers or {}
+        upload_response = active_client.post(
             "/api/source-documents/uploads",
             files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
+            headers=request_headers,
         )
         self.assertEqual(upload_response.status_code, 201)
         upload_payload = upload_response.json()
@@ -785,16 +1359,105 @@ class Phase1ApiTests(unittest.TestCase):
             "services.review_workflow_service.parse_pdf",
             return_value=[self._make_material_record(vendor_name_normalized="Vendor A")],
         ):
-            run_response = self.client.post(
+            run_response = active_client.post(
                 "/api/runs",
                 json={
                     "upload_id": upload_payload["upload_id"],
                     "trusted_profile_name": trusted_profile_name,
                 },
+                headers=request_headers,
             )
 
         self.assertEqual(run_response.status_code, 201)
         return run_response.json()["processing_run_id"]
+
+    def _create_hosted_client(self, *, auth_secret: str = "test-auth-secret") -> TestClient:
+        with patch.dict(
+            os.environ,
+            {
+                "JOB_COST_API_AUTH_MODE": "bearer",
+                "JOB_COST_API_AUTH_SECRET": auth_secret,
+            },
+            clear=False,
+        ):
+            return TestClient(
+                create_app(
+                    lineage_store=self.lineage_store,
+                    profile_manager=self.profile_manager,
+                    upload_root=TEST_ROOT / "runtime" / "uploads",
+                    export_root=TEST_ROOT / "runtime" / "exports",
+                    upload_retention_hours=24,
+                    engine_version="engine-1",
+                    now_provider=lambda: self.current_time,
+                )
+            )
+
+    def _create_multi_instance_client(
+        self,
+        *,
+        runtime_root: Path,
+        blob_client: FakeBlobObjectClient,
+    ) -> TestClient:
+        file_store = VercelBlobRuntimeStorage(
+            blob_client=blob_client,
+            upload_root=runtime_root / "uploads",
+            export_root=runtime_root / "exports",
+            upload_retention_hours=24,
+            now_provider=lambda: self.current_time,
+        )
+        return TestClient(
+            create_app(
+                lineage_store=self.lineage_store,
+                profile_manager=self.profile_manager,
+                file_store=file_store,
+                upload_root=runtime_root / "uploads",
+                export_root=runtime_root / "exports",
+                upload_retention_hours=24,
+                engine_version="engine-1",
+                now_provider=lambda: self.current_time,
+            )
+        )
+
+    def _auth_headers(
+        self,
+        *,
+        organization_id: str,
+        organization_slug: str,
+        organization_name: str,
+        user_id: str,
+        email: str,
+        display_name: str,
+        role: str,
+        auth_secret: str = "test-auth-secret",
+    ) -> dict[str, str]:
+        payload = {
+            "sub": f"auth-{user_id}",
+            "user_id": user_id,
+            "email": email,
+            "display_name": display_name,
+            "organization_id": organization_id,
+            "organization_slug": organization_slug,
+            "organization_name": organization_name,
+            "role": role,
+        }
+        payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        encoded_payload = base64.urlsafe_b64encode(payload_json).rstrip(b"=").decode("ascii")
+        signature = hmac.new(
+            auth_secret.encode("utf-8"),
+            encoded_payload.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        encoded_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+        return {"Authorization": f"Bearer jobcostv1.{encoded_payload}.{encoded_signature}"}
+
+    def _set_request_context_org(self, organization_id: str) -> None:
+        self.client.app.state.request_context_provider = (
+            lambda request: RequestContext(
+                organization_id=organization_id,
+                user_id="dev-local-user",
+                role="developer",
+            )
+        )
 
     def _write_profile_bundle(
         self,

@@ -198,6 +198,7 @@ def to_draft_editor_state_response(state: DraftEditorState) -> DraftEditorStateR
             template_filename=state.template_filename,
         ),
         base_trusted_profile_version_id=state.base_trusted_profile_version_id,
+        draft_revision=state.draft_revision,
         draft_content_hash=state.draft_content_hash,
         template_metadata=_to_template_metadata_response(state.template_metadata),
         labor_active_slot_count=state.labor_active_slot_count,

@@ -173,30 +173,42 @@ export function discardProfileDraftBestEffort(trustedProfileDraftId: string): vo
 export async function updateDraftDefaultOmit(
   trustedProfileDraftId: string,
   defaultOmitRules: DefaultOmitRuleRow[],
+  expectedDraftRevision: number,
 ): Promise<DraftEditorStateResponse> {
   return apiJson<DraftEditorStateResponse>(
     `/api/profile-drafts/${trustedProfileDraftId}/default-omit`,
-    buildJsonRequest({ default_omit_rules: defaultOmitRules }, "PATCH"),
+    buildJsonRequest(
+      { expected_draft_revision: expectedDraftRevision, default_omit_rules: defaultOmitRules },
+      "PATCH",
+    ),
   );
 }
 
 export async function updateDraftLaborMappings(
   trustedProfileDraftId: string,
   laborMappings: LaborMappingRow[],
+  expectedDraftRevision: number,
 ): Promise<DraftEditorStateResponse> {
   return apiJson<DraftEditorStateResponse>(
     `/api/profile-drafts/${trustedProfileDraftId}/labor-mappings`,
-    buildJsonRequest({ labor_mappings: laborMappings }, "PATCH"),
+    buildJsonRequest(
+      { expected_draft_revision: expectedDraftRevision, labor_mappings: laborMappings },
+      "PATCH",
+    ),
   );
 }
 
 export async function updateDraftEquipmentMappings(
   trustedProfileDraftId: string,
   equipmentMappings: EquipmentMappingRow[],
+  expectedDraftRevision: number,
 ): Promise<DraftEditorStateResponse> {
   return apiJson<DraftEditorStateResponse>(
     `/api/profile-drafts/${trustedProfileDraftId}/equipment-mappings`,
-    buildJsonRequest({ equipment_mappings: equipmentMappings }, "PATCH"),
+    buildJsonRequest(
+      { expected_draft_revision: expectedDraftRevision, equipment_mappings: equipmentMappings },
+      "PATCH",
+    ),
   );
 }
 
@@ -204,10 +216,18 @@ export async function updateDraftClassifications(
   trustedProfileDraftId: string,
   laborSlots: ClassificationSlotRow[],
   equipmentSlots: ClassificationSlotRow[],
+  expectedDraftRevision: number,
 ): Promise<DraftEditorStateResponse> {
   return apiJson<DraftEditorStateResponse>(
     `/api/profile-drafts/${trustedProfileDraftId}/classifications`,
-    buildJsonRequest({ labor_slots: laborSlots, equipment_slots: equipmentSlots }, "PATCH"),
+    buildJsonRequest(
+      {
+        expected_draft_revision: expectedDraftRevision,
+        labor_slots: laborSlots,
+        equipment_slots: equipmentSlots,
+      },
+      "PATCH",
+    ),
   );
 }
 
@@ -215,29 +235,42 @@ export async function updateDraftRates(
   trustedProfileDraftId: string,
   laborRates: LaborRateRow[],
   equipmentRates: EquipmentRateRow[],
+  expectedDraftRevision: number,
 ): Promise<DraftEditorStateResponse> {
   return apiJson<DraftEditorStateResponse>(
     `/api/profile-drafts/${trustedProfileDraftId}/rates`,
-    buildJsonRequest({ labor_rates: laborRates, equipment_rates: equipmentRates }, "PATCH"),
+    buildJsonRequest(
+      {
+        expected_draft_revision: expectedDraftRevision,
+        labor_rates: laborRates,
+        equipment_rates: equipmentRates,
+      },
+      "PATCH",
+    ),
   );
 }
 
 export async function updateDraftExportSettings(
   trustedProfileDraftId: string,
   exportSettings: ExportSettingsResponse,
+  expectedDraftRevision: number,
 ): Promise<DraftEditorStateResponse> {
   return apiJson<DraftEditorStateResponse>(
     `/api/profile-drafts/${trustedProfileDraftId}/export-settings`,
-    buildJsonRequest({ export_settings: exportSettings }, "PATCH"),
+    buildJsonRequest(
+      { expected_draft_revision: expectedDraftRevision, export_settings: exportSettings },
+      "PATCH",
+    ),
   );
 }
 
 export async function publishProfileDraft(
   trustedProfileDraftId: string,
+  expectedDraftRevision: number,
 ): Promise<PublishedProfileDetailResponse> {
   return apiJson<PublishedProfileDetailResponse>(
     `/api/profile-drafts/${trustedProfileDraftId}/publish`,
-    buildJsonRequest({}),
+    buildJsonRequest({ expected_draft_revision: expectedDraftRevision }),
   );
 }
 

@@ -29,6 +29,7 @@ from core.models.lineage import (
     TrustedProfileVersion,
 )
 from infrastructure.storage import RuntimeStorage, StoredArtifact
+from services.profile_execution_compatibility_adapter import ProfileExecutionCompatibilityAdapter
 from services.profile_bundle_helpers import (
     canonicalize_equipment_mapping_key,
     canonicalize_labor_mapping_key,
@@ -47,8 +48,13 @@ from services.profile_bundle_helpers import (
     merge_observed_equipment_raw_values,
     merge_observed_labor_raw_values,
 )
-from services.profile_authoring_errors import ProfileAuthoringConflictError
+from services.profile_authoring_errors import (
+    ProfileAuthoringConflictError,
+    ProfileAuthoringPersistenceConflictError,
+)
+from services.request_context import RequestContext, is_local_request_context, resolve_request_context
 from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
+from services.trusted_profile_provisioning_service import TrustedProfileProvisioningService
 
 
 _EDITABLE_DOMAIN_KEYS = (
@@ -108,6 +114,7 @@ class DraftEditorState:
     current_published_version_number: int
     current_published_content_hash: str
     base_trusted_profile_version_id: str | None
+    draft_revision: int
     draft_content_hash: str
     template_artifact_ref: str | None
     template_file_hash: str | None
@@ -153,20 +160,38 @@ class ProfileAuthoringService:
         self,
         *,
         repository: TrustedProfileAuthoringRepository,
+        trusted_profile_provisioning_service: TrustedProfileProvisioningService,
+        profile_execution_compatibility_adapter: ProfileExecutionCompatibilityAdapter,
         profile_manager: ProfileManager | None = None,
         artifact_store: RuntimeStorage | None = None,
         now_provider: Callable | None = None,
     ) -> None:
         self._repository = repository
+        self._trusted_profile_provisioning_service = trusted_profile_provisioning_service
+        self._profile_execution_compatibility_adapter = profile_execution_compatibility_adapter
         self._profile_manager = profile_manager or ProfileManager()
         self._artifact_store = artifact_store
         self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
 
-    def get_profile_detail(self, trusted_profile_id: str) -> PublishedProfileDetail:
+    def get_profile_detail(
+        self,
+        trusted_profile_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> PublishedProfileDetail:
         """Return read-only current published profile detail."""
-        trusted_profile = self._repository.get_trusted_profile(trusted_profile_id)
-        published_version = self._repository.get_current_published_version(trusted_profile_id)
-        draft_id = self._get_open_draft_id(trusted_profile_id)
+        trusted_profile = self._get_scoped_trusted_profile(
+            trusted_profile_id,
+            request_context=request_context,
+        )
+        published_version = self._trusted_profile_provisioning_service.get_current_published_version(
+            trusted_profile_id,
+            request_context=request_context,
+        )
+        draft_id = self._get_open_draft_id(
+            trusted_profile_id,
+            request_context=request_context,
+        )
         return self._build_profile_detail(
             trusted_profile=trusted_profile,
             published_version=published_version,
@@ -181,6 +206,7 @@ class ProfileAuthoringService:
         description: str = "",
         seed_trusted_profile_id: str | None = None,
         created_by_user_id: str | None = None,
+        request_context: RequestContext | None = None,
     ) -> PublishedProfileDetail:
         """Create one new trusted profile seeded from an existing published profile."""
         normalized_profile_name = self._profile_manager.validate_profile_name(profile_name)
@@ -190,14 +216,17 @@ class ProfileAuthoringService:
         self._validate_new_profile_identity(
             profile_name=normalized_profile_name,
             display_name=normalized_display_name,
+            request_context=request_context,
         )
-        seed_profile_id = seed_trusted_profile_id or self._default_seed_trusted_profile_id()
-        trusted_profile, published_version = self._repository.create_trusted_profile_from_published_clone(
+        seed_profile_id = seed_trusted_profile_id or self._default_seed_trusted_profile_id(request_context=request_context)
+        persisted_created_by_user_id = created_by_user_id or self._request_user_id(request_context)
+        trusted_profile, published_version = self._trusted_profile_provisioning_service.create_trusted_profile_from_published_clone(
             profile_name=normalized_profile_name,
             display_name=normalized_display_name,
             description=description,
             seed_trusted_profile_id=seed_profile_id,
-            created_by_user_id=created_by_user_id,
+            created_by_user_id=persisted_created_by_user_id,
+            request_context=request_context,
         )
         return self._build_profile_detail(
             trusted_profile=trusted_profile,
@@ -205,46 +234,94 @@ class ProfileAuthoringService:
             open_draft_id=None,
         )
 
-    def archive_trusted_profile(self, trusted_profile_id: str) -> None:
+    def archive_trusted_profile(
+        self,
+        trusted_profile_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> None:
         """Archive one user-created trusted profile without deleting published lineage."""
-        trusted_profile = self._repository.get_trusted_profile(trusted_profile_id)
+        trusted_profile = self._get_scoped_trusted_profile(
+            trusted_profile_id,
+            request_context=request_context,
+        )
         if trusted_profile.archived_at is not None:
             raise ValueError(f"Trusted profile '{trusted_profile.display_name}' is already archived.")
         if trusted_profile.source_kind != "published_clone":
             raise ValueError("Only user-created trusted profiles can be archived in web settings.")
-        if self._get_open_draft_or_none(trusted_profile_id) is not None:
+        if self._get_open_draft_or_none(trusted_profile_id, request_context=request_context) is not None:
             raise ValueError("Publish the open draft before archiving this trusted profile.")
-        self._repository.archive_trusted_profile(trusted_profile_id)
+        self._repository.archive_trusted_profile(
+            trusted_profile.organization_id,
+            trusted_profile_id,
+        )
 
-    def unarchive_trusted_profile(self, trusted_profile_id: str) -> None:
+    def unarchive_trusted_profile(
+        self,
+        trusted_profile_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> None:
         """Restore one archived user-created trusted profile to the active settings lists."""
-        trusted_profile = self._repository.get_trusted_profile(trusted_profile_id)
+        trusted_profile = self._get_scoped_trusted_profile(
+            trusted_profile_id,
+            request_context=request_context,
+        )
         if trusted_profile.archived_at is None:
             raise ValueError(f"Trusted profile '{trusted_profile.display_name}' is already active.")
         if trusted_profile.source_kind != "published_clone":
             raise ValueError("Only user-created trusted profiles can be restored from web settings.")
-        self._validate_unarchived_display_name(trusted_profile)
-        self._repository.unarchive_trusted_profile(trusted_profile_id)
+        self._validate_unarchived_display_name(trusted_profile, request_context=request_context)
+        self._repository.unarchive_trusted_profile(
+            trusted_profile.organization_id,
+            trusted_profile_id,
+        )
 
     def create_or_open_draft(
         self,
         trusted_profile_id: str,
         *,
         created_by_user_id: str | None = None,
+        request_context: RequestContext | None = None,
     ) -> DraftEditorState:
         """Create or reuse the single mutable draft for one logical profile."""
-        draft = self._repository.create_open_draft(
+        trusted_profile = self._get_scoped_trusted_profile(
             trusted_profile_id,
-            created_by_user_id=created_by_user_id,
+            request_context=request_context,
         )
-        return self.get_draft_state(draft.trusted_profile_draft_id)
+        if trusted_profile.archived_at is not None:
+            raise ValueError(f"Trusted profile '{trusted_profile.display_name}' is archived.")
+        persisted_created_by_user_id = created_by_user_id or self._request_user_id(request_context)
+        draft = self._repository.create_open_draft(
+            trusted_profile.organization_id,
+            trusted_profile_id,
+            created_by_user_id=persisted_created_by_user_id,
+        )
+        return self.get_draft_state(
+            draft.trusted_profile_draft_id,
+            request_context=request_context,
+        )
 
-    def get_draft_state(self, trusted_profile_draft_id: str) -> DraftEditorState:
+    def get_draft_state(
+        self,
+        trusted_profile_draft_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> DraftEditorState:
         """Return full editor-ready state for one trusted-profile draft."""
-        draft = self._repository.get_draft(trusted_profile_draft_id)
-        trusted_profile = self._repository.get_trusted_profile(draft.trusted_profile_id)
-        published_version = self._repository.get_current_published_version(draft.trusted_profile_id)
-        validation_errors = self.validate_draft(trusted_profile_draft_id)
+        draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
+        trusted_profile = self._get_scoped_trusted_profile(
+            draft.trusted_profile_id,
+            request_context=request_context,
+        )
+        published_version = self._trusted_profile_provisioning_service.get_current_published_version(
+            draft.trusted_profile_id,
+            request_context=request_context,
+        )
+        validation_errors = self.validate_draft(
+            trusted_profile_draft_id,
+            request_context=request_context,
+        )
         return self._build_draft_state(
             trusted_profile=trusted_profile,
             published_version=published_version,
@@ -256,45 +333,75 @@ class ProfileAuthoringService:
         self,
         trusted_profile_draft_id: str,
         rows: list[dict[str, str]],
+        *,
+        expected_draft_revision: int,
+        request_context: RequestContext | None = None,
     ) -> DraftEditorState:
         """Replace the draft default-omit rules and return refreshed state."""
-        draft = self._repository.get_draft(trusted_profile_draft_id)
+        draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
         bundle = self._copy_behavioral_bundle(draft.bundle_payload)
         bundle["review_rules"] = build_default_omit_rules_config(bundle["review_rules"], rows)
-        updated_draft = self._save_validated_bundle(draft, bundle)
-        return self.get_draft_state(updated_draft.trusted_profile_draft_id)
+        updated_draft = self._save_validated_bundle(
+            draft,
+            bundle,
+            expected_draft_revision=expected_draft_revision,
+        )
+        return self.get_draft_state(
+            updated_draft.trusted_profile_draft_id,
+            request_context=request_context,
+        )
 
     def update_labor_mappings(
         self,
         trusted_profile_draft_id: str,
         rows: list[dict[str, str]],
+        *,
+        expected_draft_revision: int,
+        request_context: RequestContext | None = None,
     ) -> DraftEditorState:
         """Replace the draft labor mappings and return refreshed state."""
-        draft = self._repository.get_draft(trusted_profile_draft_id)
+        draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
         bundle = self._copy_behavioral_bundle(draft.bundle_payload)
         bundle["labor_mapping"] = build_labor_mapping_config(
             bundle["labor_mapping"],
             rows,
             valid_targets=self._active_classifications(bundle["labor_slots"]),
         )
-        updated_draft = self._save_validated_bundle(draft, bundle)
-        return self.get_draft_state(updated_draft.trusted_profile_draft_id)
+        updated_draft = self._save_validated_bundle(
+            draft,
+            bundle,
+            expected_draft_revision=expected_draft_revision,
+        )
+        return self.get_draft_state(
+            updated_draft.trusted_profile_draft_id,
+            request_context=request_context,
+        )
 
     def update_equipment_mappings(
         self,
         trusted_profile_draft_id: str,
         rows: list[dict[str, str]],
+        *,
+        expected_draft_revision: int,
+        request_context: RequestContext | None = None,
     ) -> DraftEditorState:
         """Replace the draft equipment mappings and return refreshed state."""
-        draft = self._repository.get_draft(trusted_profile_draft_id)
+        draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
         bundle = self._copy_behavioral_bundle(draft.bundle_payload)
         bundle["equipment_mapping"] = build_equipment_mapping_config(
             bundle["equipment_mapping"],
             rows,
             valid_targets=self._active_classifications(bundle["equipment_slots"]),
         )
-        updated_draft = self._save_validated_bundle(draft, bundle)
-        return self.get_draft_state(updated_draft.trusted_profile_draft_id)
+        updated_draft = self._save_validated_bundle(
+            draft,
+            bundle,
+            expected_draft_revision=expected_draft_revision,
+        )
+        return self.get_draft_state(
+            updated_draft.trusted_profile_draft_id,
+            request_context=request_context,
+        )
 
     def update_classifications(
         self,
@@ -302,9 +409,11 @@ class ProfileAuthoringService:
         *,
         labor_slots: list[dict[str, Any]],
         equipment_slots: list[dict[str, Any]],
+        expected_draft_revision: int,
+        request_context: RequestContext | None = None,
     ) -> DraftEditorState:
         """Replace labor/equipment slot tables and propagate supported dependent updates."""
-        draft = self._repository.get_draft(trusted_profile_draft_id)
+        draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
         bundle = self._copy_behavioral_bundle(draft.bundle_payload)
         current_labor_slots = self._slot_rows(bundle["labor_slots"])
         current_equipment_slots = self._slot_rows(bundle["equipment_slots"])
@@ -339,8 +448,15 @@ class ProfileAuthoringService:
         bundle["equipment_mapping"] = edit_result.equipment_mapping_config
         bundle["rates"] = edit_result.rates_config
         bundle["recap_template_map"] = edit_result.recap_template_map
-        updated_draft = self._save_validated_bundle(draft, bundle)
-        return self.get_draft_state(updated_draft.trusted_profile_draft_id)
+        updated_draft = self._save_validated_bundle(
+            draft,
+            bundle,
+            expected_draft_revision=expected_draft_revision,
+        )
+        return self.get_draft_state(
+            updated_draft.trusted_profile_draft_id,
+            request_context=request_context,
+        )
 
     def update_rates(
         self,
@@ -348,9 +464,11 @@ class ProfileAuthoringService:
         *,
         labor_rows: list[dict[str, str]],
         equipment_rows: list[dict[str, str]],
+        expected_draft_revision: int,
+        request_context: RequestContext | None = None,
     ) -> DraftEditorState:
         """Replace the draft rates payload and return refreshed state."""
-        draft = self._repository.get_draft(trusted_profile_draft_id)
+        draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
         bundle = self._copy_behavioral_bundle(draft.bundle_payload)
         bundle["rates"] = build_rates_config(
             bundle["rates"],
@@ -359,71 +477,141 @@ class ProfileAuthoringService:
             valid_labor_targets=self._active_classifications(bundle["labor_slots"]),
             valid_equipment_targets=self._active_classifications(bundle["equipment_slots"]),
         )
-        updated_draft = self._save_validated_bundle(draft, bundle)
-        return self.get_draft_state(updated_draft.trusted_profile_draft_id)
+        updated_draft = self._save_validated_bundle(
+            draft,
+            bundle,
+            expected_draft_revision=expected_draft_revision,
+        )
+        return self.get_draft_state(
+            updated_draft.trusted_profile_draft_id,
+            request_context=request_context,
+        )
 
     def update_export_settings(
         self,
         trusted_profile_draft_id: str,
         export_settings: dict[str, Any],
+        *,
+        expected_draft_revision: int,
+        request_context: RequestContext | None = None,
     ) -> DraftEditorState:
         """Replace export-only profile settings and return refreshed state."""
-        draft = self._repository.get_draft(trusted_profile_draft_id)
+        draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
         bundle = self._copy_behavioral_bundle(draft.bundle_payload)
         bundle["export_settings"] = build_export_settings_config(
             bundle.get("export_settings", {}),
             export_settings,
         )
-        updated_draft = self._save_validated_bundle(draft, bundle)
-        return self.get_draft_state(updated_draft.trusted_profile_draft_id)
+        updated_draft = self._save_validated_bundle(
+            draft,
+            bundle,
+            expected_draft_revision=expected_draft_revision,
+        )
+        return self.get_draft_state(
+            updated_draft.trusted_profile_draft_id,
+            request_context=request_context,
+        )
 
-    def validate_draft(self, trusted_profile_draft_id: str) -> list[str]:
+    def validate_draft(
+        self,
+        trusted_profile_draft_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> list[str]:
         """Validate whole-draft consistency and return any validation errors."""
-        draft = self._repository.get_draft(trusted_profile_draft_id)
+        draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
         return self._validate_bundle(draft.bundle_payload)
 
     def publish_draft(
         self,
         trusted_profile_draft_id: str,
         *,
+        expected_draft_revision: int | None = None,
         created_by_user_id: str | None = None,
+        request_context: RequestContext | None = None,
     ) -> PublishedProfileDetail:
         """Validate and publish a draft into a new immutable current version."""
-        validation_errors = self.validate_draft(trusted_profile_draft_id)
+        try:
+            draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
+        except KeyError as exc:
+            if expected_draft_revision is not None and self._draft_id_matches_request_organization(
+                trusted_profile_draft_id,
+                request_context=request_context,
+            ):
+                raise ProfileAuthoringPersistenceConflictError(
+                    f"Trusted profile draft '{trusted_profile_draft_id}' could not be published because it is stale.",
+                    field_errors={
+                        "expected_draft_revision": [
+                            "Refresh the draft and retry with the latest revision before publishing.",
+                        ]
+                    },
+                ) from exc
+            raise
+        validation_errors = self._validate_bundle(draft.bundle_payload)
         if validation_errors:
             raise ValueError(validation_errors[0])
-        draft = self._repository.get_draft(trusted_profile_draft_id)
+        persisted_created_by_user_id = created_by_user_id or self._request_user_id(request_context)
         published_version = self._repository.publish_draft(
+            draft.organization_id,
             trusted_profile_draft_id,
-            created_by_user_id=created_by_user_id,
+            expected_draft_revision=self._resolve_expected_draft_revision_for_publish(
+                draft,
+                expected_draft_revision=expected_draft_revision,
+                request_context=request_context,
+            ),
+            created_by_user_id=persisted_created_by_user_id,
         )
         self._mark_resolved_observations_for_bundle(
             draft.trusted_profile_id,
             published_version.bundle_payload,
         )
-        trusted_profile = self._repository.get_trusted_profile(draft.trusted_profile_id)
+        trusted_profile = self._get_scoped_trusted_profile(
+            draft.trusted_profile_id,
+            request_context=request_context,
+        )
         return self._build_profile_detail(
             trusted_profile=trusted_profile,
             published_version=published_version,
             open_draft_id=None,
         )
 
-    def discard_draft(self, trusted_profile_draft_id: str) -> None:
+    def discard_draft(
+        self,
+        trusted_profile_draft_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> None:
         """Discard one mutable draft without changing any published version."""
-        self._repository.discard_draft(trusted_profile_draft_id)
+        draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
+        self._repository.discard_draft(
+            draft.organization_id,
+            trusted_profile_draft_id,
+        )
 
     def create_desktop_sync_export(
         self,
         trusted_profile_version_id: str,
         *,
         created_by_user_id: str | None = None,
+        request_context: RequestContext | None = None,
     ) -> ProfileSyncExportResult:
         """Build and persist a manual desktop-sync archive from one immutable published version."""
         if self._artifact_store is None:
             raise ValueError("artifact_store is required to create desktop-sync exports.")
 
-        published_version = self._repository.get_trusted_profile_version(trusted_profile_version_id)
-        trusted_profile = self._repository.get_trusted_profile(published_version.trusted_profile_id)
+        published_version = self._get_scoped_published_version(
+            trusted_profile_version_id,
+            request_context=request_context,
+        )
+        if not str(published_version.template_artifact_id or "").strip():
+            raise FileNotFoundError(
+                f"Trusted profile version '{published_version.trusted_profile_version_id}' does not include a "
+                "template artifact."
+            )
+        trusted_profile = self._get_scoped_trusted_profile(
+            published_version.trusted_profile_id,
+            request_context=request_context,
+        )
         archive_root_name = self._build_sync_archive_root_name(
             trusted_profile.profile_name,
             published_version.version_number,
@@ -445,6 +633,7 @@ class ProfileAuthoringService:
             content_bytes=archive_bytes,
             content_type="application/zip",
         )
+        persisted_created_by_user_id = created_by_user_id or self._request_user_id(request_context)
         sync_export = self._repository.record_sync_export(
             TrustedProfileSyncExport(
                 trusted_profile_sync_export_id=(
@@ -455,7 +644,7 @@ class ProfileAuthoringService:
                 artifact_storage_ref=stored_artifact.storage_ref,
                 artifact_file_hash=artifact_file_hash,
                 manifest_json=json.dumps(manifest_payload, indent=2, sort_keys=True, ensure_ascii=True),
-                created_by_user_id=created_by_user_id,
+                created_by_user_id=persisted_created_by_user_id,
                 created_at=self._now_provider(),
             )
         )
@@ -475,11 +664,16 @@ class ProfileAuthoringService:
     def resolve_desktop_sync_export_payload(
         self,
         trusted_profile_sync_export_id: str,
+        *,
+        request_context: RequestContext | None = None,
     ) -> StoredArtifact:
         """Resolve one persisted desktop-sync archive through the configured artifact storage seam."""
         if self._artifact_store is None:
             raise ValueError("artifact_store is required to resolve desktop-sync exports.")
-        sync_export = self._repository.get_sync_export(trusted_profile_sync_export_id)
+        sync_export = self._repository.get_sync_export(
+            self._request_organization_id(request_context),
+            trusted_profile_sync_export_id,
+        )
         return self._artifact_store.get_profile_sync_export(sync_export.artifact_storage_ref)
 
     def capture_unmapped_observations(
@@ -488,14 +682,26 @@ class ProfileAuthoringService:
         *,
         processing_run_id: str,
         records: list[Record],
+        published_version: TrustedProfileVersion | None = None,
+        request_context: RequestContext | None = None,
     ) -> None:
         """Persist observed unmapped labor/equipment values and merge unresolved draft placeholders."""
         if not records:
             return
 
-        published_version = self._repository.get_current_published_version(trusted_profile_id)
-        published_bundle = self._behavioral_bundle(published_version.bundle_payload)
-        draft = self._get_open_draft_or_none(trusted_profile_id)
+        trusted_profile = self._get_scoped_trusted_profile(
+            trusted_profile_id,
+            request_context=request_context,
+        )
+        resolved_published_version = published_version or self._trusted_profile_provisioning_service.get_current_published_version(
+            trusted_profile_id,
+            request_context=request_context,
+        )
+        published_bundle = self._behavioral_bundle(resolved_published_version.bundle_payload)
+        draft = self._get_open_draft_or_none(
+            trusted_profile_id,
+            request_context=request_context,
+        )
         draft_bundle = self._behavioral_bundle(draft.bundle_payload) if draft else None
 
         for candidate in self._collect_observation_candidates(records):
@@ -517,6 +723,7 @@ class ProfileAuthoringService:
                 continue
             if published_state == "resolved":
                 self._upsert_observation(
+                    organization_id=trusted_profile.organization_id,
                     trusted_profile_id=trusted_profile_id,
                     domain=domain,
                     canonical_raw_key=canonical_raw_key,
@@ -537,6 +744,7 @@ class ProfileAuthoringService:
             )
             if draft_state == "resolved":
                 self._upsert_observation(
+                    organization_id=trusted_profile.organization_id,
                     trusted_profile_id=trusted_profile_id,
                     domain=domain,
                     canonical_raw_key=canonical_raw_key,
@@ -546,6 +754,7 @@ class ProfileAuthoringService:
                 continue
 
             observation = self._upsert_observation(
+                organization_id=trusted_profile.organization_id,
                 trusted_profile_id=trusted_profile_id,
                 domain=domain,
                 canonical_raw_key=canonical_raw_key,
@@ -556,7 +765,10 @@ class ProfileAuthoringService:
                 continue
 
             if draft is None:
-                draft = self._repository.create_open_draft(trusted_profile_id)
+                draft = self._repository.create_open_draft(
+                    trusted_profile.organization_id,
+                    trusted_profile_id,
+                )
                 draft_bundle = self._behavioral_bundle(draft.bundle_payload)
 
             updated_bundle, did_merge = self._merge_observation_into_draft_bundle(
@@ -567,7 +779,16 @@ class ProfileAuthoringService:
             if not did_merge:
                 continue
 
-            draft = self._save_validated_bundle(draft, updated_bundle)
+            try:
+                draft = self._save_validated_bundle(
+                    draft,
+                    updated_bundle,
+                    expected_draft_revision=draft.draft_revision,
+                )
+            except ProfileAuthoringPersistenceConflictError:
+                draft = None
+                draft_bundle = None
+                continue
             draft_bundle = self._behavioral_bundle(draft.bundle_payload)
             self._repository.mark_observation_draft_applied(
                 trusted_profile_id,
@@ -580,15 +801,54 @@ class ProfileAuthoringService:
         self,
         draft: TrustedProfileDraft,
         behavioral_bundle: dict[str, Any],
+        *,
+        expected_draft_revision: int,
     ) -> TrustedProfileDraft:
         """Persist a draft bundle only after whole-draft validation succeeds."""
         updated_bundle_payload = self._replace_behavioral_bundle(draft.bundle_payload, behavioral_bundle)
         validation_errors = self._validate_bundle(updated_bundle_payload)
         if validation_errors:
             raise ValueError(validation_errors[0])
+        if draft.draft_revision != expected_draft_revision:
+            raise ProfileAuthoringPersistenceConflictError(
+                f"Trusted profile draft '{draft.trusted_profile_draft_id}' is stale.",
+                field_errors={
+                    "expected_draft_revision": [
+                        "Refresh the draft and retry with the latest revision before saving.",
+                    ]
+                },
+            )
         return self._repository.save_draft_bundle(
+            draft.organization_id,
             draft.trusted_profile_draft_id,
             updated_bundle_payload,
+            expected_draft_revision=expected_draft_revision,
+        )
+
+    def _resolve_expected_draft_revision_for_publish(
+        self,
+        draft: TrustedProfileDraft,
+        *,
+        expected_draft_revision: int | None,
+        request_context: RequestContext | None,
+    ) -> int:
+        """Require hosted publish requests to send CAS state while keeping local callers compatible."""
+        if expected_draft_revision is not None:
+            return expected_draft_revision
+        if is_local_request_context(request_context):
+            return draft.draft_revision
+        raise ValueError("expected_draft_revision is required for hosted draft publish requests.")
+
+    def _draft_id_matches_request_organization(
+        self,
+        trusted_profile_draft_id: str,
+        *,
+        request_context: RequestContext | None,
+    ) -> bool:
+        """Return whether one trusted-profile draft id belongs to the current request organization."""
+        organization_id = self._request_organization_id(request_context)
+        return trusted_profile_draft_id.startswith(
+            f"trusted-profile-draft:trusted-profile:{organization_id}:"
         )
 
     def _collect_observation_candidates(self, records: list[Record]) -> list[dict[str, str]]:
@@ -678,6 +938,7 @@ class ProfileAuthoringService:
     def _upsert_observation(
         self,
         *,
+        organization_id: str,
         trusted_profile_id: str,
         domain: str,
         canonical_raw_key: str,
@@ -686,7 +947,6 @@ class ProfileAuthoringService:
         is_resolved: bool = False,
     ) -> TrustedProfileObservation:
         """Create or refresh one persisted observation row keyed by profile/domain/raw key."""
-        trusted_profile = self._repository.get_trusted_profile(trusted_profile_id)
         existing_observation = self._repository.get_observation(
             trusted_profile_id,
             domain,
@@ -706,7 +966,7 @@ class ProfileAuthoringService:
                 trusted_profile_observation_id=existing_observation.trusted_profile_observation_id
                 if existing_observation
                 else self._build_observation_id(trusted_profile_id, domain, canonical_raw_key),
-                organization_id=trusted_profile.organization_id,
+                organization_id=organization_id,
                 trusted_profile_id=trusted_profile_id,
                 observation_domain=domain,
                 canonical_raw_key=canonical_raw_key,
@@ -772,22 +1032,43 @@ class ProfileAuthoringService:
                     resolved_at=resolved_at,
                 )
 
-    def _get_open_draft_or_none(self, trusted_profile_id: str) -> TrustedProfileDraft | None:
+    def _get_open_draft_or_none(
+        self,
+        trusted_profile_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> TrustedProfileDraft | None:
         """Return the current open draft when present without widening control flow around KeyError."""
+        organization_id = self._request_organization_id(request_context)
         try:
-            return self._repository.get_open_draft(trusted_profile_id)
+            return self._repository.get_open_draft(organization_id, trusted_profile_id)
         except KeyError:
             return None
 
-    def _default_seed_trusted_profile_id(self) -> str:
+    def _default_seed_trusted_profile_id(
+        self,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> str:
         """Resolve the default seed trusted profile for explicit create-profile flows."""
-        active_profile_name = str(self._profile_manager.get_active_profile_name() or "").strip()
-        resolved = self._repository.resolve_current_published_profile(active_profile_name or None)
+        resolved = self._trusted_profile_provisioning_service.resolve_current_published_profile(
+            None,
+            request_context=request_context,
+        )
         return resolved.trusted_profile.trusted_profile_id
 
-    def _validate_new_profile_identity(self, *, profile_name: str, display_name: str) -> None:
+    def _validate_new_profile_identity(
+        self,
+        *,
+        profile_name: str,
+        display_name: str,
+        request_context: RequestContext | None = None,
+    ) -> None:
         """Validate one new trusted-profile identity against current persisted state."""
-        all_profiles = self._repository.list_trusted_profiles(include_archived=True)
+        all_profiles = self._trusted_profile_provisioning_service.list_trusted_profiles(
+            include_archived=True,
+            request_context=request_context,
+        )
         field_errors: dict[str, list[str]] = {}
         if any(existing.profile_name.casefold() == profile_name.casefold() for existing in all_profiles):
             field_errors["profile_name"] = [
@@ -814,9 +1095,16 @@ class ProfileAuthoringService:
                 field_errors=field_errors,
             )
 
-    def _validate_unarchived_display_name(self, trusted_profile: TrustedProfile) -> None:
+    def _validate_unarchived_display_name(
+        self,
+        trusted_profile: TrustedProfile,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> None:
         """Reject restoring an archived profile when its active display name slot is no longer available."""
-        active_profiles = self._repository.list_trusted_profiles()
+        active_profiles = self._trusted_profile_provisioning_service.list_trusted_profiles(
+            request_context=request_context
+        )
         conflicting_active = next(
             (
                 existing
@@ -843,6 +1131,52 @@ class ProfileAuthoringService:
                 ]
             },
         )
+
+    def _get_scoped_trusted_profile(
+        self,
+        trusted_profile_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> TrustedProfile:
+        """Fetch one trusted profile and assert it belongs to the current request organization."""
+        return self._trusted_profile_provisioning_service.get_trusted_profile(
+            trusted_profile_id,
+            request_context=request_context,
+        )
+
+    def _get_scoped_draft(
+        self,
+        trusted_profile_draft_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> TrustedProfileDraft:
+        """Fetch one draft scoped to the current request organization."""
+        return self._repository.get_draft(
+            self._request_organization_id(request_context),
+            trusted_profile_draft_id,
+        )
+
+    def _get_scoped_published_version(
+        self,
+        trusted_profile_version_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> TrustedProfileVersion:
+        """Fetch one published version scoped to the current request organization."""
+        return self._repository.get_trusted_profile_version(
+            self._request_organization_id(request_context),
+            trusted_profile_version_id,
+        )
+
+    def _request_organization_id(self, request_context: RequestContext | None) -> str:
+        """Return the current request organization id for hosted reads."""
+        return resolve_request_context(request_context).organization_id
+
+    def _request_user_id(self, request_context: RequestContext | None) -> str | None:
+        """Return the current request user id for audit fields."""
+        if is_local_request_context(request_context):
+            return None
+        return resolve_request_context(request_context).user_id
 
     def _build_observation_id(
         self,
@@ -938,9 +1272,11 @@ class ProfileAuthoringService:
         manifest_json = json.dumps(manifest_payload, indent=2, sort_keys=True, ensure_ascii=True)
         with TemporaryDirectory(prefix="job-cost-profile-sync-") as temp_dir:
             archive_source_dir = Path(temp_dir).resolve() / archive_root_name
-            with self._repository.materialize_published_version_bundle(published_version) as materialized_dir:
+            with self._profile_execution_compatibility_adapter.materialize_published_version_bundle(
+                published_version
+            ) as materialized_bundle:
                 archive_source_dir.mkdir(parents=True, exist_ok=True)
-                for source_path in sorted(materialized_dir.iterdir(), key=lambda item: item.name):
+                for source_path in sorted(materialized_bundle.config_dir.iterdir(), key=lambda item: item.name):
                     target_path = archive_source_dir / source_path.name
                     if source_path.is_file():
                         target_path.write_bytes(source_path.read_bytes())
@@ -1024,6 +1360,7 @@ class ProfileAuthoringService:
             current_published_version_number=published_version.version_number,
             current_published_content_hash=published_version.content_hash,
             base_trusted_profile_version_id=draft.base_trusted_profile_version_id,
+            draft_revision=draft.draft_revision,
             draft_content_hash=draft.content_hash,
             template_artifact_ref=draft.template_artifact_ref,
             template_file_hash=draft.template_file_hash,
@@ -1246,9 +1583,17 @@ class ProfileAuthoringService:
             return legacy_config_dir
         return None
 
-    def _get_open_draft_id(self, trusted_profile_id: str) -> str | None:
+    def _get_open_draft_id(
+        self,
+        trusted_profile_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> str | None:
         """Return the current open draft id when present."""
         try:
-            return self._repository.get_open_draft(trusted_profile_id).trusted_profile_draft_id
+            return self._repository.get_open_draft(
+                self._request_organization_id(request_context),
+                trusted_profile_id,
+            ).trusted_profile_draft_id
         except KeyError:
             return None

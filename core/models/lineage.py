@@ -16,6 +16,7 @@ class Organization:
     display_name: str
     created_at: datetime
     is_seeded: bool = False
+    default_trusted_profile_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +82,7 @@ class TrustedProfileDraft:
     content_hash: str
     created_at: datetime
     updated_at: datetime
+    draft_revision: int = 1
     base_trusted_profile_version_id: str | None = None
     template_artifact_id: str | None = None
     template_artifact_ref: str | None = None

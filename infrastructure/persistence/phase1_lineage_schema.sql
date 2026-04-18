@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS organizations (
     organization_id TEXT PRIMARY KEY,
     slug TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
+    default_trusted_profile_id TEXT,
     is_seeded INTEGER NOT NULL DEFAULT 0 CHECK (is_seeded IN (0, 1)),
     created_at TEXT NOT NULL
 );
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS trusted_profile_drafts (
     trusted_profile_draft_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
     trusted_profile_id TEXT NOT NULL,
+    draft_revision INTEGER NOT NULL DEFAULT 1 CHECK (draft_revision > 0),
     base_trusted_profile_version_id TEXT,
     bundle_json TEXT NOT NULL,
     content_hash TEXT NOT NULL,
@@ -255,6 +257,7 @@ CREATE TABLE IF NOT EXISTS export_artifacts (
 );
 
 CREATE INDEX IF NOT EXISTS ix_trusted_profiles_org ON trusted_profiles (organization_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_users_auth_subject ON users (auth_subject) WHERE auth_subject IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_trusted_profile_versions_profile_version ON trusted_profile_versions (trusted_profile_id, version_number);
 CREATE INDEX IF NOT EXISTS ix_trusted_profile_versions_org_profile ON trusted_profile_versions (organization_id, trusted_profile_id);
 CREATE INDEX IF NOT EXISTS ix_trusted_profile_drafts_profile ON trusted_profile_drafts (trusted_profile_id);

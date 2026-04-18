@@ -1,11 +1,13 @@
-"""SQLite-backed persistence helpers for phase-1 lineage contracts."""
+"""Postgres-backed persistence helpers for phase-3 lineage contracts."""
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime
-from pathlib import Path
+
+import psycopg
+from psycopg import sql
+from psycopg.rows import dict_row
 
 from core.models.lineage import (
     ExportArtifact,
@@ -24,24 +26,38 @@ from core.models.lineage import (
     TrustedProfileVersion,
     User,
 )
+from infrastructure.persistence.postgres_migrations import apply_postgres_migrations
 from services.lineage_service import canonicalize_json
 from services.profile_authoring_errors import ProfileAuthoringPersistenceConflictError
 
 
-class SqliteLineageStore:
-    """Persist lineage entities into the phase-1 SQLite schema contract."""
+class PostgresLineageStore:
+    """Persist lineage entities into the compatibility Postgres schema contract."""
 
-    def __init__(self, database_path: str | Path = ":memory:") -> None:
-        self._database_path = str(database_path)
-        # FastAPI runs sync handlers in a worker threadpool, so the phase-1 API
-        # slice needs one connection that can be shared across those threads.
-        self._connection = sqlite3.connect(self._database_path, check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA foreign_keys = ON")
-        self._initialize_schema()
+    def __init__(
+        self,
+        connection_string: str,
+        *,
+        migration_connection_string: str | None = None,
+        schema_name: str = "public",
+        apply_migrations: bool = True,
+    ) -> None:
+        self._connection_string = connection_string
+        self._migration_connection_string = migration_connection_string or connection_string
+        self._schema_name = schema_name.strip() or "public"
+        if apply_migrations:
+            apply_postgres_migrations(
+                connection_string=self._migration_connection_string,
+                schema_name=self._schema_name,
+            )
+        self._connection = psycopg.connect(self._connection_string, row_factory=dict_row)
+        self._connection.execute(
+            sql.SQL("SET search_path TO {}, public").format(sql.Identifier(self._schema_name))
+        )
+        self._connection.commit()
 
     def close(self) -> None:
-        """Close the underlying SQLite connection."""
+        """Close the underlying Postgres connection."""
         self._connection.close()
 
     def ensure_organization(
@@ -55,33 +71,33 @@ class SqliteLineageStore:
     ) -> Organization:
         """Create or reuse the single seeded organization boundary for phase 1."""
         row = self._connection.execute(
-            "SELECT * FROM organizations WHERE organization_id = ?",
+            "SELECT * FROM organizations WHERE organization_id = %s",
             (organization_id,),
         ).fetchone()
         if row is None:
             self._connection.execute(
-                "INSERT INTO organizations (organization_id, slug, display_name, is_seeded, created_at) VALUES (?, ?, ?, ?, ?)",
-                (organization_id, slug, display_name, int(is_seeded), _dt(created_at)),
+                "INSERT INTO organizations (organization_id, slug, display_name, is_seeded, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (organization_id, slug, display_name, is_seeded, _dt(created_at)),
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM organizations WHERE organization_id = ?",
+                "SELECT * FROM organizations WHERE organization_id = %s",
                 (organization_id,),
             ).fetchone()
         else:
             self._connection.execute(
                 """
                 UPDATE organizations
-                SET slug = ?,
-                    display_name = ?,
-                    is_seeded = ?
-                WHERE organization_id = ?
+                SET slug = %s,
+                    display_name = %s,
+                    is_seeded = %s
+                WHERE organization_id = %s
                 """,
-                (slug, display_name, int(is_seeded), organization_id),
+                (slug, display_name, is_seeded, organization_id),
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM organizations WHERE organization_id = ?",
+                "SELECT * FROM organizations WHERE organization_id = %s",
                 (organization_id,),
             ).fetchone()
         return _organization_from_row(row)
@@ -89,7 +105,7 @@ class SqliteLineageStore:
     def get_organization(self, organization_id: str) -> Organization:
         """Fetch one persisted organization by id."""
         row = self._connection.execute(
-            "SELECT * FROM organizations WHERE organization_id = ?",
+            "SELECT * FROM organizations WHERE organization_id = %s",
             (organization_id,),
         ).fetchone()
         if row is None:
@@ -106,8 +122,8 @@ class SqliteLineageStore:
         self._connection.execute(
             """
             UPDATE organizations
-            SET default_trusted_profile_id = ?
-            WHERE organization_id = ?
+            SET default_trusted_profile_id = %s
+            WHERE organization_id = %s
             """,
             (trusted_profile_id, organization_id),
         )
@@ -117,7 +133,7 @@ class SqliteLineageStore:
     def ensure_user(self, user: User) -> User:
         """Create or refresh one authenticated user within one organization."""
         row = self._connection.execute(
-            "SELECT * FROM users WHERE user_id = ?",
+            "SELECT * FROM users WHERE user_id = %s",
             (user.user_id,),
         ).fetchone()
         if row is None:
@@ -131,7 +147,7 @@ class SqliteLineageStore:
                     auth_subject,
                     is_active,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     user.user_id,
@@ -139,7 +155,7 @@ class SqliteLineageStore:
                     user.email,
                     user.display_name,
                     user.auth_subject,
-                    int(user.is_active),
+                    user.is_active,
                     _dt(user.created_at),
                 ),
             )
@@ -151,23 +167,23 @@ class SqliteLineageStore:
             self._connection.execute(
                 """
                 UPDATE users
-                SET email = ?,
-                    display_name = ?,
-                    auth_subject = ?,
-                    is_active = ?
-                WHERE user_id = ?
+                SET email = %s,
+                    display_name = %s,
+                    auth_subject = %s,
+                    is_active = %s
+                WHERE user_id = %s
                 """,
                 (
                     user.email,
                     user.display_name,
                     user.auth_subject,
-                    int(user.is_active),
+                    user.is_active,
                     user.user_id,
                 ),
             )
         self._connection.commit()
         refreshed_row = self._connection.execute(
-            "SELECT * FROM users WHERE user_id = ?",
+            "SELECT * FROM users WHERE user_id = %s",
             (user.user_id,),
         ).fetchone()
         return _user_from_row(refreshed_row)
@@ -178,7 +194,7 @@ class SqliteLineageStore:
     ) -> TrustedProfile:
         """Create or reuse a trusted profile by organization/profile name."""
         row = self._connection.execute(
-            "SELECT * FROM trusted_profiles WHERE organization_id = ? AND profile_name = ?",
+            "SELECT * FROM trusted_profiles WHERE organization_id = %s AND profile_name = %s",
             (trusted_profile.organization_id, trusted_profile.profile_name),
         ).fetchone()
         if row is None:
@@ -197,7 +213,7 @@ class SqliteLineageStore:
                     archived_at,
                     created_by_user_id,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     trusted_profile.trusted_profile_id,
@@ -216,21 +232,21 @@ class SqliteLineageStore:
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM trusted_profiles WHERE trusted_profile_id = ?",
+                "SELECT * FROM trusted_profiles WHERE trusted_profile_id = %s",
                 (trusted_profile.trusted_profile_id,),
             ).fetchone()
         else:
             self._connection.execute(
                 """
                 UPDATE trusted_profiles
-                SET display_name = ?,
-                    source_kind = ?,
-                    bundle_ref = ?,
-                    description = ?,
-                    version_label = ?,
-                    current_published_version_id = COALESCE(?, current_published_version_id),
-                    archived_at = ?
-                WHERE trusted_profile_id = ?
+                SET display_name = %s,
+                    source_kind = %s,
+                    bundle_ref = %s,
+                    description = %s,
+                    version_label = %s,
+                    current_published_version_id = COALESCE(%s, current_published_version_id),
+                    archived_at = %s
+                WHERE trusted_profile_id = %s
                 """,
                 (
                     trusted_profile.display_name,
@@ -245,7 +261,7 @@ class SqliteLineageStore:
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM trusted_profiles WHERE trusted_profile_id = ?",
+                "SELECT * FROM trusted_profiles WHERE trusted_profile_id = %s",
                 (row["trusted_profile_id"],),
             ).fetchone()
         return _trusted_profile_from_row(row)
@@ -259,8 +275,8 @@ class SqliteLineageStore:
         self._connection.execute(
             """
             UPDATE trusted_profiles
-            SET current_published_version_id = ?
-            WHERE trusted_profile_id = ?
+            SET current_published_version_id = %s
+            WHERE trusted_profile_id = %s
             """,
             (trusted_profile_version_id, trusted_profile_id),
         )
@@ -270,7 +286,7 @@ class SqliteLineageStore:
     def get_trusted_profile(self, trusted_profile_id: str) -> TrustedProfile:
         """Fetch one persisted trusted profile."""
         row = self._connection.execute(
-            "SELECT * FROM trusted_profiles WHERE trusted_profile_id = ?",
+            "SELECT * FROM trusted_profiles WHERE trusted_profile_id = %s",
             (trusted_profile_id,),
         ).fetchone()
         if row is None:
@@ -287,7 +303,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM trusted_profiles
-            WHERE trusted_profile_id = ? AND organization_id = ?
+            WHERE trusted_profile_id = %s AND organization_id = %s
             """,
             (trusted_profile_id, organization_id),
         ).fetchone()
@@ -303,7 +319,7 @@ class SqliteLineageStore:
     ) -> TrustedProfile:
         """Fetch one persisted trusted profile by organization/profile name."""
         row = self._connection.execute(
-            "SELECT * FROM trusted_profiles WHERE organization_id = ? AND profile_name = ?",
+            "SELECT * FROM trusted_profiles WHERE organization_id = %s AND profile_name = %s",
             (organization_id, profile_name),
         ).fetchone()
         if row is None:
@@ -323,7 +339,7 @@ class SqliteLineageStore:
         """List persisted logical trusted profiles for one organization."""
         query = """
             SELECT * FROM trusted_profiles
-            WHERE organization_id = ?
+            WHERE organization_id = %s
         """
         parameters: list[object] = [organization_id]
         if not include_archived:
@@ -342,8 +358,8 @@ class SqliteLineageStore:
         self._connection.execute(
             """
             UPDATE trusted_profiles
-            SET archived_at = ?
-            WHERE trusted_profile_id = ?
+            SET archived_at = %s
+            WHERE trusted_profile_id = %s
             """,
             (_dt(archived_at), trusted_profile_id),
         )
@@ -356,7 +372,7 @@ class SqliteLineageStore:
             """
             UPDATE trusted_profiles
             SET archived_at = NULL
-            WHERE trusted_profile_id = ?
+            WHERE trusted_profile_id = %s
             """,
             (trusted_profile_id,),
         )
@@ -369,7 +385,7 @@ class SqliteLineageStore:
     ) -> TemplateArtifact:
         """Create or reuse one immutable workbook template artifact by content hash."""
         row = self._connection.execute(
-            "SELECT * FROM template_artifacts WHERE organization_id = ? AND content_hash = ?",
+            "SELECT * FROM template_artifacts WHERE organization_id = %s AND content_hash = %s",
             (template_artifact.organization_id, template_artifact.content_hash),
         ).fetchone()
         if row is None:
@@ -384,14 +400,14 @@ class SqliteLineageStore:
                     file_size_bytes,
                     created_by_user_id,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     template_artifact.template_artifact_id,
                     template_artifact.organization_id,
                     template_artifact.content_hash,
                     template_artifact.original_filename,
-                    sqlite3.Binary(template_artifact.content_bytes),
+                    template_artifact.content_bytes,
                     template_artifact.file_size_bytes,
                     template_artifact.created_by_user_id,
                     _dt(template_artifact.created_at),
@@ -399,7 +415,7 @@ class SqliteLineageStore:
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM template_artifacts WHERE template_artifact_id = ?",
+                "SELECT * FROM template_artifacts WHERE template_artifact_id = %s",
                 (template_artifact.template_artifact_id,),
             ).fetchone()
         return _template_artifact_from_row(row)
@@ -407,7 +423,7 @@ class SqliteLineageStore:
     def get_template_artifact(self, template_artifact_id: str) -> TemplateArtifact:
         """Fetch one persisted immutable workbook template artifact."""
         row = self._connection.execute(
-            "SELECT * FROM template_artifacts WHERE template_artifact_id = ?",
+            "SELECT * FROM template_artifacts WHERE template_artifact_id = %s",
             (template_artifact_id,),
         ).fetchone()
         if row is None:
@@ -422,7 +438,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM trusted_profile_versions
-            WHERE organization_id = ? AND trusted_profile_id = ? AND content_hash = ?
+            WHERE organization_id = %s AND trusted_profile_id = %s AND content_hash = %s
             """,
             (
                 trusted_profile_version.organization_id,
@@ -447,7 +463,7 @@ class SqliteLineageStore:
                     source_kind,
                     created_by_user_id,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     trusted_profile_version.trusted_profile_version_id,
@@ -467,7 +483,7 @@ class SqliteLineageStore:
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM trusted_profile_versions WHERE trusted_profile_version_id = ?",
+                "SELECT * FROM trusted_profile_versions WHERE trusted_profile_version_id = %s",
                 (trusted_profile_version.trusted_profile_version_id,),
             ).fetchone()
         return _trusted_profile_version_from_row(row)
@@ -475,7 +491,7 @@ class SqliteLineageStore:
     def get_trusted_profile_version(self, trusted_profile_version_id: str) -> TrustedProfileVersion:
         """Fetch one immutable published trusted-profile version."""
         row = self._connection.execute(
-            "SELECT * FROM trusted_profile_versions WHERE trusted_profile_version_id = ?",
+            "SELECT * FROM trusted_profile_versions WHERE trusted_profile_version_id = %s",
             (trusted_profile_version_id,),
         ).fetchone()
         if row is None:
@@ -492,7 +508,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM trusted_profile_versions
-            WHERE trusted_profile_version_id = ? AND organization_id = ?
+            WHERE trusted_profile_version_id = %s AND organization_id = %s
             """,
             (trusted_profile_version_id, organization_id),
         ).fetchone()
@@ -508,7 +524,7 @@ class SqliteLineageStore:
             FROM trusted_profiles profile
             JOIN trusted_profile_versions version
               ON version.trusted_profile_version_id = profile.current_published_version_id
-            WHERE profile.trusted_profile_id = ?
+            WHERE profile.trusted_profile_id = %s
             """,
             (trusted_profile_id,),
         ).fetchone()
@@ -523,7 +539,7 @@ class SqliteLineageStore:
         rows = self._connection.execute(
             """
             SELECT * FROM trusted_profile_versions
-            WHERE trusted_profile_id = ?
+            WHERE trusted_profile_id = %s
             ORDER BY version_number ASC, created_at ASC
             """,
             (trusted_profile_id,),
@@ -536,7 +552,7 @@ class SqliteLineageStore:
             """
             SELECT COALESCE(MAX(version_number), 0) AS max_version_number
             FROM trusted_profile_versions
-            WHERE trusted_profile_id = ?
+            WHERE trusted_profile_id = %s
             """,
             (trusted_profile_id,),
         ).fetchone()
@@ -548,7 +564,7 @@ class SqliteLineageStore:
     ) -> ProfileSnapshot:
         """Create or reuse an immutable profile snapshot by content hash."""
         row = self._connection.execute(
-            "SELECT * FROM profile_snapshots WHERE organization_id = ? AND content_hash = ?",
+            "SELECT * FROM profile_snapshots WHERE organization_id = %s AND content_hash = %s",
             (snapshot.organization_id, snapshot.content_hash),
         ).fetchone()
         if row is None:
@@ -566,7 +582,7 @@ class SqliteLineageStore:
                     template_artifact_ref,
                     template_file_hash,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     snapshot.profile_snapshot_id,
@@ -584,7 +600,7 @@ class SqliteLineageStore:
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM profile_snapshots WHERE profile_snapshot_id = ?",
+                "SELECT * FROM profile_snapshots WHERE profile_snapshot_id = %s",
                 (snapshot.profile_snapshot_id,),
             ).fetchone()
         return _profile_snapshot_from_row(row)
@@ -592,7 +608,7 @@ class SqliteLineageStore:
     def get_profile_snapshot(self, profile_snapshot_id: str) -> ProfileSnapshot:
         """Fetch one persisted profile snapshot."""
         row = self._connection.execute(
-            "SELECT * FROM profile_snapshots WHERE profile_snapshot_id = ?",
+            "SELECT * FROM profile_snapshots WHERE profile_snapshot_id = %s",
             (profile_snapshot_id,),
         ).fetchone()
         if row is None:
@@ -609,7 +625,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM profile_snapshots
-            WHERE profile_snapshot_id = ? AND organization_id = ?
+            WHERE profile_snapshot_id = %s AND organization_id = %s
             """,
             (profile_snapshot_id, organization_id),
         ).fetchone()
@@ -620,7 +636,7 @@ class SqliteLineageStore:
     def get_open_trusted_profile_draft(self, trusted_profile_id: str) -> TrustedProfileDraft:
         """Fetch the single open draft for one logical trusted profile."""
         row = self._connection.execute(
-            "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_id = ?",
+            "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_id = %s",
             (trusted_profile_id,),
         ).fetchone()
         if row is None:
@@ -637,7 +653,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM trusted_profile_drafts
-            WHERE trusted_profile_id = ? AND organization_id = ?
+            WHERE trusted_profile_id = %s AND organization_id = %s
             """,
             (trusted_profile_id, organization_id),
         ).fetchone()
@@ -648,7 +664,7 @@ class SqliteLineageStore:
     def get_trusted_profile_draft(self, trusted_profile_draft_id: str) -> TrustedProfileDraft:
         """Fetch one trusted-profile draft by id."""
         row = self._connection.execute(
-            "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_draft_id = ?",
+            "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_draft_id = %s",
             (trusted_profile_draft_id,),
         ).fetchone()
         if row is None:
@@ -665,7 +681,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM trusted_profile_drafts
-            WHERE trusted_profile_draft_id = ? AND organization_id = ?
+            WHERE trusted_profile_draft_id = %s AND organization_id = %s
             """,
             (trusted_profile_draft_id, organization_id),
         ).fetchone()
@@ -679,7 +695,7 @@ class SqliteLineageStore:
     ) -> TrustedProfileDraft:
         """Create or reuse the single open draft for one logical trusted profile."""
         row = self._connection.execute(
-            "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_id = ?",
+            "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_id = %s",
             (draft.trusted_profile_id,),
         ).fetchone()
         if row is None:
@@ -700,7 +716,7 @@ class SqliteLineageStore:
                     created_by_user_id,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     draft.trusted_profile_draft_id,
@@ -721,7 +737,7 @@ class SqliteLineageStore:
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_draft_id = ?",
+                "SELECT * FROM trusted_profile_drafts WHERE trusted_profile_draft_id = %s",
                 (draft.trusted_profile_draft_id,),
             ).fetchone()
         return _trusted_profile_draft_from_row(row)
@@ -733,20 +749,20 @@ class SqliteLineageStore:
         expected_draft_revision: int,
     ) -> TrustedProfileDraft:
         """Persist the current mutable state for one trusted-profile draft."""
-        with self._connection:
+        with self._connection.transaction():
             cursor = self._connection.execute(
                 """
                 UPDATE trusted_profile_drafts
-                SET bundle_json = ?,
-                    content_hash = ?,
-                    draft_revision = ?,
-                    template_artifact_id = ?,
-                    template_artifact_ref = ?,
-                    template_file_hash = ?,
-                    status = ?,
-                    updated_at = ?
-                WHERE trusted_profile_draft_id = ?
-                  AND draft_revision = ?
+                SET bundle_json = %s,
+                    content_hash = %s,
+                    draft_revision = %s,
+                    template_artifact_id = %s,
+                    template_artifact_ref = %s,
+                    template_file_hash = %s,
+                    status = %s,
+                    updated_at = %s
+                WHERE trusted_profile_draft_id = %s
+                  AND draft_revision = %s
                 """,
                 (
                     draft.canonical_bundle_json,
@@ -787,13 +803,13 @@ class SqliteLineageStore:
         created_at: datetime,
     ) -> TrustedProfileVersion:
         """Publish one draft through a single authoritative persistence transaction."""
-        with self._connection:
+        with self._connection.transaction():
             draft_row = self._connection.execute(
                 """
                 SELECT * FROM trusted_profile_drafts
-                WHERE trusted_profile_draft_id = ?
-                  AND organization_id = ?
-                  AND draft_revision = ?
+                WHERE trusted_profile_draft_id = %s
+                  AND organization_id = %s
+                  AND draft_revision = %s
                 """,
                 (
                     trusted_profile_draft_id,
@@ -815,9 +831,9 @@ class SqliteLineageStore:
             delete_cursor = self._connection.execute(
                 """
                 DELETE FROM trusted_profile_drafts
-                WHERE trusted_profile_draft_id = ?
-                  AND organization_id = ?
-                  AND draft_revision = ?
+                WHERE trusted_profile_draft_id = %s
+                  AND organization_id = %s
+                  AND draft_revision = %s
                 """,
                 (
                     trusted_profile_draft_id,
@@ -838,7 +854,7 @@ class SqliteLineageStore:
             profile_row = self._connection.execute(
                 """
                 SELECT * FROM trusted_profiles
-                WHERE trusted_profile_id = ? AND organization_id = ?
+                WHERE trusted_profile_id = %s AND organization_id = %s
                 """,
                 (draft.trusted_profile_id, organization_id),
             ).fetchone()
@@ -849,7 +865,7 @@ class SqliteLineageStore:
             version_row = self._connection.execute(
                 """
                 SELECT * FROM trusted_profile_versions
-                WHERE organization_id = ? AND trusted_profile_id = ? AND content_hash = ?
+                WHERE organization_id = %s AND trusted_profile_id = %s AND content_hash = %s
                 """,
                 (
                     organization_id,
@@ -862,7 +878,7 @@ class SqliteLineageStore:
                     """
                     SELECT COALESCE(MAX(version_number), 0) + 1 AS next_version_number
                     FROM trusted_profile_versions
-                    WHERE trusted_profile_id = ?
+                    WHERE trusted_profile_id = %s
                     """,
                     (draft.trusted_profile_id,),
                 ).fetchone()
@@ -888,7 +904,7 @@ class SqliteLineageStore:
                         source_kind,
                         created_by_user_id,
                         created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         trusted_profile_version_id,
@@ -907,15 +923,15 @@ class SqliteLineageStore:
                     ),
                 )
                 version_row = self._connection.execute(
-                    "SELECT * FROM trusted_profile_versions WHERE trusted_profile_version_id = ?",
+                    "SELECT * FROM trusted_profile_versions WHERE trusted_profile_version_id = %s",
                     (trusted_profile_version_id,),
                 ).fetchone()
 
             pointer_cursor = self._connection.execute(
                 """
                 UPDATE trusted_profiles
-                SET current_published_version_id = ?
-                WHERE trusted_profile_id = ? AND organization_id = ?
+                SET current_published_version_id = %s
+                WHERE trusted_profile_id = %s AND organization_id = %s
                 """,
                 (
                     version_row["trusted_profile_version_id"],
@@ -931,7 +947,7 @@ class SqliteLineageStore:
     def delete_trusted_profile_draft(self, trusted_profile_draft_id: str) -> None:
         """Delete one trusted-profile draft once it is no longer the open working copy."""
         self._connection.execute(
-            "DELETE FROM trusted_profile_drafts WHERE trusted_profile_draft_id = ?",
+            "DELETE FROM trusted_profile_drafts WHERE trusted_profile_draft_id = %s",
             (trusted_profile_draft_id,),
         )
         self._connection.commit()
@@ -944,7 +960,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM trusted_profile_observations
-            WHERE trusted_profile_id = ? AND observation_domain = ? AND canonical_raw_key = ?
+            WHERE trusted_profile_id = %s AND observation_domain = %s AND canonical_raw_key = %s
             """,
             (
                 observation.trusted_profile_id,
@@ -969,7 +985,7 @@ class SqliteLineageStore:
                     draft_applied_at,
                     is_resolved,
                     resolved_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     observation.trusted_profile_observation_id,
@@ -983,13 +999,13 @@ class SqliteLineageStore:
                     _dt(observation.first_seen_at),
                     _dt(observation.last_seen_at),
                     _dt(observation.draft_applied_at) if observation.draft_applied_at else None,
-                    int(observation.is_resolved),
+                    observation.is_resolved,
                     _dt(observation.resolved_at) if observation.resolved_at else None,
                 ),
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM trusted_profile_observations WHERE trusted_profile_observation_id = ?",
+                "SELECT * FROM trusted_profile_observations WHERE trusted_profile_observation_id = %s",
                 (observation.trusted_profile_observation_id,),
             ).fetchone()
         else:
@@ -997,29 +1013,29 @@ class SqliteLineageStore:
                 """
                 UPDATE trusted_profile_observations
                 SET raw_display_value = CASE
-                        WHEN TRIM(COALESCE(raw_display_value, '')) = '' THEN ?
+                        WHEN TRIM(COALESCE(raw_display_value, '')) = '' THEN %s
                         ELSE raw_display_value
                     END,
-                    last_seen_processing_run_id = COALESCE(?, last_seen_processing_run_id),
-                    last_seen_at = ?,
-                    draft_applied_at = COALESCE(?, draft_applied_at),
-                    is_resolved = ?,
-                    resolved_at = COALESCE(?, resolved_at)
-                WHERE trusted_profile_observation_id = ?
+                    last_seen_processing_run_id = COALESCE(%s, last_seen_processing_run_id),
+                    last_seen_at = %s,
+                    draft_applied_at = COALESCE(%s, draft_applied_at),
+                    is_resolved = %s,
+                    resolved_at = COALESCE(%s, resolved_at)
+                WHERE trusted_profile_observation_id = %s
                 """,
                 (
                     observation.raw_display_value,
                     observation.last_seen_processing_run_id,
                     _dt(observation.last_seen_at),
                     _dt(observation.draft_applied_at) if observation.draft_applied_at else None,
-                    int(observation.is_resolved),
+                    observation.is_resolved,
                     _dt(observation.resolved_at) if observation.resolved_at else None,
                     row["trusted_profile_observation_id"],
                 ),
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM trusted_profile_observations WHERE trusted_profile_observation_id = ?",
+                "SELECT * FROM trusted_profile_observations WHERE trusted_profile_observation_id = %s",
                 (row["trusted_profile_observation_id"],),
             ).fetchone()
         return _trusted_profile_observation_from_row(row)
@@ -1034,7 +1050,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM trusted_profile_observations
-            WHERE trusted_profile_id = ? AND observation_domain = ? AND canonical_raw_key = ?
+            WHERE trusted_profile_id = %s AND observation_domain = %s AND canonical_raw_key = %s
             """,
             (trusted_profile_id, observation_domain, canonical_raw_key),
         ).fetchone()
@@ -1056,14 +1072,14 @@ class SqliteLineageStore:
         """List observed unmapped values for one logical trusted profile with optional filters."""
         query = """
             SELECT * FROM trusted_profile_observations
-            WHERE trusted_profile_id = ?
+            WHERE trusted_profile_id = %s
         """
         parameters: list[object] = [trusted_profile_id]
         if observation_domain:
-            query += " AND observation_domain = ?"
+            query += " AND observation_domain = %s"
             parameters.append(observation_domain)
         if unresolved_only:
-            query += " AND is_resolved = 0"
+            query += " AND is_resolved = FALSE"
         if unmerged_only:
             query += " AND draft_applied_at IS NULL"
         query += " ORDER BY observation_domain ASC, canonical_raw_key ASC"
@@ -1086,7 +1102,7 @@ class SqliteLineageStore:
                 manifest_json,
                 created_by_user_id,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 sync_export.trusted_profile_sync_export_id,
@@ -1110,7 +1126,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM trusted_profile_sync_exports
-            WHERE trusted_profile_sync_export_id = ?
+            WHERE trusted_profile_sync_export_id = %s
             """,
             (trusted_profile_sync_export_id,),
         ).fetchone()
@@ -1130,7 +1146,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM trusted_profile_sync_exports
-            WHERE trusted_profile_sync_export_id = ? AND organization_id = ?
+            WHERE trusted_profile_sync_export_id = %s AND organization_id = %s
             """,
             (trusted_profile_sync_export_id, organization_id),
         ).fetchone()
@@ -1146,7 +1162,7 @@ class SqliteLineageStore:
     ) -> SourceDocument:
         """Create or reuse a source document by file hash and storage ref."""
         row = self._connection.execute(
-            "SELECT * FROM source_documents WHERE organization_id = ? AND file_hash = ? AND storage_ref = ?",
+            "SELECT * FROM source_documents WHERE organization_id = %s AND file_hash = %s AND storage_ref = %s",
             (source_document.organization_id, source_document.file_hash, source_document.storage_ref),
         ).fetchone()
         if row is None:
@@ -1162,7 +1178,7 @@ class SqliteLineageStore:
                     file_size_bytes,
                     uploaded_by_user_id,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     source_document.source_document_id,
@@ -1178,7 +1194,7 @@ class SqliteLineageStore:
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM source_documents WHERE source_document_id = ?",
+                "SELECT * FROM source_documents WHERE source_document_id = %s",
                 (source_document.source_document_id,),
             ).fetchone()
         return _source_document_from_row(row)
@@ -1186,7 +1202,7 @@ class SqliteLineageStore:
     def get_source_document(self, source_document_id: str) -> SourceDocument:
         """Fetch one persisted source document."""
         row = self._connection.execute(
-            "SELECT * FROM source_documents WHERE source_document_id = ?",
+            "SELECT * FROM source_documents WHERE source_document_id = %s",
             (source_document_id,),
         ).fetchone()
         if row is None:
@@ -1203,7 +1219,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM source_documents
-            WHERE source_document_id = ? AND organization_id = ?
+            WHERE source_document_id = %s AND organization_id = %s
             """,
             (source_document_id, organization_id),
         ).fetchone()
@@ -1227,7 +1243,7 @@ class SqliteLineageStore:
                 aggregate_blockers_json,
                 created_by_user_id,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 processing_run.processing_run_id,
@@ -1248,35 +1264,36 @@ class SqliteLineageStore:
 
     def create_run_records(self, run_records: list[RunRecord]) -> list[RunRecord]:
         """Persist immutable ordered run records for one processing run."""
-        self._connection.executemany(
-            """
-            INSERT INTO run_records (
-                run_record_id,
-                organization_id,
-                processing_run_id,
-                record_key,
-                record_index,
-                canonical_record_json,
-                source_page,
-                source_line_text,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    run_record.run_record_id,
-                    run_record.organization_id,
-                    run_record.processing_run_id,
-                    run_record.record_key,
-                    run_record.record_index,
-                    canonicalize_json(run_record.canonical_record),
-                    run_record.source_page,
-                    run_record.source_line_text,
-                    _dt(run_record.created_at),
-                )
-                for run_record in run_records
-            ],
-        )
+        with self._connection.cursor() as cursor:
+            cursor.executemany(
+                """
+                INSERT INTO run_records (
+                    run_record_id,
+                    organization_id,
+                    processing_run_id,
+                    record_key,
+                    record_index,
+                    canonical_record_json,
+                    source_page,
+                    source_line_text,
+                    created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                [
+                    (
+                        run_record.run_record_id,
+                        run_record.organization_id,
+                        run_record.processing_run_id,
+                        run_record.record_key,
+                        run_record.record_index,
+                        canonicalize_json(run_record.canonical_record),
+                        run_record.source_page,
+                        run_record.source_line_text,
+                        _dt(run_record.created_at),
+                    )
+                    for run_record in run_records
+                ],
+            )
         self._connection.commit()
         if not run_records:
             return []
@@ -1285,7 +1302,7 @@ class SqliteLineageStore:
     def get_processing_run(self, processing_run_id: str) -> ProcessingRun:
         """Fetch one persisted processing run."""
         row = self._connection.execute(
-            "SELECT * FROM processing_runs WHERE processing_run_id = ?",
+            "SELECT * FROM processing_runs WHERE processing_run_id = %s",
             (processing_run_id,),
         ).fetchone()
         if row is None:
@@ -1302,7 +1319,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM processing_runs
-            WHERE processing_run_id = ? AND organization_id = ?
+            WHERE processing_run_id = %s AND organization_id = %s
             """,
             (processing_run_id, organization_id),
         ).fetchone()
@@ -1313,7 +1330,7 @@ class SqliteLineageStore:
     def list_run_records(self, processing_run_id: str) -> list[RunRecord]:
         """Fetch persisted run records in immutable emitted order."""
         rows = self._connection.execute(
-            "SELECT * FROM run_records WHERE processing_run_id = ? ORDER BY record_index ASC",
+            "SELECT * FROM run_records WHERE processing_run_id = %s ORDER BY record_index ASC",
             (processing_run_id,),
         ).fetchall()
         return [_run_record_from_row(row) for row in rows]
@@ -1328,7 +1345,7 @@ class SqliteLineageStore:
         rows = self._connection.execute(
             """
             SELECT * FROM run_records
-            WHERE processing_run_id = ? AND organization_id = ?
+            WHERE processing_run_id = %s AND organization_id = %s
             ORDER BY record_index ASC
             """,
             (processing_run_id, organization_id),
@@ -1345,7 +1362,7 @@ class SqliteLineageStore:
     def get_or_create_review_session(self, review_session: ReviewSession) -> ReviewSession:
         """Create or reuse the phase-1 primary review session for one processing run."""
         row = self._connection.execute(
-            "SELECT * FROM review_sessions WHERE processing_run_id = ?",
+            "SELECT * FROM review_sessions WHERE processing_run_id = %s",
             (review_session.processing_run_id,),
         ).fetchone()
         if row is None:
@@ -1359,7 +1376,7 @@ class SqliteLineageStore:
                     created_by_user_id,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     review_session.review_session_id,
@@ -1373,7 +1390,7 @@ class SqliteLineageStore:
             )
             self._connection.commit()
             row = self._connection.execute(
-                "SELECT * FROM review_sessions WHERE review_session_id = ?",
+                "SELECT * FROM review_sessions WHERE review_session_id = %s",
                 (review_session.review_session_id,),
             ).fetchone()
         return _review_session_from_row(row)
@@ -1381,7 +1398,7 @@ class SqliteLineageStore:
     def get_review_session(self, review_session_id: str) -> ReviewSession:
         """Fetch one persisted review session."""
         row = self._connection.execute(
-            "SELECT * FROM review_sessions WHERE review_session_id = ?",
+            "SELECT * FROM review_sessions WHERE review_session_id = %s",
             (review_session_id,),
         ).fetchone()
         if row is None:
@@ -1391,7 +1408,7 @@ class SqliteLineageStore:
     def get_review_session_for_run(self, processing_run_id: str) -> ReviewSession:
         """Fetch the phase-1 primary review session for one processing run."""
         row = self._connection.execute(
-            "SELECT * FROM review_sessions WHERE processing_run_id = ?",
+            "SELECT * FROM review_sessions WHERE processing_run_id = %s",
             (processing_run_id,),
         ).fetchone()
         if row is None:
@@ -1408,7 +1425,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM review_sessions
-            WHERE processing_run_id = ? AND organization_id = ?
+            WHERE processing_run_id = %s AND organization_id = %s
             """,
             (processing_run_id, organization_id),
         ).fetchone()
@@ -1424,12 +1441,12 @@ class SqliteLineageStore:
         expected_current_revision: int,
     ) -> ReviewSession:
         """Persist one accepted edit batch and the session revision it advanced."""
-        with self._connection:
+        with self._connection.transaction():
             cursor = self._connection.execute(
                 """
                 UPDATE review_sessions
-                SET current_revision = ?, updated_at = ?
-                WHERE review_session_id = ? AND current_revision = ?
+                SET current_revision = %s, updated_at = %s
+                WHERE review_session_id = %s AND current_revision = %s
                 """,
                 (
                     review_session.current_revision,
@@ -1443,35 +1460,36 @@ class SqliteLineageStore:
                     review_session.review_session_id,
                     expected_current_revision=expected_current_revision,
                 )
-            self._connection.executemany(
-                """
-                INSERT INTO reviewed_record_edits (
-                    reviewed_record_edit_id,
-                    organization_id,
-                    processing_run_id,
-                    review_session_id,
-                    record_key,
-                    session_revision,
-                    changed_fields_json,
-                    created_by_user_id,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        edit.reviewed_record_edit_id,
-                        edit.organization_id,
-                        edit.processing_run_id,
-                        edit.review_session_id,
-                        edit.record_key,
-                        edit.session_revision,
-                        canonicalize_json(edit.changed_fields),
-                        edit.created_by_user_id,
-                        _dt(edit.created_at),
-                    )
-                    for edit in reviewed_record_edits
-                ],
-            )
+            with self._connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO reviewed_record_edits (
+                        reviewed_record_edit_id,
+                        organization_id,
+                        processing_run_id,
+                        review_session_id,
+                        record_key,
+                        session_revision,
+                        changed_fields_json,
+                        created_by_user_id,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    [
+                        (
+                            edit.reviewed_record_edit_id,
+                            edit.organization_id,
+                            edit.processing_run_id,
+                            edit.review_session_id,
+                            edit.record_key,
+                            edit.session_revision,
+                            canonicalize_json(edit.changed_fields),
+                            edit.created_by_user_id,
+                            _dt(edit.created_at),
+                        )
+                        for edit in reviewed_record_edits
+                    ],
+                )
         return self.get_review_session(review_session.review_session_id)
 
     def list_reviewed_record_edits(
@@ -1482,13 +1500,13 @@ class SqliteLineageStore:
     ) -> list[ReviewedRecordEdit]:
         """Fetch persisted review delta rows in revision order."""
         query = (
-            "SELECT * FROM reviewed_record_edits WHERE review_session_id = ? "
+            "SELECT * FROM reviewed_record_edits WHERE review_session_id = %s "
             "ORDER BY session_revision ASC, created_at ASC, reviewed_record_edit_id ASC"
         )
         parameters: tuple[object, ...] = (review_session_id,)
         if up_to_revision is not None:
             query = (
-                "SELECT * FROM reviewed_record_edits WHERE review_session_id = ? AND session_revision <= ? "
+                "SELECT * FROM reviewed_record_edits WHERE review_session_id = %s AND session_revision <= %s "
                 "ORDER BY session_revision ASC, created_at ASC, reviewed_record_edit_id ASC"
             )
             parameters = (review_session_id, up_to_revision)
@@ -1504,14 +1522,14 @@ class SqliteLineageStore:
     ) -> list[ReviewedRecordEdit]:
         """Fetch persisted review delta rows scoped to one organization and review session."""
         query = (
-            "SELECT * FROM reviewed_record_edits WHERE review_session_id = ? AND organization_id = ? "
+            "SELECT * FROM reviewed_record_edits WHERE review_session_id = %s AND organization_id = %s "
             "ORDER BY session_revision ASC, created_at ASC, reviewed_record_edit_id ASC"
         )
         parameters: tuple[object, ...] = (review_session_id, organization_id)
         if up_to_revision is not None:
             query = (
-                "SELECT * FROM reviewed_record_edits WHERE review_session_id = ? AND organization_id = ? "
-                "AND session_revision <= ? ORDER BY session_revision ASC, created_at ASC, reviewed_record_edit_id ASC"
+                "SELECT * FROM reviewed_record_edits WHERE review_session_id = %s AND organization_id = %s "
+                "AND session_revision <= %s ORDER BY session_revision ASC, created_at ASC, reviewed_record_edit_id ASC"
             )
             parameters = (review_session_id, organization_id, up_to_revision)
         rows = self._connection.execute(query, parameters).fetchall()
@@ -1533,7 +1551,7 @@ class SqliteLineageStore:
                 file_hash,
                 created_by_user_id,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 export_artifact.export_artifact_id,
@@ -1555,7 +1573,7 @@ class SqliteLineageStore:
     def get_export_artifact(self, export_artifact_id: str) -> ExportArtifact:
         """Fetch one persisted export artifact."""
         row = self._connection.execute(
-            "SELECT * FROM export_artifacts WHERE export_artifact_id = ?",
+            "SELECT * FROM export_artifacts WHERE export_artifact_id = %s",
             (export_artifact_id,),
         ).fetchone()
         if row is None:
@@ -1572,7 +1590,7 @@ class SqliteLineageStore:
         row = self._connection.execute(
             """
             SELECT * FROM export_artifacts
-            WHERE export_artifact_id = ? AND organization_id = ?
+            WHERE export_artifact_id = %s AND organization_id = %s
             """,
             (export_artifact_id, organization_id),
         ).fetchone()
@@ -1585,66 +1603,12 @@ class SqliteLineageStore:
         rows = self._connection.execute(
             """
             SELECT * FROM export_artifacts
-            WHERE review_session_id = ?
+            WHERE review_session_id = %s
             ORDER BY created_at ASC, export_artifact_id ASC
             """,
             (review_session_id,),
         ).fetchall()
         return [_export_artifact_from_row(row) for row in rows]
-
-    def _initialize_schema(self) -> None:
-        """Create the phase-1 persistence schema when the store starts."""
-        schema_path = Path(__file__).with_name("phase1_lineage_schema.sql")
-        self._connection.executescript(schema_path.read_text(encoding="utf-8"))
-        self._ensure_column(
-            "organizations",
-            "default_trusted_profile_id",
-            "TEXT",
-        )
-        self._ensure_column(
-            "trusted_profiles",
-            "current_published_version_id",
-            "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
-        )
-        self._ensure_column(
-            "trusted_profiles",
-            "archived_at",
-            "TEXT",
-        )
-        self._ensure_column(
-            "trusted_profile_drafts",
-            "draft_revision",
-            "INTEGER NOT NULL DEFAULT 1 CHECK (draft_revision > 0)",
-        )
-        self._ensure_column(
-            "profile_snapshots",
-            "trusted_profile_version_id",
-            "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
-        )
-        self._ensure_column(
-            "processing_runs",
-            "trusted_profile_version_id",
-            "TEXT REFERENCES trusted_profile_versions (trusted_profile_version_id)",
-        )
-        self._connection.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS ix_users_auth_subject
-            ON users (auth_subject)
-            WHERE auth_subject IS NOT NULL
-            """
-        )
-        self._connection.commit()
-
-    def _ensure_column(self, table_name: str, column_name: str, column_sql: str) -> None:
-        """Add a missing column to an existing table for additive schema evolution."""
-        existing_columns = {
-            row["name"]
-            for row in self._connection.execute(f"PRAGMA table_info({table_name})").fetchall()
-        }
-        if column_name in existing_columns:
-            return
-        self._connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
-
 
 def _dt(value: datetime) -> str:
     """Serialize datetimes for persistence."""
@@ -1652,11 +1616,11 @@ def _dt(value: datetime) -> str:
 
 
 def _parse_dt(value: str) -> datetime:
-    """Parse persisted datetimes from SQLite."""
+    """Parse persisted datetimes from Postgres text columns."""
     return datetime.fromisoformat(value)
 
 
-def _organization_from_row(row: sqlite3.Row) -> Organization:
+def _organization_from_row(row: dict[str, object]) -> Organization:
     return Organization(
         organization_id=row["organization_id"],
         slug=row["slug"],
@@ -1667,7 +1631,7 @@ def _organization_from_row(row: sqlite3.Row) -> Organization:
     )
 
 
-def _user_from_row(row: sqlite3.Row) -> User:
+def _user_from_row(row: dict[str, object]) -> User:
     return User(
         user_id=row["user_id"],
         organization_id=row["organization_id"],
@@ -1679,7 +1643,7 @@ def _user_from_row(row: sqlite3.Row) -> User:
     )
 
 
-def _trusted_profile_from_row(row: sqlite3.Row) -> TrustedProfile:
+def _trusted_profile_from_row(row: dict[str, object]) -> TrustedProfile:
     return TrustedProfile(
         trusted_profile_id=row["trusted_profile_id"],
         organization_id=row["organization_id"],
@@ -1696,7 +1660,7 @@ def _trusted_profile_from_row(row: sqlite3.Row) -> TrustedProfile:
     )
 
 
-def _trusted_profile_version_from_row(row: sqlite3.Row) -> TrustedProfileVersion:
+def _trusted_profile_version_from_row(row: dict[str, object]) -> TrustedProfileVersion:
     bundle_json = row["bundle_json"]
     return TrustedProfileVersion(
         trusted_profile_version_id=row["trusted_profile_version_id"],
@@ -1716,7 +1680,7 @@ def _trusted_profile_version_from_row(row: sqlite3.Row) -> TrustedProfileVersion
     )
 
 
-def _trusted_profile_draft_from_row(row: sqlite3.Row) -> TrustedProfileDraft:
+def _trusted_profile_draft_from_row(row: dict[str, object]) -> TrustedProfileDraft:
     bundle_json = row["bundle_json"]
     return TrustedProfileDraft(
         trusted_profile_draft_id=row["trusted_profile_draft_id"],
@@ -1764,7 +1728,7 @@ def _review_session_conflict_error(
     )
 
 
-def _trusted_profile_observation_from_row(row: sqlite3.Row) -> TrustedProfileObservation:
+def _trusted_profile_observation_from_row(row: dict[str, object]) -> TrustedProfileObservation:
     return TrustedProfileObservation(
         trusted_profile_observation_id=row["trusted_profile_observation_id"],
         organization_id=row["organization_id"],
@@ -1782,7 +1746,7 @@ def _trusted_profile_observation_from_row(row: sqlite3.Row) -> TrustedProfileObs
     )
 
 
-def _trusted_profile_sync_export_from_row(row: sqlite3.Row) -> TrustedProfileSyncExport:
+def _trusted_profile_sync_export_from_row(row: dict[str, object]) -> TrustedProfileSyncExport:
     return TrustedProfileSyncExport(
         trusted_profile_sync_export_id=row["trusted_profile_sync_export_id"],
         organization_id=row["organization_id"],
@@ -1795,7 +1759,7 @@ def _trusted_profile_sync_export_from_row(row: sqlite3.Row) -> TrustedProfileSyn
     )
 
 
-def _profile_snapshot_from_row(row: sqlite3.Row) -> ProfileSnapshot:
+def _profile_snapshot_from_row(row: dict[str, object]) -> ProfileSnapshot:
     bundle_json = row["bundle_json"]
     return ProfileSnapshot(
         profile_snapshot_id=row["profile_snapshot_id"],
@@ -1813,7 +1777,7 @@ def _profile_snapshot_from_row(row: sqlite3.Row) -> ProfileSnapshot:
     )
 
 
-def _source_document_from_row(row: sqlite3.Row) -> SourceDocument:
+def _source_document_from_row(row: dict[str, object]) -> SourceDocument:
     return SourceDocument(
         source_document_id=row["source_document_id"],
         organization_id=row["organization_id"],
@@ -1827,7 +1791,7 @@ def _source_document_from_row(row: sqlite3.Row) -> SourceDocument:
     )
 
 
-def _processing_run_from_row(row: sqlite3.Row) -> ProcessingRun:
+def _processing_run_from_row(row: dict[str, object]) -> ProcessingRun:
         return ProcessingRun(
             processing_run_id=row["processing_run_id"],
             organization_id=row["organization_id"],
@@ -1843,7 +1807,7 @@ def _processing_run_from_row(row: sqlite3.Row) -> ProcessingRun:
     )
 
 
-def _run_record_from_row(row: sqlite3.Row) -> RunRecord:
+def _run_record_from_row(row: dict[str, object]) -> RunRecord:
     return RunRecord(
         run_record_id=row["run_record_id"],
         organization_id=row["organization_id"],
@@ -1857,7 +1821,7 @@ def _run_record_from_row(row: sqlite3.Row) -> RunRecord:
     )
 
 
-def _review_session_from_row(row: sqlite3.Row) -> ReviewSession:
+def _review_session_from_row(row: dict[str, object]) -> ReviewSession:
     return ReviewSession(
         review_session_id=row["review_session_id"],
         organization_id=row["organization_id"],
@@ -1869,7 +1833,7 @@ def _review_session_from_row(row: sqlite3.Row) -> ReviewSession:
     )
 
 
-def _reviewed_record_edit_from_row(row: sqlite3.Row) -> ReviewedRecordEdit:
+def _reviewed_record_edit_from_row(row: dict[str, object]) -> ReviewedRecordEdit:
     return ReviewedRecordEdit(
         reviewed_record_edit_id=row["reviewed_record_edit_id"],
         organization_id=row["organization_id"],
@@ -1883,7 +1847,7 @@ def _reviewed_record_edit_from_row(row: sqlite3.Row) -> ReviewedRecordEdit:
     )
 
 
-def _export_artifact_from_row(row: sqlite3.Row) -> ExportArtifact:
+def _export_artifact_from_row(row: dict[str, object]) -> ExportArtifact:
     return ExportArtifact(
         export_artifact_id=row["export_artifact_id"],
         organization_id=row["organization_id"],
@@ -1899,7 +1863,7 @@ def _export_artifact_from_row(row: sqlite3.Row) -> ExportArtifact:
     )
 
 
-def _template_artifact_from_row(row: sqlite3.Row) -> TemplateArtifact:
+def _template_artifact_from_row(row: dict[str, object]) -> TemplateArtifact:
     return TemplateArtifact(
         template_artifact_id=row["template_artifact_id"],
         organization_id=row["organization_id"],
@@ -1910,3 +1874,6 @@ def _template_artifact_from_row(row: sqlite3.Row) -> TemplateArtifact:
         created_by_user_id=row["created_by_user_id"],
         created_at=_parse_dt(row["created_at"]),
     )
+
+
+
