@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Response, status
-from fastapi.responses import FileResponse
 
 from api.dependencies import ApiRuntime, get_runtime
 from api.errors import to_http_exception
@@ -16,23 +15,19 @@ from api.schemas.profile_authoring import (
     EquipmentMappingsPatchRequest,
     ExportSettingsPatchRequest,
     LaborMappingsPatchRequest,
-    ProfileSyncExportResponse,
     PublishDraftRequest,
     PublishedProfileDetailResponse,
     RatesPatchRequest,
 )
 from api.serializers import (
     to_draft_editor_state_response,
-    to_profile_sync_export_response,
     to_published_profile_detail_response,
 )
 from services.request_context import RequestContext
 
 
 profiles_router = APIRouter(prefix="/api/profiles", tags=["profiles"])
-profile_versions_router = APIRouter(prefix="/api/profile-versions", tags=["profile-versions"])
 profile_drafts_router = APIRouter(prefix="/api/profile-drafts", tags=["profile-drafts"])
-profile_sync_exports_router = APIRouter(prefix="/api/profile-sync-exports", tags=["profile-sync-exports"])
 
 
 @profiles_router.post("", response_model=PublishedProfileDetailResponse, status_code=status.HTTP_201_CREATED)
@@ -308,43 +303,3 @@ def publish_profile_draft(
         raise to_http_exception(exc) from exc
 
 
-@profile_versions_router.post(
-    "/{trusted_profile_version_id}/desktop-sync-export",
-    response_model=ProfileSyncExportResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-def create_profile_sync_export(
-    trusted_profile_version_id: str,
-    runtime: ApiRuntime = Depends(get_runtime),
-    request_context: RequestContext = Depends(get_request_context),
-) -> ProfileSyncExportResponse:
-    """Build one manual desktop-sync archive from one immutable published trusted-profile version."""
-    try:
-        result = runtime.profile_authoring_service.create_desktop_sync_export(
-            trusted_profile_version_id,
-            request_context=request_context,
-        )
-        return to_profile_sync_export_response(result)
-    except Exception as exc:  # pragma: no cover - exercised via API tests
-        raise to_http_exception(exc) from exc
-
-
-@profile_sync_exports_router.get("/{trusted_profile_sync_export_id}/download")
-def download_profile_sync_export(
-    trusted_profile_sync_export_id: str,
-    runtime: ApiRuntime = Depends(get_runtime),
-    request_context: RequestContext = Depends(get_request_context),
-) -> FileResponse:
-    """Download one previously generated desktop-sync archive."""
-    try:
-        artifact_payload = runtime.profile_authoring_service.resolve_desktop_sync_export_payload(
-            trusted_profile_sync_export_id,
-            request_context=request_context,
-        )
-        return FileResponse(
-            path=artifact_payload.file_path,
-            filename=artifact_payload.original_filename,
-            media_type=artifact_payload.content_type,
-        )
-    except Exception as exc:  # pragma: no cover - exercised via API tests
-        raise to_http_exception(exc) from exc

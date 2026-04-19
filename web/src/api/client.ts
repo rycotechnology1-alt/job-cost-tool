@@ -11,7 +11,6 @@ import type {
   LaborRateRow,
   ProcessingRunDetailResponse,
   ProcessingRunResponse,
-  ProfileSyncExportResponse,
   PublishedProfileDetailResponse,
   ReviewEditDelta,
   ReviewSessionResponse,
@@ -271,15 +270,6 @@ export async function publishProfileDraft(
   return apiJson<PublishedProfileDetailResponse>(
     `/api/profile-drafts/${trustedProfileDraftId}/publish`,
     buildJsonRequest({ expected_draft_revision: expectedDraftRevision }),
-  );
-}
-
-export async function createProfileSyncExport(
-  trustedProfileVersionId: string,
-): Promise<ProfileSyncExportResponse> {
-  return apiJson<ProfileSyncExportResponse>(
-    `/api/profile-versions/${trustedProfileVersionId}/desktop-sync-export`,
-    buildJsonRequest({}),
   );
 }
 

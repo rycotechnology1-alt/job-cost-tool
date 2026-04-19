@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.config import ConfigLoader, ProfileManager
-from core.models.lineage import TrustedProfile, TrustedProfileObservation, TrustedProfileSyncExport
+from core.models.lineage import TrustedProfile, TrustedProfileObservation
 from infrastructure.persistence.sqlite_lineage_store import SqliteLineageStore
 from services.profile_execution_compatibility_adapter import ProfileExecutionCompatibilityAdapter
 from services.profile_authoring_errors import ProfileAuthoringPersistenceConflictError
@@ -727,29 +727,6 @@ class TrustedProfileAuthoringRepositoryTests(unittest.TestCase):
             [(item.observation_domain, item.canonical_raw_key) for item in unmerged],
             [("labor_mapping", "104/EO")],
         )
-
-    def test_sync_export_record_is_persisted(self) -> None:
-        self.provisioning_service.bootstrap_filesystem_profiles()
-        trusted_profile = next(
-            profile for profile in self.provisioning_service.list_trusted_profiles() if profile.profile_name == "default"
-        )
-        current_version = self.provisioning_service.get_current_published_version(trusted_profile.trusted_profile_id)
-
-        sync_export = self.repository.record_sync_export(
-            TrustedProfileSyncExport(
-                trusted_profile_sync_export_id="sync-export-1",
-                organization_id=trusted_profile.organization_id,
-                trusted_profile_version_id=current_version.trusted_profile_version_id,
-                artifact_storage_ref="artifacts/default__v1.zip",
-                artifact_file_hash="artifact-hash-1",
-                manifest_json='{"version_number":1}',
-                created_at=self.created_at,
-            )
-        )
-
-        persisted = self.lineage_store.get_trusted_profile_sync_export(sync_export.trusted_profile_sync_export_id)
-        self.assertEqual(persisted.artifact_storage_ref, "artifacts/default__v1.zip")
-        self.assertEqual(persisted.artifact_file_hash, "artifact-hash-1")
 
     def _write_profile_bundle(
         self,

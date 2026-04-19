@@ -70,16 +70,3 @@ class RuntimeStorage(Protocol):
 
     def delete_export_artifact(self, storage_ref: str) -> None:
         """Delete one previously stored export artifact by storage reference."""
-
-    def save_profile_sync_export(
-        self,
-        *,
-        trusted_profile_version_id: str,
-        original_filename: str,
-        content_bytes: bytes,
-        content_type: str | None = None,
-    ) -> StoredArtifact:
-        """Persist one generated desktop-sync archive and return its runtime reference."""
-
-    def get_profile_sync_export(self, storage_ref: str) -> StoredArtifact:
-        """Resolve one previously stored desktop-sync archive by storage reference."""

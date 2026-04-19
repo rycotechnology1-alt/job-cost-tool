@@ -13,8 +13,6 @@ from api.request_context import build_request_context_provider
 from api.routes.exports import router as exports_router
 from api.routes.profiles import (
     profile_drafts_router,
-    profile_sync_exports_router,
-    profile_versions_router,
     profiles_router,
 )
 from api.routes.review_sessions import router as review_sessions_router
@@ -107,9 +105,7 @@ def create_app(
     )
     app.include_router(trusted_profiles_router)
     app.include_router(profiles_router)
-    app.include_router(profile_versions_router)
     app.include_router(profile_drafts_router)
-    app.include_router(profile_sync_exports_router)
     app.include_router(uploads_router)
     app.include_router(runs_router)
     app.include_router(review_sessions_router)

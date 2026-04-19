@@ -22,7 +22,6 @@ from core.models.lineage import (
     TrustedProfile,
     TrustedProfileDraft,
     TrustedProfileObservation,
-    TrustedProfileSyncExport,
     TrustedProfileVersion,
     User,
 )
@@ -1086,76 +1085,6 @@ class PostgresLineageStore:
         rows = self._connection.execute(query, tuple(parameters)).fetchall()
         return [_trusted_profile_observation_from_row(row) for row in rows]
 
-    def create_trusted_profile_sync_export(
-        self,
-        sync_export: TrustedProfileSyncExport,
-    ) -> TrustedProfileSyncExport:
-        """Persist one trusted-profile sync-export audit record."""
-        self._connection.execute(
-            """
-            INSERT INTO trusted_profile_sync_exports (
-                trusted_profile_sync_export_id,
-                organization_id,
-                trusted_profile_version_id,
-                artifact_storage_ref,
-                artifact_file_hash,
-                manifest_json,
-                created_by_user_id,
-                created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                sync_export.trusted_profile_sync_export_id,
-                sync_export.organization_id,
-                sync_export.trusted_profile_version_id,
-                sync_export.artifact_storage_ref,
-                sync_export.artifact_file_hash,
-                sync_export.manifest_json,
-                sync_export.created_by_user_id,
-                _dt(sync_export.created_at),
-            ),
-        )
-        self._connection.commit()
-        return self.get_trusted_profile_sync_export(sync_export.trusted_profile_sync_export_id)
-
-    def get_trusted_profile_sync_export(
-        self,
-        trusted_profile_sync_export_id: str,
-    ) -> TrustedProfileSyncExport:
-        """Fetch one trusted-profile sync-export audit record."""
-        row = self._connection.execute(
-            """
-            SELECT * FROM trusted_profile_sync_exports
-            WHERE trusted_profile_sync_export_id = %s
-            """,
-            (trusted_profile_sync_export_id,),
-        ).fetchone()
-        if row is None:
-            raise KeyError(
-                f"TrustedProfileSyncExport '{trusted_profile_sync_export_id}' was not found."
-            )
-        return _trusted_profile_sync_export_from_row(row)
-
-    def get_trusted_profile_sync_export_for_organization(
-        self,
-        *,
-        organization_id: str,
-        trusted_profile_sync_export_id: str,
-    ) -> TrustedProfileSyncExport:
-        """Fetch one trusted-profile sync-export audit record scoped to one organization."""
-        row = self._connection.execute(
-            """
-            SELECT * FROM trusted_profile_sync_exports
-            WHERE trusted_profile_sync_export_id = %s AND organization_id = %s
-            """,
-            (trusted_profile_sync_export_id, organization_id),
-        ).fetchone()
-        if row is None:
-            raise KeyError(
-                f"TrustedProfileSyncExport '{trusted_profile_sync_export_id}' was not found."
-            )
-        return _trusted_profile_sync_export_from_row(row)
-
     def get_or_create_source_document(
         self,
         source_document: SourceDocument,
@@ -1743,19 +1672,6 @@ def _trusted_profile_observation_from_row(row: dict[str, object]) -> TrustedProf
         draft_applied_at=_parse_dt(row["draft_applied_at"]) if row["draft_applied_at"] else None,
         is_resolved=bool(row["is_resolved"]),
         resolved_at=_parse_dt(row["resolved_at"]) if row["resolved_at"] else None,
-    )
-
-
-def _trusted_profile_sync_export_from_row(row: dict[str, object]) -> TrustedProfileSyncExport:
-    return TrustedProfileSyncExport(
-        trusted_profile_sync_export_id=row["trusted_profile_sync_export_id"],
-        organization_id=row["organization_id"],
-        trusted_profile_version_id=row["trusted_profile_version_id"],
-        artifact_storage_ref=row["artifact_storage_ref"],
-        artifact_file_hash=row["artifact_file_hash"],
-        manifest_json=row["manifest_json"],
-        created_by_user_id=row["created_by_user_id"],
-        created_at=_parse_dt(row["created_at"]),
     )
 
 

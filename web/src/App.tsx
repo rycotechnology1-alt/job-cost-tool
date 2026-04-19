@@ -9,9 +9,7 @@ import {
   discardProfileDraft,
   discardProfileDraftBestEffort,
   createExportArtifact,
-  createProfileSyncExport,
   createProcessingRun,
-  downloadArtifact,
   downloadExportArtifact,
   fetchProfileDetail,
   fetchProfileDraft,
@@ -40,7 +38,6 @@ import type {
   LaborMappingRow,
   LaborRateRow,
   ProcessingRunDetailResponse,
-  ProfileSyncExportResponse,
   PublishedProfileDetailResponse,
   ReviewEditFields,
   ReviewSessionResponse,
@@ -142,7 +139,6 @@ export default function App() {
   const [selectedReviewRecordKeys, setSelectedReviewRecordKeys] = useState<string[]>([]);
   const [exportArtifact, setExportArtifact] = useState<ExportArtifactResponse | null>(null);
   const [lastDownloadedFilename, setLastDownloadedFilename] = useState("");
-  const [lastDownloadedProfileSyncFilename, setLastDownloadedProfileSyncFilename] = useState("");
   const [reviewContextInvalidationMessage, setReviewContextInvalidationMessage] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
@@ -218,7 +214,6 @@ export default function App() {
     setProfileDetail(null);
     setDraftState(null);
     draftStateRef.current = null;
-    setLastDownloadedProfileSyncFilename("");
     setSettingsProfileDetailLoading(false);
     if (options?.resetStatusMessage) {
       setSettingsStatusMessage(
@@ -536,7 +531,6 @@ export default function App() {
     }
 
     setDraftState(null);
-    setLastDownloadedProfileSyncFilename("");
     if (!selectedTrustedProfile || !selectedTrustedProfileId) {
       setProfileDetail(null);
       setSettingsProfileDetailLoading(false);
@@ -726,7 +720,6 @@ export default function App() {
     setProfileDetail(null);
     setDraftState(null);
     draftStateRef.current = null;
-    setLastDownloadedProfileSyncFilename("");
     setSettingsProfileDetailLoading(false);
     advanceDraftSync("profileSwitch");
 
@@ -1207,23 +1200,6 @@ export default function App() {
     });
   }
 
-  async function handleCreateDesktopSyncExport() {
-    await runAction("Creating desktop sync archive...", async () => {
-      if (!profileDetail) {
-        throw new Error("Load a published trusted profile before creating a desktop sync archive.");
-      }
-
-      const syncExport: ProfileSyncExportResponse = await createProfileSyncExport(
-        profileDetail.current_published_version.trusted_profile_version_id,
-      );
-      const filename = await downloadArtifact(syncExport.download_url);
-      setLastDownloadedProfileSyncFilename(filename);
-      setSettingsStatusMessage(
-        `Downloaded ${filename} for manual desktop sync from live version v${syncExport.version_number}.`,
-      );
-    });
-  }
-
   async function handleCreateTrustedProfile(request: CreateTrustedProfileRequest) {
     await runAction("Creating trusted profile...", async () => {
       const seedProfile = selectedTrustedProfile;
@@ -1243,7 +1219,6 @@ export default function App() {
       setSelectedTrustedProfileName(createdDetail.profile_name);
       setDraftState(null);
       setProfileDetail(createdDetail);
-      setLastDownloadedProfileSyncFilename("");
       advanceDraftSync("reset");
       setSettingsStatusMessage(
         `Created ${createdDetail.display_name} from live version v${seedVersionNumber} of ${seedProfile.display_name}. Select Edit current profile when you are ready to change it.`,
@@ -1264,7 +1239,6 @@ export default function App() {
       setSelectedTrustedProfileName(fallbackProfileName);
       setDraftState(null);
       setProfileDetail(null);
-      setLastDownloadedProfileSyncFilename("");
       advanceDraftSync("reset");
       setSettingsStatusMessage(
         `Archived ${archivedDisplayName}. Archived profiles stay in lineage history but are removed from active web selectors.`,
@@ -1553,9 +1527,7 @@ export default function App() {
           onCreateTrustedProfile={handleCreateTrustedProfile}
           onArchiveTrustedProfile={handleArchiveTrustedProfile}
           onUnarchiveTrustedProfile={handleUnarchiveTrustedProfile}
-          onCreateDesktopSyncExport={handleCreateDesktopSyncExport}
           onLeaveGuardChange={registerSettingsLeaveGuard}
-          lastDownloadedProfileSyncFilename={lastDownloadedProfileSyncFilename}
         />
       )}
     </main>

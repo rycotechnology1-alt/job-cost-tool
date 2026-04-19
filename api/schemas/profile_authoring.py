@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from pydantic import Field
 
 from api.schemas.common import ApiModel
@@ -151,21 +149,6 @@ class CreateTrustedProfileRequest(ApiModel):
     display_name: str
     description: str = ""
     seed_trusted_profile_id: str | None = None
-
-
-class ProfileSyncExportResponse(ApiModel):
-    """Published-version desktop-sync export metadata returned after archive creation."""
-
-    trusted_profile_sync_export_id: str
-    trusted_profile_version_id: str
-    trusted_profile_id: str
-    profile_name: str
-    display_name: str
-    version_number: int
-    archive_filename: str
-    artifact_file_hash: str | None = None
-    created_at: datetime
-    download_url: str
 
 
 class DraftEditorStateResponse(ApiModel):

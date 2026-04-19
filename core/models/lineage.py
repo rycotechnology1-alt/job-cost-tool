@@ -111,20 +111,6 @@ class TrustedProfileObservation:
 
 
 @dataclass(frozen=True, slots=True)
-class TrustedProfileSyncExport:
-    """Audit record for a manual desktop-sync artifact derived from one version."""
-
-    trusted_profile_sync_export_id: str
-    organization_id: str
-    trusted_profile_version_id: str
-    artifact_storage_ref: str
-    created_at: datetime
-    artifact_file_hash: str | None = None
-    manifest_json: str | None = None
-    created_by_user_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class ProfileSnapshot:
     """Immutable effective profile/config bundle captured for one processing run."""
 

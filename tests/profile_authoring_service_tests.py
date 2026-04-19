@@ -5,16 +5,13 @@ from __future__ import annotations
 import json
 import shutil
 import unittest
-import zipfile
 from datetime import datetime, timezone
-from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 from core.config import ConfigLoader, ProfileManager
 from core.models import Record
 from infrastructure.persistence import SqliteLineageStore
-from infrastructure.storage import LocalRuntimeFileStore
 from services.profile_execution_compatibility_adapter import ProfileExecutionCompatibilityAdapter
 from services.processing_run_service import ProcessingRunService
 from services.profile_authoring_errors import (
@@ -76,16 +73,11 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
             lineage_store=self.lineage_store,
             profile_manager=self.profile_manager,
         )
-        self.artifact_store = LocalRuntimeFileStore(
-            upload_root=TEST_ROOT / "runtime" / "uploads",
-            export_root=TEST_ROOT / "runtime" / "exports",
-        )
         self.service = ProfileAuthoringService(
             repository=self.repository,
             trusted_profile_provisioning_service=self.trusted_profile_provisioning_service,
             profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
             profile_manager=self.profile_manager,
-            artifact_store=self.artifact_store,
             now_provider=lambda: self.created_at,
         )
         self.processing_run_service = ProcessingRunService(
@@ -756,58 +748,6 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         )
         with self.assertRaises(KeyError):
             self.repository.get_open_draft("org-default", trusted_profile_id)
-
-    def test_create_desktop_sync_export_builds_archive_from_exact_published_version_and_manifest(self) -> None:
-        trusted_profile_id = "trusted-profile:org-default:default"
-        draft_state = self.service.create_or_open_draft(trusted_profile_id)
-        self.service.update_default_omit_rules(
-            draft_state.trusted_profile_draft_id,
-            [{"phase_code": "20", "phase_name": "Labor"}],
-            expected_draft_revision=draft_state.draft_revision,
-        )
-        published_detail = self.service.publish_draft(draft_state.trusted_profile_draft_id)
-
-        export_result = self.service.create_desktop_sync_export(published_detail.current_published_version_id)
-
-        self.assertEqual(export_result.archive_filename, "default__v2.zip")
-        self.assertTrue(export_result.stored_artifact.file_path.is_file())
-
-        with zipfile.ZipFile(BytesIO(export_result.stored_artifact.file_path.read_bytes())) as archive:
-            names = set(archive.namelist())
-            self.assertIn("default__v2/profile.json", names)
-            self.assertIn("default__v2/review_rules.json", names)
-            self.assertIn("default__v2/recap_template.xlsx", names)
-            self.assertIn("default__v2/manifest.json", names)
-
-            manifest = json.loads(archive.read("default__v2/manifest.json").decode("utf-8"))
-            review_rules = json.loads(archive.read("default__v2/review_rules.json").decode("utf-8"))
-            template_bytes = archive.read("default__v2/recap_template.xlsx")
-
-        self.assertEqual(manifest["trusted_profile_version_id"], published_detail.current_published_version_id)
-        self.assertEqual(manifest["version_number"], 2)
-        self.assertEqual(manifest["profile_name"], "default")
-        self.assertEqual(manifest["display_name"], "Default Profile")
-        self.assertEqual(manifest["content_hash"], published_detail.current_published_content_hash)
-        self.assertEqual(manifest["template_file_hash"], published_detail.template_file_hash)
-        self.assertEqual(manifest["template_artifact_ref"], "recap_template.xlsx")
-        self.assertEqual(review_rules["default_omit_rules"], [{"phase_code": "20"}])
-        self.assertEqual(template_bytes, b"template")
-
-    def test_create_desktop_sync_export_fails_when_template_artifact_identity_is_missing(self) -> None:
-        trusted_profile_id = "trusted-profile:org-default:default"
-        current_version = self.trusted_profile_provisioning_service.get_current_published_version(trusted_profile_id)
-        self.lineage_store._connection.execute(
-            """
-            UPDATE trusted_profile_versions
-            SET template_artifact_id = NULL
-            WHERE trusted_profile_version_id = ?
-            """,
-            (current_version.trusted_profile_version_id,),
-        )
-        self.lineage_store._connection.commit()
-
-        with self.assertRaises(FileNotFoundError):
-            self.service.create_desktop_sync_export(current_version.trusted_profile_version_id)
 
     def _write_profile_bundle(
         self,

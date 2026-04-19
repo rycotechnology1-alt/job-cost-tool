@@ -68,9 +68,7 @@ interface ProfileSettingsWorkspaceProps {
   onCreateTrustedProfile: (request: CreateTrustedProfileRequest) => Promise<void> | void;
   onArchiveTrustedProfile: () => Promise<void> | void;
   onUnarchiveTrustedProfile: (trustedProfileId: string, displayName: string) => Promise<void> | void;
-  onCreateDesktopSyncExport: () => Promise<void> | void;
   onLeaveGuardChange?: (guard: ProfileSettingsLeaveGuard | null) => void;
-  lastDownloadedProfileSyncFilename: string;
 }
 
 interface ValidationResult {
@@ -679,12 +677,8 @@ export function ProfileSettingsWorkspace({
   onCreateTrustedProfile,
   onArchiveTrustedProfile,
   onUnarchiveTrustedProfile,
-  onCreateDesktopSyncExport,
   onLeaveGuardChange,
-  lastDownloadedProfileSyncFilename,
 }: ProfileSettingsWorkspaceProps) {
-  void onCreateDesktopSyncExport;
-  void lastDownloadedProfileSyncFilename;
   const [defaultOmitRules, setDefaultOmitRules] = useState<DefaultOmitRuleRow[]>([]);
   const [laborMappings, setLaborMappings] = useState<LaborMappingRow[]>([]);
   const [equipmentMappings, setEquipmentMappings] = useState<EquipmentMappingRow[]>([]);
@@ -1526,7 +1520,7 @@ export function ProfileSettingsWorkspace({
                 ? "Default and filesystem-backed profiles stay managed through the existing desktop/filesystem path."
                 : openDraftId
                   ? "Save or discard the unpublished profile changes before archiving this profile."
-                  : "Archiving hides the profile from active selectors but preserves its versions, runs, and sync-export audit history."}
+                  : "Archiving hides the profile from active selectors but preserves its versions, runs, and review lineage history."}
             </p>
             </div>
             <div className="workspace-callout">

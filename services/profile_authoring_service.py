@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
-import re
-import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any, Callable
-from uuid import uuid4
 
 from core.config import ConfigLoader, ProfileManager
 from core.config.export_settings import (
@@ -25,10 +20,9 @@ from core.models.lineage import (
     TrustedProfile,
     TrustedProfileDraft,
     TrustedProfileObservation,
-    TrustedProfileSyncExport,
     TrustedProfileVersion,
 )
-from infrastructure.storage import RuntimeStorage, StoredArtifact
+from infrastructure.storage import RuntimeStorage
 from services.profile_execution_compatibility_adapter import ProfileExecutionCompatibilityAdapter
 from services.profile_bundle_helpers import (
     canonicalize_equipment_mapping_key,
@@ -135,22 +129,6 @@ class DraftEditorState:
     equipment_rates: list[dict[str, str]]
     deferred_domains: dict[str, Any]
     validation_errors: list[str]
-
-
-@dataclass(frozen=True, slots=True)
-class ProfileSyncExportResult:
-    """Persisted desktop-sync export plus its download-ready artifact metadata."""
-
-    trusted_profile_sync_export_id: str
-    trusted_profile_version_id: str
-    trusted_profile_id: str
-    profile_name: str
-    display_name: str
-    version_number: int
-    archive_filename: str
-    artifact_file_hash: str | None
-    created_at: datetime
-    stored_artifact: StoredArtifact
 
 
 class ProfileAuthoringService:
@@ -587,94 +565,6 @@ class ProfileAuthoringService:
             draft.organization_id,
             trusted_profile_draft_id,
         )
-
-    def create_desktop_sync_export(
-        self,
-        trusted_profile_version_id: str,
-        *,
-        created_by_user_id: str | None = None,
-        request_context: RequestContext | None = None,
-    ) -> ProfileSyncExportResult:
-        """Build and persist a manual desktop-sync archive from one immutable published version."""
-        if self._artifact_store is None:
-            raise ValueError("artifact_store is required to create desktop-sync exports.")
-
-        published_version = self._get_scoped_published_version(
-            trusted_profile_version_id,
-            request_context=request_context,
-        )
-        if not str(published_version.template_artifact_id or "").strip():
-            raise FileNotFoundError(
-                f"Trusted profile version '{published_version.trusted_profile_version_id}' does not include a "
-                "template artifact."
-            )
-        trusted_profile = self._get_scoped_trusted_profile(
-            published_version.trusted_profile_id,
-            request_context=request_context,
-        )
-        archive_root_name = self._build_sync_archive_root_name(
-            trusted_profile.profile_name,
-            published_version.version_number,
-        )
-        archive_filename = f"{archive_root_name}.zip"
-        manifest_payload = self._build_sync_manifest(
-            trusted_profile=trusted_profile,
-            published_version=published_version,
-        )
-        archive_bytes = self._build_sync_archive_bytes(
-            published_version=published_version,
-            archive_root_name=archive_root_name,
-            manifest_payload=manifest_payload,
-        )
-        artifact_file_hash = hashlib.sha256(archive_bytes).hexdigest()
-        stored_artifact = self._artifact_store.save_profile_sync_export(
-            trusted_profile_version_id=published_version.trusted_profile_version_id,
-            original_filename=archive_filename,
-            content_bytes=archive_bytes,
-            content_type="application/zip",
-        )
-        persisted_created_by_user_id = created_by_user_id or self._request_user_id(request_context)
-        sync_export = self._repository.record_sync_export(
-            TrustedProfileSyncExport(
-                trusted_profile_sync_export_id=(
-                    f"trusted-profile-sync-export:{published_version.trusted_profile_version_id}:{uuid4().hex}"
-                ),
-                organization_id=trusted_profile.organization_id,
-                trusted_profile_version_id=published_version.trusted_profile_version_id,
-                artifact_storage_ref=stored_artifact.storage_ref,
-                artifact_file_hash=artifact_file_hash,
-                manifest_json=json.dumps(manifest_payload, indent=2, sort_keys=True, ensure_ascii=True),
-                created_by_user_id=persisted_created_by_user_id,
-                created_at=self._now_provider(),
-            )
-        )
-        return ProfileSyncExportResult(
-            trusted_profile_sync_export_id=sync_export.trusted_profile_sync_export_id,
-            trusted_profile_version_id=published_version.trusted_profile_version_id,
-            trusted_profile_id=trusted_profile.trusted_profile_id,
-            profile_name=trusted_profile.profile_name,
-            display_name=trusted_profile.display_name,
-            version_number=published_version.version_number,
-            archive_filename=stored_artifact.original_filename,
-            artifact_file_hash=sync_export.artifact_file_hash,
-            created_at=sync_export.created_at,
-            stored_artifact=stored_artifact,
-        )
-
-    def resolve_desktop_sync_export_payload(
-        self,
-        trusted_profile_sync_export_id: str,
-        *,
-        request_context: RequestContext | None = None,
-    ) -> StoredArtifact:
-        """Resolve one persisted desktop-sync archive through the configured artifact storage seam."""
-        if self._artifact_store is None:
-            raise ValueError("artifact_store is required to resolve desktop-sync exports.")
-        sync_export = self._repository.get_sync_export(
-            self._request_organization_id(request_context),
-            trusted_profile_sync_export_id,
-        )
-        return self._artifact_store.get_profile_sync_export(sync_export.artifact_storage_ref)
 
     def capture_unmapped_observations(
         self,
@@ -1220,93 +1110,6 @@ class ProfileAuthoringService:
             open_draft_id=open_draft_id,
             deferred_domains=self._deferred_domains(behavioral_bundle),
         )
-
-    def _build_sync_manifest(
-        self,
-        *,
-        trusted_profile: TrustedProfile,
-        published_version: TrustedProfileVersion,
-    ) -> dict[str, Any]:
-        """Build the deterministic manifest stored in a desktop-sync archive."""
-        behavioral_bundle = self._behavioral_bundle(published_version.bundle_payload)
-        template_payload = self._template_payload(behavioral_bundle)
-        template_reference = (
-            str(published_version.template_artifact_ref or "").strip()
-            or str(template_payload.get("template_artifact_ref") or "").strip()
-            or str(template_payload.get("template_filename") or "").strip()
-        )
-        template_file_hash = str(published_version.template_file_hash or "").strip()
-        if not template_reference:
-            raise ValueError(
-                f"Trusted profile version '{published_version.trusted_profile_version_id}' is missing a stable "
-                "template reference."
-            )
-        if not template_file_hash:
-            raise ValueError(
-                f"Trusted profile version '{published_version.trusted_profile_version_id}' is missing template "
-                "file hash identity."
-            )
-        return {
-            "trusted_profile_version_id": published_version.trusted_profile_version_id,
-            "version_number": published_version.version_number,
-            "published_at": published_version.created_at.isoformat(),
-            "trusted_profile_id": trusted_profile.trusted_profile_id,
-            "profile_name": trusted_profile.profile_name,
-            "display_name": trusted_profile.display_name,
-            "content_hash": published_version.content_hash,
-            "template_file_hash": template_file_hash,
-            "template_artifact_ref": template_reference,
-            "template_filename": str(template_payload.get("template_filename") or "") or None,
-            "source_kind": published_version.source_kind,
-            "base_trusted_profile_version_id": published_version.base_trusted_profile_version_id,
-        }
-
-    def _build_sync_archive_bytes(
-        self,
-        *,
-        published_version: TrustedProfileVersion,
-        archive_root_name: str,
-        manifest_payload: dict[str, Any],
-    ) -> bytes:
-        """Materialize one published version into a deterministic desktop-sync archive."""
-        manifest_json = json.dumps(manifest_payload, indent=2, sort_keys=True, ensure_ascii=True)
-        with TemporaryDirectory(prefix="job-cost-profile-sync-") as temp_dir:
-            archive_source_dir = Path(temp_dir).resolve() / archive_root_name
-            with self._profile_execution_compatibility_adapter.materialize_published_version_bundle(
-                published_version
-            ) as materialized_bundle:
-                archive_source_dir.mkdir(parents=True, exist_ok=True)
-                for source_path in sorted(materialized_bundle.config_dir.iterdir(), key=lambda item: item.name):
-                    target_path = archive_source_dir / source_path.name
-                    if source_path.is_file():
-                        target_path.write_bytes(source_path.read_bytes())
-                (archive_source_dir / "manifest.json").write_text(manifest_json, encoding="utf-8")
-
-            buffer = io.BytesIO()
-            with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-                for source_path in sorted(archive_source_dir.rglob("*"), key=lambda item: item.as_posix()):
-                    if not source_path.is_file():
-                        continue
-                    relative_path = source_path.relative_to(archive_source_dir.parent)
-                    archive.writestr(
-                        self._build_zip_info(relative_path.as_posix()),
-                        source_path.read_bytes(),
-                    )
-            return buffer.getvalue()
-
-    def _build_sync_archive_root_name(self, profile_name: str, version_number: int) -> str:
-        """Return the deterministic versioned folder/archive name used for desktop sync exports."""
-        normalized_slug = re.sub(r"[^a-z0-9._-]+", "-", str(profile_name or "").strip().lower()).strip("._-")
-        if not normalized_slug:
-            normalized_slug = "trusted-profile"
-        return f"{normalized_slug}__v{version_number}"
-
-    def _build_zip_info(self, archive_member_name: str) -> zipfile.ZipInfo:
-        """Build deterministic zip metadata for one archive member."""
-        zip_info = zipfile.ZipInfo(archive_member_name)
-        zip_info.date_time = (1980, 1, 1, 0, 0, 0)
-        zip_info.compress_type = zipfile.ZIP_DEFLATED
-        return zip_info
 
     def _build_draft_state(
         self,
