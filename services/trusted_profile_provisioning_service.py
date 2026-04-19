@@ -512,9 +512,9 @@ class TrustedProfileProvisioningService:
         profile_name: str | None,
         request_context: RequestContext | None = None,
     ) -> TrustedProfile:
-        resolved_profile_name = self._resolve_selected_profile_name(profile_name)
-        if resolved_profile_name == "default":
+        if profile_name is None:
             return self._get_default_trusted_profile(organization)
+        resolved_profile_name = self._resolve_selected_profile_name(profile_name)
         try:
             return self._repository.get_trusted_profile_by_name(
                 organization.organization_id,
