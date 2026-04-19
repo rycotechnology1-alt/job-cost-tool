@@ -61,7 +61,10 @@ def build_runtime(
         persisted_store = lineage_store
     elif provider == "postgres":
         if not postgres_pooled_url:
-            raise ValueError("JOB_COST_API_POSTGRES_POOLED_URL is required when database_provider=postgres.")
+            raise ValueError(
+                "JOB_COST_API_POSTGRES_POOLED_URL is required when database_provider=postgres. "
+                "Set it in the process environment or repo-root .env for local startup."
+            )
         persisted_store = PostgresLineageStore(
             connection_string=postgres_pooled_url,
             migration_connection_string=postgres_admin_url,

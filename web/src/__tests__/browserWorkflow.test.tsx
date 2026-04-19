@@ -490,10 +490,17 @@ function installFetchMock(
       return jsonResponse(state.draftState);
     }
 
-    if (url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH") {
+    if (url === "/api/profile-drafts/draft-1" && init?.method === "PATCH") {
       const payload = JSON.parse(String(init.body ?? "{}")) as {
         expected_draft_revision?: number;
-        labor_mappings: typeof state.draftState.labor_mappings;
+        default_omit_rules?: typeof state.draftState.default_omit_rules;
+        labor_mappings?: typeof state.draftState.labor_mappings;
+        equipment_mappings?: typeof state.draftState.equipment_mappings;
+        labor_slots?: typeof state.draftState.labor_slots;
+        equipment_slots?: typeof state.draftState.equipment_slots;
+        labor_rates?: typeof state.draftState.labor_rates;
+        equipment_rates?: typeof state.draftState.equipment_rates;
+        export_settings?: typeof state.draftState.export_settings;
       };
       if (payload.expected_draft_revision !== state.draftState.draft_revision) {
         return jsonResponse(
@@ -509,9 +516,22 @@ function installFetchMock(
           409,
         );
       }
+      const laborSlots = payload.labor_slots ?? state.draftState.labor_slots;
+      const equipmentSlots = payload.equipment_slots ?? state.draftState.equipment_slots;
       state.draftState = {
         ...state.draftState,
-        labor_mappings: payload.labor_mappings,
+        default_omit_rules: payload.default_omit_rules ?? state.draftState.default_omit_rules,
+        labor_mappings: payload.labor_mappings ?? state.draftState.labor_mappings,
+        equipment_mappings: payload.equipment_mappings ?? state.draftState.equipment_mappings,
+        labor_slots: laborSlots,
+        equipment_slots: equipmentSlots,
+        labor_rates: payload.labor_rates ?? state.draftState.labor_rates,
+        equipment_rates: payload.equipment_rates ?? state.draftState.equipment_rates,
+        export_settings: payload.export_settings ?? state.draftState.export_settings,
+        labor_active_slot_count: laborSlots.filter((slot) => slot.active).length,
+        labor_inactive_slot_count: laborSlots.filter((slot) => !slot.active).length,
+        equipment_active_slot_count: equipmentSlots.filter((slot) => slot.active).length,
+        equipment_inactive_slot_count: equipmentSlots.filter((slot) => !slot.active).length,
         draft_revision: state.draftState.draft_revision + 1,
         draft_content_hash: `draft-content-hash-v${state.draftState.draft_revision + 1}`,
       };

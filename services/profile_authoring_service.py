@@ -490,6 +490,100 @@ class ProfileAuthoringService:
             request_context=request_context,
         )
 
+    def save_draft_state(
+        self,
+        trusted_profile_draft_id: str,
+        *,
+        default_omit_rules: list[dict[str, str]],
+        labor_mapping_rows: list[dict[str, str]],
+        equipment_mapping_rows: list[dict[str, str]],
+        labor_slots: list[dict[str, Any]],
+        equipment_slots: list[dict[str, Any]],
+        labor_rate_rows: list[dict[str, str]],
+        equipment_rate_rows: list[dict[str, str]],
+        export_settings: dict[str, Any],
+        expected_draft_revision: int,
+        request_context: RequestContext | None = None,
+    ) -> DraftEditorState:
+        """Atomically replace the full editable draft state."""
+        draft = self._get_scoped_draft(trusted_profile_draft_id, request_context=request_context)
+        bundle = self._copy_behavioral_bundle(draft.bundle_payload)
+        current_labor_slots = self._slot_rows(bundle["labor_slots"])
+        current_equipment_slots = self._slot_rows(bundle["equipment_slots"])
+        edit_result = build_classification_bundle_edit_result(
+            existing_labor_slots=current_labor_slots,
+            updated_labor_slots=labor_slots,
+            existing_equipment_slots=current_equipment_slots,
+            updated_equipment_slots=equipment_slots,
+            labor_mapping_rows=labor_mapping_rows,
+            equipment_mapping_rows=equipment_mapping_rows,
+            labor_rate_rows=labor_rate_rows,
+            equipment_rate_rows=equipment_rate_rows,
+            labor_mapping_config=bundle["labor_mapping"],
+            equipment_mapping_config=bundle["equipment_mapping"],
+            rates_config=bundle["rates"],
+            recap_template_map=bundle["recap_template_map"],
+            template_metadata=bundle.get("template"),
+        )
+
+        remapped_labor_mapping_rows = self._apply_label_renames_to_rows(
+            labor_mapping_rows,
+            "target_classification",
+            edit_result.labor_rename_map,
+        )
+        remapped_equipment_mapping_rows = self._apply_label_renames_to_rows(
+            equipment_mapping_rows,
+            "target_category",
+            edit_result.equipment_rename_map,
+        )
+        remapped_labor_rate_rows = self._apply_label_renames_to_rows(
+            labor_rate_rows,
+            "classification",
+            edit_result.labor_rename_map,
+        )
+        remapped_equipment_rate_rows = self._apply_label_renames_to_rows(
+            equipment_rate_rows,
+            "category",
+            edit_result.equipment_rename_map,
+        )
+        active_labor_targets = self._active_classifications(edit_result.labor_slots_config)
+        active_equipment_targets = self._active_classifications(edit_result.equipment_slots_config)
+
+        bundle["review_rules"] = build_default_omit_rules_config(bundle["review_rules"], default_omit_rules)
+        bundle["labor_slots"] = edit_result.labor_slots_config
+        bundle["equipment_slots"] = edit_result.equipment_slots_config
+        bundle["labor_mapping"] = build_labor_mapping_config(
+            bundle["labor_mapping"],
+            remapped_labor_mapping_rows,
+            valid_targets=active_labor_targets,
+        )
+        bundle["equipment_mapping"] = build_equipment_mapping_config(
+            bundle["equipment_mapping"],
+            remapped_equipment_mapping_rows,
+            valid_targets=active_equipment_targets,
+        )
+        bundle["rates"] = build_rates_config(
+            bundle["rates"],
+            remapped_labor_rate_rows,
+            remapped_equipment_rate_rows,
+            valid_labor_targets=active_labor_targets,
+            valid_equipment_targets=active_equipment_targets,
+        )
+        bundle["export_settings"] = build_export_settings_config(
+            bundle.get("export_settings", {}),
+            export_settings,
+        )
+        bundle["recap_template_map"] = edit_result.recap_template_map
+        updated_draft = self._save_validated_bundle(
+            draft,
+            bundle,
+            expected_draft_revision=expected_draft_revision,
+        )
+        return self.get_draft_state(
+            updated_draft.trusted_profile_draft_id,
+            request_context=request_context,
+        )
+
     def validate_draft(
         self,
         trusted_profile_draft_id: str,
@@ -714,6 +808,24 @@ class ProfileAuthoringService:
             updated_bundle_payload,
             expected_draft_revision=expected_draft_revision,
         )
+
+    def _apply_label_renames_to_rows(
+        self,
+        rows: list[dict[str, Any]],
+        key: str,
+        rename_map: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """Apply classification label renames to one set of submitted editor rows."""
+        if not rename_map:
+            return [dict(row) for row in rows]
+        remapped_rows: list[dict[str, Any]] = []
+        for row in rows:
+            updated_row = dict(row)
+            value = str(updated_row.get(key, "")).strip()
+            if value in rename_map:
+                updated_row[key] = rename_map[value]
+            remapped_rows.append(updated_row)
+        return remapped_rows
 
     def _resolve_expected_draft_revision_for_publish(
         self,

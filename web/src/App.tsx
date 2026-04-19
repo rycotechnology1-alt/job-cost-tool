@@ -18,25 +18,14 @@ import {
   openReviewSession,
   publishProfileDraft,
   unarchiveTrustedProfile,
-  updateDraftClassifications,
-  updateDraftDefaultOmit,
-  updateDraftEquipmentMappings,
-  updateDraftExportSettings,
-  updateDraftLaborMappings,
-  updateDraftRates,
+  updateDraftState,
   uploadSourceDocument,
 } from "./api/client";
 import type {
-  ClassificationSlotRow,
   CreateTrustedProfileRequest,
-  DefaultOmitRuleRow,
+  DraftSaveRequest,
   DraftEditorStateResponse,
-  EquipmentMappingRow,
-  EquipmentRateRow,
-  ExportSettingsResponse,
   ExportArtifactResponse,
-  LaborMappingRow,
-  LaborRateRow,
   ProcessingRunDetailResponse,
   PublishedProfileDetailResponse,
   ReviewEditFields,
@@ -55,6 +44,7 @@ type DraftSyncReason =
   | "reset"
   | "profileSwitch"
   | "open"
+  | "save"
   | "defaultOmit"
   | "laborMappings"
   | "equipmentMappings"
@@ -1017,116 +1007,20 @@ export default function App() {
     });
   }
 
-  async function handleSaveDefaultOmit(rowsToSave: DefaultOmitRuleRow[]): Promise<boolean> {
-    return runAction("Saving default omit rules...", async () => {
+  async function handleSaveDraftState(request: Omit<DraftSaveRequest, "expected_draft_revision">): Promise<boolean> {
+    return runAction("Saving profile settings...", async () => {
       const currentDraft = draftStateRef.current;
       if (!currentDraft) {
-        throw new Error("Edit the current profile before saving default omit rules.");
+        throw new Error("Edit the current profile before saving profile settings.");
       }
-      const nextDraft = await updateDraftDefaultOmit(
-        currentDraft.trusted_profile_draft_id,
-        rowsToSave,
-        currentDraft.draft_revision,
-      );
+      const nextDraft = await updateDraftState(currentDraft.trusted_profile_draft_id, {
+        ...request,
+        expected_draft_revision: currentDraft.draft_revision,
+      });
       draftStateRef.current = nextDraft;
       setDraftState(nextDraft);
-      advanceDraftSync("defaultOmit");
-      setSettingsStatusMessage("Saved default omit rules into the current unpublished profile changes.");
-    });
-  }
-
-  async function handleSaveLaborMappings(rowsToSave: LaborMappingRow[]): Promise<boolean> {
-    return runAction("Saving labor mappings...", async () => {
-      const currentDraft = draftStateRef.current;
-      if (!currentDraft) {
-        throw new Error("Edit the current profile before saving labor mappings.");
-      }
-      const nextDraft = await updateDraftLaborMappings(
-        currentDraft.trusted_profile_draft_id,
-        rowsToSave,
-        currentDraft.draft_revision,
-      );
-      draftStateRef.current = nextDraft;
-      setDraftState(nextDraft);
-      advanceDraftSync("laborMappings");
-      setSettingsStatusMessage("Saved labor mappings into the current unpublished profile changes.");
-    });
-  }
-
-  async function handleSaveEquipmentMappings(rowsToSave: EquipmentMappingRow[]): Promise<boolean> {
-    return runAction("Saving equipment mappings...", async () => {
-      const currentDraft = draftStateRef.current;
-      if (!currentDraft) {
-        throw new Error("Edit the current profile before saving equipment mappings.");
-      }
-      const nextDraft = await updateDraftEquipmentMappings(
-        currentDraft.trusted_profile_draft_id,
-        rowsToSave,
-        currentDraft.draft_revision,
-      );
-      draftStateRef.current = nextDraft;
-      setDraftState(nextDraft);
-      advanceDraftSync("equipmentMappings");
-      setSettingsStatusMessage("Saved equipment mappings into the current unpublished profile changes.");
-    });
-  }
-
-  async function handleSaveClassifications(
-    laborSlots: ClassificationSlotRow[],
-    equipmentSlots: ClassificationSlotRow[],
-  ): Promise<boolean> {
-    return runAction("Saving classifications...", async () => {
-      const currentDraft = draftStateRef.current;
-      if (!currentDraft) {
-        throw new Error("Edit the current profile before saving classifications.");
-      }
-      const nextDraft = await updateDraftClassifications(
-        currentDraft.trusted_profile_draft_id,
-        laborSlots,
-        equipmentSlots,
-        currentDraft.draft_revision,
-      );
-      draftStateRef.current = nextDraft;
-      setDraftState(nextDraft);
-      advanceDraftSync("classifications");
-      setSettingsStatusMessage("Saved labor and equipment classifications into the current unpublished profile changes.");
-    });
-  }
-
-  async function handleSaveRates(laborRates: LaborRateRow[], equipmentRates: EquipmentRateRow[]): Promise<boolean> {
-    return runAction("Saving rates...", async () => {
-      const currentDraft = draftStateRef.current;
-      if (!currentDraft) {
-        throw new Error("Edit the current profile before saving rates.");
-      }
-      const nextDraft = await updateDraftRates(
-        currentDraft.trusted_profile_draft_id,
-        laborRates,
-        equipmentRates,
-        currentDraft.draft_revision,
-      );
-      draftStateRef.current = nextDraft;
-      setDraftState(nextDraft);
-      advanceDraftSync("rates");
-      setSettingsStatusMessage("Saved rates into the current unpublished profile changes.");
-    });
-  }
-
-  async function handleSaveExportSettings(exportSettings: ExportSettingsResponse): Promise<boolean> {
-    return runAction("Saving export settings...", async () => {
-      const currentDraft = draftStateRef.current;
-      if (!currentDraft) {
-        throw new Error("Edit the current profile before saving export settings.");
-      }
-      const nextDraft = await updateDraftExportSettings(
-        currentDraft.trusted_profile_draft_id,
-        exportSettings,
-        currentDraft.draft_revision,
-      );
-      draftStateRef.current = nextDraft;
-      setDraftState(nextDraft);
-      advanceDraftSync("exportSettings");
-      setSettingsStatusMessage("Saved export settings into the current unpublished profile changes.");
+      advanceDraftSync("save");
+      setSettingsStatusMessage("Saved profile settings into the current unpublished profile changes.");
     });
   }
 
@@ -1516,12 +1410,7 @@ export default function App() {
           onTrustedProfileNameChange={handleSettingsTrustedProfileNameChange}
           onReloadProfileDetail={handleReloadSettingsProfileDetail}
           onOpenDraft={handleOpenSettingsDraft}
-          onSaveDefaultOmit={handleSaveDefaultOmit}
-          onSaveLaborMappings={handleSaveLaborMappings}
-          onSaveEquipmentMappings={handleSaveEquipmentMappings}
-          onSaveClassifications={handleSaveClassifications}
-          onSaveRates={handleSaveRates}
-          onSaveExportSettings={handleSaveExportSettings}
+          onSaveDraft={handleSaveDraftState}
           onPublishDraft={handlePublishDraft}
           onDiscardDraft={handleDiscardProfileDraft}
           onCreateTrustedProfile={handleCreateTrustedProfile}

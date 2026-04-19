@@ -221,6 +221,14 @@ Run the API locally:
 .\.venv\Scripts\python.exe -m uvicorn api.index:app --reload
 ```
 
+The API now loads the repo-root `.env` automatically for local startup. Keep your real local values in `.env`.
+
+If you ever need to force dotenv loading explicitly during troubleshooting, this fallback still works:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn api.index:app --reload --env-file .env
+```
+
 Run the web app locally:
 
 ```powershell

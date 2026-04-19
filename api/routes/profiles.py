@@ -10,6 +10,7 @@ from api.request_context import get_request_context
 from api.schemas.profile_authoring import (
     ClassificationsPatchRequest,
     CreateTrustedProfileRequest,
+    DraftSaveRequest,
     DefaultOmitPatchRequest,
     DraftEditorStateResponse,
     EquipmentMappingsPatchRequest,
@@ -152,6 +153,33 @@ def discard_profile_draft(
             request_context=request_context,
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profile_drafts_router.patch("/{trusted_profile_draft_id}", response_model=DraftEditorStateResponse)
+def patch_profile_draft(
+    trusted_profile_draft_id: str,
+    request: DraftSaveRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
+) -> DraftEditorStateResponse:
+    """Atomically replace the editable draft state."""
+    try:
+        state = runtime.profile_authoring_service.save_draft_state(
+            trusted_profile_draft_id,
+            default_omit_rules=[row.model_dump() for row in request.default_omit_rules],
+            labor_mapping_rows=[row.model_dump() for row in request.labor_mappings],
+            equipment_mapping_rows=[row.model_dump() for row in request.equipment_mappings],
+            labor_slots=[row.model_dump() for row in request.labor_slots],
+            equipment_slots=[row.model_dump() for row in request.equipment_slots],
+            labor_rate_rows=[row.model_dump() for row in request.labor_rates],
+            equipment_rate_rows=[row.model_dump() for row in request.equipment_rates],
+            export_settings=request.export_settings.model_dump(),
+            expected_draft_revision=request.expected_draft_revision,
+            request_context=request_context,
+        )
+        return to_draft_editor_state_response(state)
     except Exception as exc:  # pragma: no cover - exercised via API tests
         raise to_http_exception(exc) from exc
 
