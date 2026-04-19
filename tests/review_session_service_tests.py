@@ -50,7 +50,6 @@ class ReviewSessionServiceTests(unittest.TestCase):
 
         self.profile_manager = ProfileManager(
             profiles_root=TEST_ROOT / "profiles",
-            settings_path=self.settings_path,
             legacy_config_root=TEST_ROOT / "legacy_config",
         )
         self.lineage_store = SqliteLineageStore()

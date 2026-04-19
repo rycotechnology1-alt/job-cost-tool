@@ -58,7 +58,6 @@ class TrustedProfileAuthoringRepositoryTests(unittest.TestCase):
 
         self.profile_manager = ProfileManager(
             profiles_root=TEST_ROOT / "profiles",
-            settings_path=self.settings_path,
             legacy_config_root=TEST_ROOT / "legacy_config",
         )
         self.lineage_store = SqliteLineageStore()
@@ -515,7 +514,7 @@ class TrustedProfileAuthoringRepositoryTests(unittest.TestCase):
         self.assertEqual(len(persisted_versions), 1)
 
     def test_hosted_resolution_without_explicit_profile_uses_persisted_org_default_not_local_active_profile(self) -> None:
-        self._write_json(self.settings_path, {"active_profile": "alternate"})
+        self._write_json(self.settings_path, {"active_profile": "default"})
         organization = self.lineage_store.ensure_organization(
             organization_id="org-acme",
             slug="acme",
@@ -536,22 +535,24 @@ class TrustedProfileAuthoringRepositoryTests(unittest.TestCase):
             SET default_trusted_profile_id = ?
             WHERE organization_id = ?
             """,
-            ("trusted-profile:org-acme:default", organization.organization_id),
+            ("trusted-profile:org-acme:alternate", organization.organization_id),
         )
         self.lineage_store._connection.commit()
-
-        resolved = self.provisioning_service.resolve_current_published_profile(
-            request_context=RequestContext(
-                organization_id=organization.organization_id,
-                user_id="user-acme-1",
-                role="member",
-            )
+        request_context = RequestContext(
+            organization_id=organization.organization_id,
+            user_id="user-acme-1",
+            role="member",
         )
 
-        self.assertEqual(resolved.trusted_profile.profile_name, "default")
+        resolved = self.provisioning_service.resolve_current_published_profile(
+            request_context=request_context
+        )
+
+        self.assertEqual(self.provisioning_service.get_selected_profile_name(request_context=request_context), "alternate")
+        self.assertEqual(resolved.trusted_profile.profile_name, "alternate")
         self.assertEqual(
             resolved.trusted_profile_version.bundle_payload["behavioral_bundle"]["labor_mapping"]["raw_mappings"]["103/J"],
-            "Default Journeyman",
+            "Alternate Journeyman",
         )
 
     def test_materialize_published_version_bundle_writes_processing_bundle_from_persistence(self) -> None:
