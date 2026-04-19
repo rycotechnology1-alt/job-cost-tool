@@ -12,7 +12,7 @@ from core.config import ConfigLoader, ProfileManager
 from core.models.lineage import Organization, TemplateArtifact, TrustedProfile, TrustedProfileVersion
 from infrastructure.persistence import LineageStore
 from services.lineage_service import build_template_artifact
-from services.request_context import RequestContext, is_local_request_context, resolve_request_context
+from services.request_context import RequestContext, resolve_request_context
 from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
 
 
@@ -64,27 +64,16 @@ class TrustedProfileProvisioningService:
         *,
         request_context: RequestContext | None = None,
     ) -> TrustedProfile:
-        """Fetch one trusted profile, bootstrapping filesystem-backed defaults when needed."""
+        """Fetch one trusted profile after ensuring the hosted default exists."""
         organization = self._ensure_request_organization(request_context)
         self._ensure_profiles_available(
             organization=organization,
             request_context=request_context,
         )
-        try:
-            trusted_profile = self._repository.get_trusted_profile(
-                organization.organization_id,
-                trusted_profile_id,
-            )
-        except KeyError:
-            if self._uses_local_profile_fallback(request_context):
-                self.bootstrap_filesystem_profiles(request_context=request_context)
-                trusted_profile = self._repository.get_trusted_profile(
-                    organization.organization_id,
-                    trusted_profile_id,
-                )
-            else:
-                raise
-        return trusted_profile
+        return self._repository.get_trusted_profile(
+            organization.organization_id,
+            trusted_profile_id,
+        )
 
     def get_current_published_version(
         self,
@@ -252,21 +241,14 @@ class TrustedProfileProvisioningService:
                     bootstrapped_versions.append(repaired_version)
         return bootstrapped_versions
 
-    def get_active_profile_name(self) -> str:
-        """Return the current local active profile name used for default selection."""
-        active_profile_name = str(self._profile_manager.get_active_profile_name() or "").strip()
-        return active_profile_name or "default"
-
     def get_selected_profile_name(
         self,
         *,
         request_context: RequestContext | None = None,
     ) -> str:
-        """Return the current selected profile name for the active delivery mode."""
-        organization = self._ensure_request_organization(request_context)
-        if self._uses_local_profile_fallback(request_context):
-            return self.get_active_profile_name()
-        return self._get_default_trusted_profile(organization).profile_name
+        """Return the hosted default selected profile name."""
+        self._ensure_request_organization(request_context)
+        return self._resolve_selected_profile_name(None)
 
     def ensure_organization_default_profile(
         self,
@@ -517,7 +499,7 @@ class TrustedProfileProvisioningService:
 
     def _resolve_selected_profile_name(self, profile_name: str | None) -> str:
         selected_profile_name = str(profile_name or "").strip()
-        return selected_profile_name or self.get_active_profile_name()
+        return selected_profile_name or "default"
 
     def _resolve_selected_trusted_profile(
         self,
@@ -526,10 +508,9 @@ class TrustedProfileProvisioningService:
         profile_name: str | None,
         request_context: RequestContext | None = None,
     ) -> TrustedProfile:
-        selected_profile_name = str(profile_name or "").strip()
-        if not selected_profile_name and not self._uses_local_profile_fallback(request_context):
+        resolved_profile_name = self._resolve_selected_profile_name(profile_name)
+        if resolved_profile_name == "default":
             return self._get_default_trusted_profile(organization)
-        resolved_profile_name = selected_profile_name or self.get_active_profile_name()
         try:
             return self._repository.get_trusted_profile_by_name(
                 organization.organization_id,
@@ -564,13 +545,7 @@ class TrustedProfileProvisioningService:
         organization: Organization,
         request_context: RequestContext | None,
     ) -> None:
-        if self._uses_local_profile_fallback(request_context):
-            self.bootstrap_filesystem_profiles(request_context=request_context)
-            return
         self.ensure_organization_default_profile(organization_id=organization.organization_id)
-
-    def _uses_local_profile_fallback(self, request_context: RequestContext | None) -> bool:
-        return is_local_request_context(request_context)
 
     def _ensure_request_organization(
         self,
