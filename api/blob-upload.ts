@@ -2,7 +2,7 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import {
   InvalidStagedSourcePdfUploadPathError,
   buildStagedSourcePdfTokenPolicy,
-} from "./blob-upload-policy.mjs";
+} from "../lib/blob-upload-policy.mjs";
 
 export default async function handler(request: Request): Promise<Response> {
   const body = (await request.json()) as HandleUploadBody;

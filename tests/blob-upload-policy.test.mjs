@@ -5,7 +5,7 @@ import {
   InvalidStagedSourcePdfUploadPathError,
   MAX_STAGED_SOURCE_PDF_SIZE_BYTES,
   buildStagedSourcePdfTokenPolicy,
-} from "./blob-upload-policy.mjs";
+} from "../lib/blob-upload-policy.mjs";
 
 test("buildStagedSourcePdfTokenPolicy returns the staged PDF token policy for valid upload paths", () => {
   const policy = buildStagedSourcePdfTokenPolicy("uploads/550e8400-e29b-41d4-a716-446655440000/report.pdf");

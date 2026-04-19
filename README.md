@@ -218,7 +218,7 @@ Install Python dependencies:
 Run the API locally:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn api.asgi:app --reload
+.\.venv\Scripts\python.exe -m uvicorn api.index:app --reload
 ```
 
 Run the web app locally:
