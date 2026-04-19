@@ -1,10 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
   "installCommand": "npm ci && npm --prefix web ci",
   "buildCommand": "npm --prefix web run build",
   "outputDirectory": "web/dist",
   "functions": {
-    "api/**/*.py": {
+    "api/index.py": {
       "excludeFiles": "{app/**,tests/**,docs/**,runtime/**,tools/**,.venv/**,web/**,__pycache__/**,tests/_*/**}"
     }
   },
