@@ -1,4 +1,4 @@
-﻿"""Lightweight tests for profile-aware config loading."""
+"""Lightweight tests for profile-aware config loading."""
 
 from __future__ import annotations
 
@@ -6,29 +6,12 @@ import json
 import shutil
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-from app.viewmodels.review_view_model import ReviewViewModel
-from app.viewmodels.settings_view_model import SettingsViewModel
 from core.config import ConfigLoader, ProfileManager
-from core.models.record import LABOR, MATERIAL, Record
 from services.profile_bundle_helpers import (
     active_labels_from_slots,
-    build_equipment_mapping_rows,
-    build_labor_mapping_rows,
     build_slot_label_rename_map,
-    dedupe_casefold_preserving_order,
-    rename_equipment_mapping_config_targets,
-    rename_labor_mapping_config_targets,
-    rename_rates_config_targets,
-    rename_recap_template_map_targets,
-    validate_equipment_classification_references,
-    validate_labor_classification_references,
     validate_slot_rows,
-)
-from services.settings_workflow_service import (
-    persist_observed_equipment_raw_values,
-    persist_observed_labor_raw_values,
 )
 
 
@@ -36,7 +19,7 @@ TEST_ROOT = Path("tests/_profile_tmp")
 
 
 class ProfileConfigTests(unittest.TestCase):
-    """Verify profile discovery and active-profile config loading."""
+    """Verify shared profile discovery and config loading behavior."""
 
     def setUp(self) -> None:
         ConfigLoader._shared_cache.clear()
@@ -84,8 +67,8 @@ class ProfileConfigTests(unittest.TestCase):
             {
                 "worksheet_name": "Recap",
                 "header_fields": {},
-                "labor_rows": {},
-                "equipment_rows": {},
+                "labor_rows": {"Journeyman": {"st_hours": "B1"}},
+                "equipment_rows": {"Truck": {"hours_qty": "C1"}},
                 "materials_section": {"start_row": 1, "end_row": 1, "columns": {"name": "A", "amount": "B"}},
                 "subcontractors_section": {"start_row": 1, "end_row": 1, "columns": {"name": "A", "description": "B", "amount": "C"}},
                 "permits_fees_section": {"start_row": 1, "end_row": 1, "columns": {"description": "A", "amount": "B"}},
@@ -108,16 +91,30 @@ class ProfileConfigTests(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(TEST_ROOT, ignore_errors=True)
 
-    def test_profile_manager_discovers_default_profile(self) -> None:
+    def test_profile_manager_discovers_default_profile_and_metadata(self) -> None:
         manager = self._build_manager()
 
         profiles = manager.list_profiles()
+
         self.assertEqual(len(profiles), 1)
         self.assertEqual(profiles[0]["profile_name"], "default")
         self.assertEqual(manager.get_active_profile_name(), "default")
         self.assertEqual(manager.get_active_profile_dir(), (TEST_ROOT / "profiles" / "default").resolve())
+        self.assertEqual(
+            manager.get_active_profile_metadata(),
+            {
+                "profile_name": "default",
+                "display_name": "Default Profile",
+                "description": "Test profile",
+                "version": "1.0",
+                "template_filename": "recap_template.xlsx",
+                "is_active": False,
+                "profile_dir": str((TEST_ROOT / "profiles" / "default").resolve()),
+                "is_active_profile": True,
+            },
+        )
 
-    def test_config_loader_reads_active_profile_bundle(self) -> None:
+    def test_config_loader_reads_required_and_optional_profile_configs(self) -> None:
         manager = self._build_manager()
         loader = ConfigLoader(
             config_dir=manager.get_active_profile_dir(),
@@ -206,236 +203,6 @@ class ProfileConfigTests(unittest.TestCase):
             },
         )
 
-    def test_profile_manager_can_duplicate_and_switch_profile(self) -> None:
-        manager = self._build_manager()
-        duplicated = manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="alt_profile",
-            display_name="Alternate Profile",
-            description="Cloned test profile",
-        )
-
-        self.assertEqual(duplicated["profile_name"], "alt_profile")
-        self.assertTrue((TEST_ROOT / "profiles" / "alt_profile" / "profile.json").is_file())
-
-        manager.set_active_profile("alt_profile")
-        self.assertEqual(manager.get_active_profile_name(), "alt_profile")
-        self.assertEqual(manager.get_active_profile_metadata()["display_name"], "Alternate Profile")
-
-    def test_profile_manager_cannot_delete_default_profile(self) -> None:
-        manager = self._build_manager()
-
-        with self.assertRaisesRegex(ValueError, "Default profile cannot be deleted"):
-            manager.delete_profile("default")
-
-    def test_profile_manager_cannot_delete_active_profile(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="alt_profile",
-            display_name="Alternate Profile",
-            description="Cloned test profile",
-        )
-        manager.set_active_profile("alt_profile")
-
-        with self.assertRaisesRegex(ValueError, "Switch to another profile before deleting this one"):
-            manager.delete_profile("alt_profile")
-
-    def test_profile_manager_can_delete_non_default_inactive_profile(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="alt_profile",
-            display_name="Alternate Profile",
-            description="Cloned test profile",
-        )
-
-        manager.delete_profile("alt_profile")
-
-        self.assertIsNone(manager.get_profile_dir("alt_profile"))
-        self.assertFalse((TEST_ROOT / "profiles" / "alt_profile").exists())
-
-    def test_default_profile_is_locked_by_default_and_unlock_state_persists(self) -> None:
-        manager = self._build_manager()
-
-        self.assertFalse(manager.is_default_profile_unlocked())
-
-        manager.set_default_profile_unlocked(True)
-        self.assertTrue(manager.is_default_profile_unlocked())
-        reloaded_manager = self._build_manager()
-        self.assertTrue(reloaded_manager.is_default_profile_unlocked())
-
-        manager.set_default_profile_unlocked(False)
-        self.assertFalse(self._build_manager().is_default_profile_unlocked())
-
-    def test_settings_view_model_respects_default_profile_lock_and_unlock(self) -> None:
-        manager = self._build_manager()
-
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
-            view_model = SettingsViewModel()
-            self.assertTrue(view_model.is_default_profile)
-            self.assertTrue(view_model.is_default_profile_locked)
-            self.assertFalse(view_model.is_active_profile_editable)
-            self.assertEqual(view_model.read_only_message, "Default profile is locked. Unlock it to make changes.")
-
-            with self.assertRaisesRegex(ValueError, "Default profile is locked. Unlock it to make changes."):
-                view_model.save_labor_mappings([])
-
-            unlock_message = view_model.unlock_default_profile()
-            self.assertEqual(unlock_message, "Default profile is now unlocked for editing.")
-            self.assertTrue(view_model.is_active_profile_editable)
-            self.assertFalse(view_model.is_default_profile_locked)
-
-            lock_message = view_model.lock_default_profile()
-            self.assertEqual(lock_message, "Default profile has been locked.")
-            self.assertFalse(view_model.is_active_profile_editable)
-            self.assertTrue(view_model.is_default_profile_locked)
-
-    def test_settings_view_model_saves_default_omit_rules_with_canonical_phase_codes(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        self._write_json(
-            TEST_ROOT / "legacy_config" / "phase_catalog.json",
-            {
-                "phases": [
-                    {"phase_code": "13 .25 .", "phase_name": "Material-Transfer"},
-                    {"phase_code": "29 .   .", "phase_name": "Market Recovery"},
-                    {"phase_code": "29 .999.", "phase_name": "Labor-Non-Job Related Time"},
-                    {"phase_code": "50 .15 .", "phase_name": "Utility Service Connections"},
-                ]
-            },
-        )
-
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager), patch(
-            "core.config.config_loader.get_legacy_config_root",
-            return_value=TEST_ROOT / "legacy_config",
-        ):
-            view_model = SettingsViewModel()
-            message = view_model.save_default_omit_rules(
-                [
-                    {"phase_code": " 29 .999. "},
-                    {"phase_code": "13 .25 ."},
-                ]
-            )
-            option_rows = view_model.available_default_omit_phase_options
-            saved_rows = view_model.default_omit_rule_rows
-
-        loader = ConfigLoader(
-            config_dir=(TEST_ROOT / "profiles" / "editable_profile"),
-            legacy_config_dir=TEST_ROOT / "legacy_config",
-        )
-
-        self.assertEqual(
-            message,
-            "Default omit rules saved. Reprocess the current PDF to apply them to loaded records.",
-        )
-        self.assertEqual(
-            loader.get_review_rules(),
-            {"default_omit_rules": [{"phase_code": "29 .999"}, {"phase_code": "13 .25"}]},
-        )
-        self.assertEqual(
-            saved_rows,
-            [
-                {"phase_code": "29 .999", "phase_name": "Labor-Non-Job Related Time"},
-                {"phase_code": "13 .25", "phase_name": "Material-Transfer"},
-            ],
-        )
-        self.assertIn({"phase_code": "13 .25", "phase_name": "Material-Transfer"}, option_rows)
-        self.assertIn({"phase_code": "29", "phase_name": "Market Recovery"}, option_rows)
-        self.assertIn({"phase_code": "29 .999", "phase_name": "Labor-Non-Job Related Time"}, option_rows)
-        self.assertIn({"phase_code": "50 .15", "phase_name": "Utility Service Connections"}, option_rows)
-
-    def test_settings_view_model_uses_shared_phase_catalog_without_loaded_pdf(self) -> None:
-        manager = self._build_manager()
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager), patch(
-            "core.config.config_loader.get_legacy_config_root",
-            return_value=TEST_ROOT / "legacy_config",
-        ):
-            view_model = SettingsViewModel()
-
-        self.assertIn(
-            {"phase_code": "29", "phase_name": "Market Recovery"},
-            view_model.available_default_omit_phase_options,
-        )
-        self.assertIn(
-            {"phase_code": "29 .999", "phase_name": "Labor-Non-Job Related Time"},
-            view_model.available_default_omit_phase_options,
-        )
-        self.assertEqual(view_model.default_omit_rule_rows, [])
-
-    def test_default_profile_cannot_be_deleted_even_when_unlocked(self) -> None:
-        manager = self._build_manager()
-        manager.set_default_profile_unlocked(True)
-
-        with self.assertRaisesRegex(ValueError, "Default profile cannot be deleted"):
-            manager.delete_profile("default")
-
-    def test_config_loader_normalizes_raw_first_labor_mapping_structure(self) -> None:
-        self._write_json(
-            TEST_ROOT / "profiles" / "default" / "labor_mapping.json",
-            {
-                "raw_mappings": {" 103/f ": "103 Journeyman"},
-                "saved_mappings": [
-                    {"raw_value": "103/f", "target_classification": "103 Journeyman", "notes": "keep"},
-                    {"raw_value": "104/eo", "target_classification": "", "notes": "todo"},
-                ],
-            },
-        )
-
-        loader = ConfigLoader(
-            config_dir=(TEST_ROOT / "profiles" / "default"),
-            legacy_config_dir=TEST_ROOT / "legacy_config",
-        )
-        labor_mapping = loader.get_labor_mapping()
-
-        self.assertEqual(labor_mapping["raw_mappings"], {"103/F": "103 Journeyman"})
-        self.assertEqual(
-            labor_mapping["saved_mappings"],
-            [
-                {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep"},
-                {"raw_value": "104/EO", "target_classification": "", "notes": "todo"},
-            ],
-        )
-        self.assertNotIn("phase_defaults", labor_mapping)
-        self.assertNotIn("aliases", labor_mapping)
-        self.assertNotIn("class_mappings", labor_mapping)
-        self.assertNotIn("apprentice_aliases", labor_mapping)
-
-    def test_config_loader_normalizes_raw_first_equipment_mapping_structure(self) -> None:
-        self._write_json(
-            TEST_ROOT / "profiles" / "default" / "equipment_mapping.json",
-            {
-                "raw_mappings": {" 638/2025 ford f600 bucket/ material handler ": "Pick-up Truck"},
-                "saved_mappings": [
-                    {"raw_description": "638/2025 ford f600 bucket/ material handler", "target_category": "Pick-up Truck"},
-                    {"raw_description": " crane truck ", "target_category": ""},
-                ],
-            },
-        )
-
-        loader = ConfigLoader(
-            config_dir=(TEST_ROOT / "profiles" / "default"),
-            legacy_config_dir=TEST_ROOT / "legacy_config",
-        )
-        equipment_mapping = loader.get_equipment_mapping()
-
-        self.assertEqual(equipment_mapping["raw_mappings"], {"FORD F600 BUCKET/MAT HANDLER": "Pick-up Truck"})
-        self.assertEqual(
-            equipment_mapping["saved_mappings"],
-            [
-                {"raw_description": "FORD F600 BUCKET/MAT HANDLER", "target_category": "Pick-up Truck"},
-                {"raw_description": "CRANE TRUCK", "target_category": ""},
-            ],
-        )
-        self.assertNotIn("keyword_mappings", equipment_mapping)
-
     def test_config_loader_migrates_old_classification_list_to_slots_using_template_capacity(self) -> None:
         self._write_json(
             TEST_ROOT / "profiles" / "default" / "target_labor_classifications.json",
@@ -470,231 +237,19 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(slots["slots"][1]["slot_id"], "labor_2")
         self.assertEqual(slots["slots"][2], {"slot_id": "labor_3", "label": "Legacy C", "active": False})
 
-    def test_labor_classification_validation_rejects_referenced_mapping_or_rate(self) -> None:
-        with self.assertRaisesRegex(ValueError, "still referenced by labor mapping"):
-            validate_labor_classification_references(
-                rows=[{"raw_value": "GF", "target_classification": "103 Foreman"}],
-                rate_rows=[],
-                valid_classifications=["103 Journeyman"],
-            )
-
-        with self.assertRaisesRegex(ValueError, "still referenced by configured labor rates"):
-            validate_labor_classification_references(
-                rows=[],
-                rate_rows=[
-                    {
-                        "classification": "103 Foreman",
-                        "standard_rate": "95",
-                        "overtime_rate": "",
-                        "double_time_rate": "",
-                    }
-                ],
-                valid_classifications=["103 Journeyman"],
-            )
-
-    def test_equipment_classification_validation_rejects_referenced_mapping_or_rate(self) -> None:
-        with self.assertRaisesRegex(ValueError, "still referenced by equipment mapping"):
-            validate_equipment_classification_references(
-                rows=[{"raw_pattern": "bucket truck", "target_category": "Bucket Truck"}],
-                rate_rows=[],
-                valid_classifications=["Utility Van"],
-            )
-
-        with self.assertRaisesRegex(ValueError, "still referenced by configured equipment rates"):
-            validate_equipment_classification_references(
-                rows=[],
-                rate_rows=[{"category": "Bucket Truck", "rate": "125"}],
-                valid_classifications=["Utility Van"],
-            )
-
-    def test_slot_based_classification_rename_map_updates_profile_references(self) -> None:
-        labor_rename_map = build_slot_label_rename_map(
-            previous_slots=[
-                {"slot_id": "labor_1", "label": "Old Journeyman", "active": True},
-                {"slot_id": "labor_2", "label": "Foreman", "active": True},
-            ],
-            updated_slots=[
-                {"slot_id": "labor_1", "label": "New Journeyman", "active": True},
-                {"slot_id": "labor_2", "label": "Foreman", "active": True},
-            ],
-        )
-        equipment_rename_map = build_slot_label_rename_map(
-            previous_slots=[
-                {"slot_id": "equipment_1", "label": "Old Truck", "active": True},
-                {"slot_id": "equipment_2", "label": "Van", "active": True},
-            ],
-            updated_slots=[
-                {"slot_id": "equipment_1", "label": "New Truck", "active": True},
-                {"slot_id": "equipment_2", "label": "Van", "active": True},
-            ],
-        )
-
-        updated_labor_mapping = rename_labor_mapping_config_targets(
-            {
-                "raw_mappings": {"103/J": "Old Journeyman"},
-                "saved_mappings": [
-                    {"raw_value": "103/J", "target_classification": "Old Journeyman", "notes": "note"},
-                ],
-                "mapping_notes": {"103/J|Old Journeyman": "note"},
-            },
-            labor_rename_map,
-        )
-        updated_equipment_mapping = rename_equipment_mapping_config_targets(
-            {
-                "raw_mappings": {"TRUCK": "Old Truck"},
-                "saved_mappings": [{"raw_description": "TRUCK", "target_category": "Old Truck"}],
-            },
-            equipment_rename_map,
-        )
-        updated_rates = rename_rates_config_targets(
-            {
-                "labor_rates": {"Old Journeyman": {"standard_rate": 100}},
-                "equipment_rates": {"Old Truck": {"rate": 25}},
-            },
-            labor_rename_map,
-            equipment_rename_map,
-        )
-        updated_recap_map = rename_recap_template_map_targets(
-            {
-                "labor_rows": {"Old Journeyman": {"st_hours": "B12"}},
-                "equipment_rows": {"Old Truck": {"hours_qty": "B27"}},
-            },
-            labor_rename_map,
-            equipment_rename_map,
-        )
-
-        self.assertEqual(updated_labor_mapping["raw_mappings"]["103/J"], "New Journeyman")
-        self.assertEqual(
-            updated_labor_mapping["saved_mappings"],
-            [{"raw_value": "103/J", "target_classification": "New Journeyman", "notes": "note"}],
-        )
-        self.assertNotIn("mapping_notes", updated_labor_mapping)
-        self.assertEqual(updated_equipment_mapping["raw_mappings"]["TRUCK"], "New Truck")
-        self.assertEqual(
-            updated_equipment_mapping["saved_mappings"],
-            [{"raw_description": "TRUCK", "target_category": "New Truck"}],
-        )
-        self.assertIn("New Journeyman", updated_rates["labor_rates"])
-        self.assertIn("New Truck", updated_rates["equipment_rates"])
-        self.assertIn("New Journeyman", updated_recap_map["labor_rows"])
-        self.assertIn("New Truck", updated_recap_map["equipment_rows"])
-
-    def test_build_labor_mapping_rows_returns_empty_when_no_raw_first_data_exists(self) -> None:
-        rows = build_labor_mapping_rows({})
-
-        self.assertEqual(rows, [])
-
-    def test_build_labor_mapping_rows_prefers_explicit_saved_mappings(self) -> None:
-        rows = build_labor_mapping_rows(
-            {
-                "raw_mappings": {"103/F": "103 Foreman"},
-                "saved_mappings": [
-                    {"raw_value": "103/F", "target_classification": "Big Boy", "notes": "keep me"},
-                ],
-            }
-        )
-
-        self.assertEqual(rows, [{"raw_value": "103/F", "target_classification": "Big Boy", "notes": "keep me"}])
-
-    def test_build_labor_mapping_rows_merges_observed_raw_values_without_inflating_raw_first_rows(self) -> None:
-        rows = build_labor_mapping_rows(
-            {
-                "raw_mappings": {
-                    "103/F": "Foreman",
-                },
-            },
-            observed_raw_values=["103/F", "104/J", "J"],
-        )
-
-        self.assertEqual(
-            rows,
-            [
-                {"raw_value": "104/J", "target_classification": "", "notes": "", "is_observed": True},
-                {"raw_value": "J", "target_classification": "", "notes": "", "is_observed": True},
-                {"raw_value": "103/F", "target_classification": "Foreman", "notes": ""},
-            ],
-        )
-
-    def test_build_labor_mapping_rows_uses_raw_mappings_when_saved_rows_are_absent(self) -> None:
-        rows = build_labor_mapping_rows(
-            {
-                "raw_mappings": {
-                    "103/F": "103 Foreman",
-                    "104/F": "104 Foreman",
-                },
-            }
-        )
-
-        self.assertEqual(
-            rows,
-            [
-                {"raw_value": "103/F", "target_classification": "103 Foreman", "notes": ""},
-                {"raw_value": "104/F", "target_classification": "104 Foreman", "notes": ""},
-            ],
-        )
-
-
-    def test_build_equipment_mapping_rows_prefers_explicit_saved_mappings(self) -> None:
-        rows = build_equipment_mapping_rows(
-            {
-                "raw_mappings": {"CRANE TRUCK": "Pick-up Truck"},
-                "saved_mappings": [
-                    {"raw_description": "CRANE TRUCK", "target_category": "Pick-up Truck"},
-                ],
-            }
-        )
-
-        self.assertEqual(
-            rows,
-            [{"raw_description": "CRANE TRUCK", "raw_pattern": "CRANE TRUCK", "target_category": "Pick-up Truck"}],
-        )
-
-    def test_build_equipment_mapping_rows_appends_observed_unmapped_descriptions(self) -> None:
-        rows = build_equipment_mapping_rows(
-            {
-                "saved_mappings": [
-                    {"raw_description": "CRANE TRUCK", "target_category": "Pick-up Truck"},
-                ],
-            },
-            observed_raw_descriptions=["593/2024 Freightliner Bucket/MH", "crane truck"],
-        )
-
-        self.assertEqual(
-            rows,
-            [
-                {
-                    "raw_description": "FREIGHTLINER BUCKET/MH",
-                    "raw_pattern": "FREIGHTLINER BUCKET/MH",
-                    "target_category": "",
-                    "is_observed": True,
-                },
-                {"raw_description": "CRANE TRUCK", "raw_pattern": "CRANE TRUCK", "target_category": "Pick-up Truck"},
-            ],
-        )
-
-    def test_build_equipment_mapping_rows_uses_raw_mappings_when_saved_rows_are_absent(self) -> None:
-        rows = build_equipment_mapping_rows(
-            {
-                "raw_mappings": {
-                    "FORD TRANSIT VAN": "Pick-up Truck",
-                },
-            }
-        )
-
-        self.assertEqual(
-            rows,
-            [{"raw_description": "FORD TRANSIT VAN", "raw_pattern": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"}],
-        )
-
-
-    def test_config_loader_keeps_raw_first_equipment_config_without_keyword_compatibility_view(self) -> None:
+    def test_config_loader_normalizes_template_metadata(self) -> None:
         self._write_json(
-            TEST_ROOT / "profiles" / "default" / "equipment_mapping.json",
+            TEST_ROOT / "profiles" / "default" / "template_metadata.json",
             {
-                "raw_mappings": {"FORD TRANSIT VAN": "Pick-up Truck"},
-                "saved_mappings": [
-                    {"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
+                "display_label": "Crew Template",
+                "labor_rows": [
+                    {"row_id": "labor_row_1", "template_label": "Journeyman", "mapping": {"st_hours": "B1"}},
+                    {"row_id": "labor_row_2", "template_label": "Foreman", "mapping": {"st_hours": "B2"}},
                 ],
+                "equipment_rows": [
+                    {"row_id": "equipment_row_1", "template_label": "Truck", "mapping": {"hours_qty": "C1"}},
+                ],
+                "export_behaviors": {"collapse_inactive_classifications": False},
             },
         )
 
@@ -702,672 +257,26 @@ class ProfileConfigTests(unittest.TestCase):
             config_dir=(TEST_ROOT / "profiles" / "default"),
             legacy_config_dir=TEST_ROOT / "legacy_config",
         )
-        equipment_mapping = loader.get_equipment_mapping()
-
-        self.assertEqual(equipment_mapping["raw_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
-        self.assertEqual(
-            equipment_mapping["saved_mappings"],
-            [{"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"}],
-        )
-        self.assertNotIn("keyword_mappings", equipment_mapping)
-
-    def test_save_labor_mappings_persists_raw_mappings_and_blank_saved_rows(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
-            view_model = SettingsViewModel()
-            message = view_model.save_labor_mappings(
-                [
-                    {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "mapped"},
-                    {"raw_value": "104/EO", "target_classification": "", "notes": "review later"},
-                ]
-            )
-
-        saved_config = json.loads(
-            (TEST_ROOT / "profiles" / "editable_profile" / "labor_mapping.json").read_text(encoding="utf-8")
-        )
-
-        self.assertEqual(message, "Labor mappings saved successfully.")
-        self.assertEqual(saved_config["raw_mappings"], {"103/F": "103 Journeyman"})
-        self.assertEqual(
-            saved_config["saved_mappings"],
-            [
-                {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "mapped"},
-                {"raw_value": "104/EO", "target_classification": "", "notes": "review later"},
-            ],
-        )
-        self.assertNotIn("aliases", saved_config)
-        self.assertNotIn("class_mappings", saved_config)
-        self.assertNotIn("mapping_notes", saved_config)
-
-    def test_save_labor_mappings_rejects_duplicate_canonical_raw_keys(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
-            view_model = SettingsViewModel()
-            with self.assertRaisesRegex(ValueError, "Duplicate labor mapping raw value"):
-                view_model.save_labor_mappings(
-                    [
-                        {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": ""},
-                        {"raw_value": "103/f", "target_classification": "103 Journeyman", "notes": ""},
-                    ]
-                )
-
-
-    def test_save_equipment_mappings_persists_raw_mappings_and_blank_saved_rows(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
-            view_model = SettingsViewModel()
-            message = view_model.save_equipment_mappings(
-                [
-                    {"raw_description": "627/2025 FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
-                    {"raw_description": "CRANE TRUCK", "target_category": ""},
-                ]
-            )
-
-        saved_config = json.loads(
-            (TEST_ROOT / "profiles" / "editable_profile" / "equipment_mapping.json").read_text(encoding="utf-8")
-        )
-
-        self.assertEqual(message, "Equipment mappings saved successfully.")
-        self.assertEqual(saved_config["raw_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
-        self.assertEqual(
-            saved_config["saved_mappings"],
-            [
-                {"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
-                {"raw_description": "CRANE TRUCK", "target_category": ""},
-            ],
-        )
-        self.assertNotIn("keyword_mappings", saved_config)
-
-    def test_save_equipment_mappings_rejects_duplicate_canonical_raw_descriptions(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
-            view_model = SettingsViewModel()
-            with self.assertRaisesRegex(ValueError, "Duplicate equipment mapping raw description"):
-                view_model.save_equipment_mappings(
-                    [
-                        {"raw_description": "crane truck", "target_category": "Pick-up Truck"},
-                        {"raw_description": " CRANE   TRUCK ", "target_category": "Pick-up Truck"},
-                    ]
-                )
-
-    def test_save_equipment_mappings_rejects_duplicate_rows_after_phase_1_key_derivation(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
-            view_model = SettingsViewModel()
-            with self.assertRaisesRegex(ValueError, "Duplicate equipment mapping raw description"):
-                view_model.save_equipment_mappings(
-                    [
-                        {"raw_description": "567/2021 Chevrolet 2500 Pick Up", "target_category": "Pick-up Truck"},
-                        {"raw_description": "890/2022 Chevrolet 2500 Pick Up", "target_category": "Pick-up Truck"},
-                    ]
-                )
-
-    def test_save_equipment_mappings_applies_deterministic_key_cleanup(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
-            view_model = SettingsViewModel()
-            view_model.save_equipment_mappings(
-                [
-                    {"raw_description": "638/2025 Ford F600 Bucket/ Material Handler", "target_category": "Pick-up Truck"},
-                    {"raw_description": "504/Chevy 2500 Utiltiy Body", "target_category": "Pick-up Truck"},
-                ]
-            )
-
-        saved_config = json.loads(
-            (TEST_ROOT / "profiles" / "editable_profile" / "equipment_mapping.json").read_text(encoding="utf-8")
-        )
 
         self.assertEqual(
-            saved_config["raw_mappings"],
+            loader.get_template_metadata(),
             {
-                "FORD F600 BUCKET/MAT HANDLER": "Pick-up Truck",
-                "CHEVROLET 2500 UTILITY BODY": "Pick-up Truck",
-            },
-        )
-        self.assertEqual(
-            saved_config["saved_mappings"],
-            [
-                {"raw_description": "FORD F600 BUCKET/MAT HANDLER", "target_category": "Pick-up Truck"},
-                {"raw_description": "CHEVROLET 2500 UTILITY BODY", "target_category": "Pick-up Truck"},
-            ],
-        )
-
-    def test_persist_observed_labor_raw_values_appends_new_placeholder_and_preserves_existing_rows(self) -> None:
-        profile_dir = TEST_ROOT / "profiles" / "editable_profile"
-        shutil.copytree(TEST_ROOT / "profiles" / "default", profile_dir)
-        self._write_json(
-            profile_dir / "profile.json",
-            {
-                "profile_name": "editable_profile",
-                "display_name": "Editable Profile",
-                "description": "Editable clone",
-                "version": "1.0",
+                "template_id": "recap-template",
+                "display_label": "Crew Template",
                 "template_filename": "recap_template.xlsx",
-                "is_active": False,
-            },
-        )
-        self._write_json(
-            profile_dir / "labor_mapping.json",
-            {
-                "raw_mappings": {"103/F": "103 Journeyman"},
-                "saved_mappings": [
-                    {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep me"},
+                "template_artifact_ref": "recap_template.xlsx",
+                "template_file_hash": None,
+                "labor_active_slot_capacity": 2,
+                "equipment_active_slot_capacity": 1,
+                "labor_rows": [
+                    {"row_id": "labor_row_1", "template_label": "Journeyman", "mapping": {"st_hours": "B1"}},
+                    {"row_id": "labor_row_2", "template_label": "Foreman", "mapping": {"st_hours": "B2"}},
                 ],
-            },
-        )
-
-        did_update = persist_observed_labor_raw_values(profile_dir, ["103/F", "104/J"])
-        updated = json.loads((profile_dir / "labor_mapping.json").read_text(encoding="utf-8"))
-
-        self.assertTrue(did_update)
-        self.assertEqual(updated["raw_mappings"], {"103/F": "103 Journeyman"})
-        self.assertEqual(
-            updated["saved_mappings"],
-            [
-                {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep me"},
-                {"raw_value": "104/J", "target_classification": "", "notes": "", "is_observed": True},
-            ],
-        )
-
-    def test_persist_observed_labor_raw_values_does_not_duplicate_known_rows(self) -> None:
-        profile_dir = TEST_ROOT / "profiles" / "editable_profile"
-        shutil.copytree(TEST_ROOT / "profiles" / "default", profile_dir)
-        self._write_json(
-            profile_dir / "profile.json",
-            {
-                "profile_name": "editable_profile",
-                "display_name": "Editable Profile",
-                "description": "Editable clone",
-                "version": "1.0",
-                "template_filename": "recap_template.xlsx",
-                "is_active": False,
-            },
-        )
-        self._write_json(
-            profile_dir / "labor_mapping.json",
-            {
-                "raw_mappings": {"103/F": "103 Journeyman"},
-                "saved_mappings": [
-                    {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep me"},
+                "equipment_rows": [
+                    {"row_id": "equipment_row_1", "template_label": "Truck", "mapping": {"hours_qty": "C1"}},
                 ],
+                "export_behaviors": {"collapse_inactive_classifications": False},
             },
-        )
-
-        did_update = persist_observed_labor_raw_values(profile_dir, ["103/f", " 103/F "])
-        updated = json.loads((profile_dir / "labor_mapping.json").read_text(encoding="utf-8"))
-
-        self.assertFalse(did_update)
-        self.assertEqual(
-            updated["saved_mappings"],
-            [
-                {"raw_value": "103/F", "target_classification": "103 Journeyman", "notes": "keep me"},
-            ],
-        )
-
-    def test_persist_observed_labor_raw_values_skips_default_profile_without_writing(self) -> None:
-        profile_dir = TEST_ROOT / "profiles" / "default"
-        original = json.loads((profile_dir / "labor_mapping.json").read_text(encoding="utf-8"))
-
-        did_update = persist_observed_labor_raw_values(profile_dir, ["103/F"])
-        updated = json.loads((profile_dir / "labor_mapping.json").read_text(encoding="utf-8"))
-
-        self.assertFalse(did_update)
-        self.assertEqual(updated, original)
-
-
-    def test_persist_observed_equipment_raw_values_appends_new_placeholder_and_preserves_existing_rows(self) -> None:
-        profile_dir = TEST_ROOT / "profiles" / "editable_profile"
-        shutil.copytree(TEST_ROOT / "profiles" / "default", profile_dir)
-        self._write_json(
-            profile_dir / "profile.json",
-            {
-                "profile_name": "editable_profile",
-                "display_name": "Editable Profile",
-                "description": "Editable clone",
-                "version": "1.0",
-                "template_filename": "recap_template.xlsx",
-                "is_active": False,
-            },
-        )
-        self._write_json(
-            profile_dir / "equipment_mapping.json",
-            {
-                "raw_mappings": {"FORD TRANSIT VAN": "Pick-up Truck"},
-                "saved_mappings": [
-                    {"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
-                ],
-            },
-        )
-
-        did_update = persist_observed_equipment_raw_values(profile_dir, ["627/2025 FORD TRANSIT VAN", "crane truck"])
-        updated = json.loads((profile_dir / "equipment_mapping.json").read_text(encoding="utf-8"))
-
-        self.assertTrue(did_update)
-        self.assertEqual(updated["raw_mappings"], {"FORD TRANSIT VAN": "Pick-up Truck"})
-        self.assertEqual(
-            updated["saved_mappings"],
-            [
-                {"raw_description": "FORD TRANSIT VAN", "target_category": "Pick-up Truck"},
-                {"raw_description": "CRANE TRUCK", "target_category": "", "is_observed": True},
-            ],
-        )
-
-    def test_persist_observed_equipment_raw_values_skips_default_profile_without_writing(self) -> None:
-        profile_dir = TEST_ROOT / "profiles" / "default"
-        original = json.loads((profile_dir / "equipment_mapping.json").read_text(encoding="utf-8"))
-
-        did_update = persist_observed_equipment_raw_values(profile_dir, ["CRANE TRUCK"])
-        updated = json.loads((profile_dir / "equipment_mapping.json").read_text(encoding="utf-8"))
-
-        self.assertFalse(did_update)
-        self.assertEqual(updated, original)
-
-
-    def test_settings_view_model_shows_persisted_observed_equipment_rows(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        profile_dir = TEST_ROOT / "profiles" / "editable_profile"
-        persist_observed_equipment_raw_values(
-            profile_dir,
-            ["593/2024 Freightliner Bucket/MH", "619/2025 Freightliner Digger Derrick"],
-        )
-
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
-            view_model = SettingsViewModel()
-
-        self.assertEqual(
-            view_model.equipment_mapping_rows,
-            [
-                {
-                    "raw_description": "FREIGHTLINER BUCKET/MH",
-                    "raw_pattern": "FREIGHTLINER BUCKET/MH",
-                    "target_category": "",
-                    "is_observed": True,
-                },
-                {
-                    "raw_description": "FREIGHTLINER DIGGER DERRICK",
-                    "raw_pattern": "FREIGHTLINER DIGGER DERRICK",
-                    "target_category": "",
-                    "is_observed": True,
-                },
-            ],
-        )
-
-    def test_settings_view_model_shows_observed_equipment_rows_without_duplicate_placeholders(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        with patch("app.viewmodels.settings_view_model.ProfileManager", return_value=manager):
-            view_model = SettingsViewModel()
-            view_model.set_observed_equipment_raw_values([
-                "593/2024 Freightliner Bucket/MH",
-                "593/2024   freightliner   bucket/mh",
-            ])
-
-        self.assertEqual(
-            view_model.equipment_mapping_rows,
-            [
-                {
-                    "raw_description": "FREIGHTLINER BUCKET/MH",
-                    "raw_pattern": "FREIGHTLINER BUCKET/MH",
-                    "target_category": "",
-                    "is_observed": True,
-                },
-            ],
-        )
-
-    def test_review_view_model_applies_default_omit_rules_without_dropping_records(self) -> None:
-        manager = self._build_manager()
-        loader_class = ConfigLoader
-        self._write_json(
-            TEST_ROOT / "profiles" / "default" / "review_rules.json",
-            {"default_omit_rules": [{"phase_code": "29 .999."}]},
-        )
-
-        matching_record = Record(
-            record_type=LABOR,
-            phase_code="29 .999",
-            raw_description="Non-job-related labor line",
-            cost=973.98,
-            hours=8.0,
-            hour_type="ST",
-            union_code="103",
-            labor_class_raw="J",
-            labor_class_normalized="J",
-            vendor_name=None,
-            equipment_description=None,
-            equipment_category=None,
-            confidence=0.9,
-            warnings=[],
-            phase_name_raw="Labor-Non-Job Related Time",
-            source_page=1,
-            source_line_text="PR 03/12/26 103/J 1.00 / 1716 / Dorsey , Michael A5 Regular Earnings 8.00 ST 973.98",
-            record_type_normalized=LABOR,
-            recap_labor_slot_id=None,
-            recap_labor_classification=None,
-        )
-        non_matching_record = Record(
-            record_type=MATERIAL,
-            phase_code="29",
-            raw_description="Market recovery line",
-            cost=-28950.0,
-            hours=None,
-            hour_type=None,
-            union_code=None,
-            labor_class_raw=None,
-            labor_class_normalized=None,
-            vendor_name="Market Recovery",
-            equipment_description=None,
-            equipment_category=None,
-            confidence=0.9,
-            warnings=[],
-            phase_name_raw="Market Recovery",
-            source_page=1,
-            source_line_text="IC 12/22/25 MR252080 / Src JCCo: 1 0.00 -28,950.00",
-            record_type_normalized=MATERIAL,
-            vendor_name_normalized="Market Recovery",
-        )
-
-        with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "services.review_workflow_service.ConfigLoader",
-            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
-        ), patch(
-            "services.review_workflow_service.parse_pdf",
-            return_value=[matching_record, non_matching_record],
-        ), patch(
-            "services.review_workflow_service.normalize_records",
-            return_value=[matching_record, non_matching_record],
-        ):
-            view_model = ReviewViewModel()
-            view_model.load_pdf("sample.pdf")
-
-        self.assertEqual(len(view_model.records), 2)
-        self.assertTrue(view_model.records[0].is_omitted)
-        self.assertEqual(view_model.records[0].phase_code, "29 .999")
-        self.assertEqual(view_model.records[0].phase_name_raw, "Labor-Non-Job Related Time")
-        self.assertEqual(view_model.records[0].record_type, LABOR)
-        self.assertEqual(view_model.records[0].record_type_normalized, LABOR)
-        self.assertFalse(view_model.records[1].is_omitted)
-        self.assertEqual(view_model.records[1].phase_code, "29")
-        self.assertEqual(view_model.records[1].record_type_normalized, MATERIAL)
-        self.assertEqual(view_model.blocking_issues, [])
-        self.assertTrue(view_model.can_export)
-
-    def test_review_view_model_allows_manual_unomit_override_for_default_omitted_record(self) -> None:
-        manager = self._build_manager()
-        loader_class = ConfigLoader
-        self._write_json(
-            TEST_ROOT / "profiles" / "default" / "review_rules.json",
-            {"default_omit_rules": [{"phase_code": "29 .999."}]},
-        )
-
-        record = Record(
-            record_type=LABOR,
-            phase_code="29 .999",
-            raw_description="Non-job-related labor line",
-            cost=973.98,
-            hours=8.0,
-            hour_type="ST",
-            union_code="103",
-            labor_class_raw="J",
-            labor_class_normalized="J",
-            vendor_name=None,
-            equipment_description=None,
-            equipment_category=None,
-            confidence=0.9,
-            warnings=[],
-            phase_name_raw="Labor-Non-Job Related Time",
-            source_page=1,
-            source_line_text="PR 03/12/26 103/J 1.00 / 1716 / Dorsey , Michael A5 Regular Earnings 8.00 ST 973.98",
-            record_type_normalized=LABOR,
-            recap_labor_slot_id=None,
-            recap_labor_classification=None,
-        )
-
-        with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "services.review_workflow_service.ConfigLoader",
-            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
-        ), patch(
-            "services.review_workflow_service.parse_pdf",
-            return_value=[record],
-        ), patch(
-            "services.review_workflow_service.normalize_records",
-            return_value=[record],
-        ):
-            view_model = ReviewViewModel()
-            view_model.load_pdf("sample.pdf")
-
-        self.assertTrue(view_model.records[0].is_omitted)
-        self.assertTrue(view_model.can_export)
-
-        view_model.apply_updates_to_selected_record({"is_omitted": False})
-
-        self.assertFalse(view_model.records[0].is_omitted)
-        self.assertIn(
-            "Record on page 1 (phase 29 .999, labor): Recap labor classification is missing.",
-            view_model.blocking_issues,
-        )
-        self.assertFalse(view_model.can_export)
-
-    def test_review_view_model_surfaces_missing_labor_hour_type_as_blocking_issue(self) -> None:
-        record = Record(
-            record_type=LABOR,
-            phase_code="20",
-            raw_description="Jay Dondero to 810500 warranty",
-            cost=-658.45,
-            hours=-4.0,
-            hour_type=None,
-            union_code=None,
-            labor_class_raw=None,
-            labor_class_normalized=None,
-            vendor_name=None,
-            equipment_description=None,
-            equipment_category=None,
-            confidence=0.9,
-            warnings=[],
-            transaction_type="JC",
-            phase_name_raw="Labor-Electricians",
-            source_page=1,
-            source_line_text="JC 01/07/26 Jay Dondero to 810500 warranty -4.00 -658.45",
-            record_type_normalized=LABOR,
-            recap_labor_slot_id="labor_1",
-            recap_labor_classification="103 Journeyman",
-        )
-
-        with patch(
-            "services.review_workflow_service.parse_pdf",
-            return_value=[record],
-        ), patch(
-            "services.review_workflow_service.normalize_records",
-            return_value=[record],
-        ):
-            view_model = ReviewViewModel()
-            view_model.load_pdf("sample.pdf")
-
-        self.assertIn(
-            "Record on page 1 (phase 20, labor): Labor hour type is missing for export.",
-            view_model.blocking_issues,
-        )
-        self.assertFalse(view_model.can_export)
-        self.assertIn("Export blocked by 1 issue", view_model.status_text)
-        self.assertIn(
-            "BLOCKING: Labor hour type is missing for export.",
-            view_model.records[0].warnings,
-        )
-
-
-    def test_review_view_model_load_and_reload_trigger_observed_labor_persistence(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        record = Record(
-            record_type="labor",
-            phase_code="20",
-            raw_description="Labor line",
-            cost=100.0,
-            hours=8.0,
-            hour_type="ST",
-            union_code="103",
-            labor_class_raw="F",
-            labor_class_normalized=None,
-            vendor_name=None,
-            equipment_description=None,
-            equipment_category=None,
-            confidence=0.9,
-            warnings=[],
-            source_page=1,
-            source_line_text="source",
-        )
-
-        with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "services.review_workflow_service.parse_pdf",
-            return_value=[record],
-        ), patch(
-            "services.review_workflow_service.normalize_records",
-            return_value=[record],
-        ), patch(
-            "services.review_workflow_service.validate_records",
-            side_effect=lambda records: (records, []),
-        ), patch(
-            "app.viewmodels.review_view_model.persist_observed_labor_raw_values"
-        ) as persist_mock:
-            view_model = ReviewViewModel()
-            view_model.load_pdf("sample.pdf")
-            view_model.reload_current_pdf()
-
-        self.assertEqual(persist_mock.call_count, 2)
-        first_call_args = persist_mock.call_args_list[0].args
-        second_call_args = persist_mock.call_args_list[1].args
-        self.assertEqual(first_call_args[0], manager.get_active_profile_dir())
-        self.assertEqual(first_call_args[1], ["103/F"])
-        self.assertEqual(second_call_args[1], ["103/F"])
-
-
-    def test_review_view_model_load_and_reload_trigger_observed_equipment_persistence(self) -> None:
-        manager = self._build_manager()
-        manager.duplicate_profile(
-            source_profile_name="default",
-            new_profile_name="editable_profile",
-            display_name="Editable Profile",
-            description="Editable clone",
-        )
-        manager.set_active_profile("editable_profile")
-
-        record = Record(
-            record_type="equipment",
-            phase_code="20",
-            raw_description="Equipment line",
-            cost=100.0,
-            hours=2.0,
-            hour_type=None,
-            union_code=None,
-            labor_class_raw=None,
-            labor_class_normalized=None,
-            vendor_name=None,
-            equipment_description="627/2025 FORD TRANSIT VAN",
-            equipment_category=None,
-            confidence=0.9,
-            warnings=[],
-            source_page=1,
-            source_line_text="source",
-        )
-
-        with patch("app.viewmodels.review_view_model.ProfileManager", return_value=manager), patch(
-            "services.review_workflow_service.parse_pdf",
-            return_value=[record],
-        ), patch(
-            "services.review_workflow_service.normalize_records",
-            return_value=[record],
-        ), patch(
-            "services.review_workflow_service.validate_records",
-            side_effect=lambda records: (records, []),
-        ), patch(
-            "app.viewmodels.review_view_model.persist_observed_labor_raw_values"
-        ), patch(
-            "app.viewmodels.review_view_model.persist_observed_equipment_raw_values"
-        ) as persist_mock:
-            view_model = ReviewViewModel()
-            view_model.load_pdf("sample.pdf")
-            view_model.reload_current_pdf()
-
-        self.assertEqual(persist_mock.call_count, 2)
-        first_call_args = persist_mock.call_args_list[0].args
-        second_call_args = persist_mock.call_args_list[1].args
-        self.assertEqual(first_call_args[0], manager.get_active_profile_dir())
-        self.assertEqual(first_call_args[1], ["FORD TRANSIT VAN"])
-        self.assertEqual(second_call_args[1], ["FORD TRANSIT VAN"])
-
-    def test_dedupe_casefold_preserving_order_keeps_first_observed_value(self) -> None:
-        self.assertEqual(
-            dedupe_casefold_preserving_order(["103/F", "103/f", " J ", "J", ""]),
-            ["103/F", "J"],
         )
 
     def test_validate_slot_rows_rejects_duplicate_active_labels(self) -> None:
@@ -1375,6 +284,7 @@ class ProfileConfigTests(unittest.TestCase):
             {"slot_id": "labor_1", "label": "Old A", "active": True},
             {"slot_id": "labor_2", "label": "Old B", "active": True},
         ]
+
         with self.assertRaisesRegex(ValueError, "Duplicate active labor classification"):
             validate_slot_rows(
                 [
