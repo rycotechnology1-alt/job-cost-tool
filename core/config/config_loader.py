@@ -73,14 +73,17 @@ class ConfigLoader:
         *,
         legacy_config_dir: Path | None = None,
     ) -> None:
-        """Initialize the loader using an explicit config dir or the active profile."""
+        """Initialize the loader using an explicit config dir or the bundled default profile."""
         context_override = self._explicit_context.get()
         if config_dir is not None:
             self._config_dir = config_dir.resolve()
         elif context_override is not None:
             self._config_dir = context_override[0]
         else:
-            self._config_dir = ProfileManager().get_active_profile_dir()
+            default_profile_dir = ProfileManager().get_profile_dir("default")
+            if default_profile_dir is None:
+                raise FileNotFoundError("Bundled default profile is missing.")
+            self._config_dir = default_profile_dir
         if legacy_config_dir is not None:
             self._legacy_config_dir = legacy_config_dir.resolve()
         elif context_override is not None:
@@ -251,15 +254,20 @@ class ConfigLoader:
         return "default"
 
     def get_profile_metadata(self) -> JsonDict:
-        """Return metadata describing the active profile."""
+        """Return metadata describing the current config bundle."""
         profile_file = self._config_dir / "profile.json"
         if profile_file.is_file():
             metadata = self._load_profile_metadata_file(profile_file)
             metadata["profile_dir"] = str(self._config_dir)
-            metadata["is_active_profile"] = self._config_dir == ProfileManager().get_active_profile_dir()
             return {str(key): value for key, value in metadata.items()}
-        metadata = ProfileManager().get_active_profile_metadata()
-        return {str(key): value for key, value in metadata.items()}
+        return {
+            "profile_name": self.get_active_profile_name(),
+            "display_name": "Default Profile",
+            "description": "",
+            "version": "",
+            "template_filename": None,
+            "profile_dir": str(self._config_dir),
+        }
 
     def get_template_path(self) -> Path:
         """Return the recap template path for the active profile."""

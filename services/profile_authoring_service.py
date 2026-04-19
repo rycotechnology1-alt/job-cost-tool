@@ -1370,7 +1370,6 @@ class ProfileAuthoringService:
         """Load the shared phase catalog used for default-omit editing."""
         try:
             loader = ConfigLoader(
-                config_dir=self._profile_manager.get_active_profile_dir(),
                 legacy_config_dir=self._get_legacy_config_dir(),
             )
             phase_catalog = loader.get_phase_catalog()

@@ -16,6 +16,7 @@ from services.profile_authoring_errors import ProfileAuthoringPersistenceConflic
 from services.profile_execution_compatibility_adapter import ProfileExecutionCompatibilityAdapter
 from services.profile_authoring_service import ProfileAuthoringService
 from services.processing_run_service import ProcessingRunService
+from services.request_context import LOCAL_REQUEST_CONTEXT
 from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
 from services.trusted_profile_provisioning_service import TrustedProfileProvisioningService
 
@@ -30,8 +31,8 @@ class ProcessingRunServiceTests(unittest.TestCase):
         ConfigLoader.clear_runtime_caches()
         shutil.rmtree(TEST_ROOT, ignore_errors=True)
         (TEST_ROOT / "profiles" / "default").mkdir(parents=True, exist_ok=True)
-        (TEST_ROOT / "legacy_config").mkdir(parents=True, exist_ok=True)
-        self.settings_path = TEST_ROOT / "app_settings.json"
+        (TEST_ROOT / "config").mkdir(parents=True, exist_ok=True)
+        self.settings_path = TEST_ROOT / "config" / "app_settings.json"
         self.source_document_path = TEST_ROOT / "sample_report.pdf"
         self.source_document_path.write_bytes(b"sample pdf bytes")
         self.created_at = datetime(2026, 4, 5, 12, 0, tzinfo=timezone.utc)
@@ -43,15 +44,20 @@ class ProcessingRunServiceTests(unittest.TestCase):
             version="1.0",
             labor_target="Default Journeyman",
         )
-        self._write_json(self.settings_path, {"active_profile": "default"})
-        self._write_json(TEST_ROOT / "legacy_config" / "phase_catalog.json", {"phases": []})
+        self._write_json(TEST_ROOT / "config" / "phase_catalog.json", {"phases": []})
 
         self.profile_manager = ProfileManager(
             profiles_root=TEST_ROOT / "profiles",
-            settings_path=self.settings_path,
-            legacy_config_root=TEST_ROOT / "legacy_config",
+            legacy_config_root=TEST_ROOT / "config",
         )
         self.lineage_store = SqliteLineageStore()
+        self.lineage_store.ensure_organization(
+            organization_id="org-default",
+            slug="default-org",
+            display_name="Default Organization",
+            created_at=self.created_at,
+            is_seeded=True,
+        )
         self.repository = TrustedProfileAuthoringRepository(
             lineage_store=self.lineage_store,
             now_provider=lambda: self.created_at,
@@ -73,6 +79,7 @@ class ProcessingRunServiceTests(unittest.TestCase):
             profile_manager=self.profile_manager,
             now_provider=lambda: self.created_at,
         )
+        self.provisioning_service = self.trusted_profile_provisioning_service
 
     def tearDown(self) -> None:
         self.lineage_store.close()
@@ -88,6 +95,7 @@ class ProcessingRunServiceTests(unittest.TestCase):
             version="2.0",
             labor_target="Selected Journeyman",
         )
+        self.provisioning_service.bootstrap_filesystem_profiles()
         service = self._build_service()
         parsed_record = self._make_labor_record(raw_description="Selected profile labor line")
 
@@ -135,6 +143,7 @@ class ProcessingRunServiceTests(unittest.TestCase):
             version="9.9",
             labor_target="Default Journeyman",
         )
+        self.provisioning_service.bootstrap_filesystem_profiles()
         service = self._build_service()
 
         default_org, default_profile, default_snapshot = service.resolve_trusted_profile_snapshot()
@@ -218,6 +227,18 @@ class ProcessingRunServiceTests(unittest.TestCase):
             result.processing_run.trusted_profile_version_id,
             initial_result[2].trusted_profile_version_id,
         )
+
+    def test_resolve_current_published_profile_ignores_desktop_active_profile_settings(self) -> None:
+        (TEST_ROOT / "config" / "app_settings.json").write_text('{"active_profile":"alternate"}', encoding="utf-8")
+
+        self.provisioning_service.ensure_organization_default_profile(organization_id="org-default")
+
+        resolved = self.provisioning_service.resolve_current_published_profile(
+            profile_name=None,
+            request_context=LOCAL_REQUEST_CONTEXT,
+        )
+
+        self.assertEqual(resolved.trusted_profile.profile_name, "default")
 
     def test_processing_run_captures_unmapped_labor_observation_without_changing_run_snapshot(self) -> None:
         service = self._build_service()

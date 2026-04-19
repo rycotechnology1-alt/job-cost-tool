@@ -18,7 +18,7 @@ class ProfileConfigTests(unittest.TestCase):
     """Verify the remaining shared profile and config behavior after desktop removal."""
 
     def setUp(self) -> None:
-        ConfigLoader._shared_cache.clear()
+        ConfigLoader.clear_runtime_caches()
         shutil.rmtree(TEST_ROOT, ignore_errors=True)
         (TEST_ROOT / "profiles" / "default").mkdir(parents=True, exist_ok=True)
         (TEST_ROOT / "legacy_config").mkdir(parents=True, exist_ok=True)
@@ -71,16 +71,17 @@ class ProfileConfigTests(unittest.TestCase):
             },
         )
         (TEST_ROOT / "profiles" / "default" / "recap_template.xlsx").write_bytes(b"template")
+        self._write_json(TEST_ROOT / "legacy_config" / "phase_catalog.json", {"phases": []})
 
     def tearDown(self) -> None:
         shutil.rmtree(TEST_ROOT, ignore_errors=True)
+        ConfigLoader.clear_runtime_caches()
 
     def test_profile_manager_discovers_profile_and_metadata(self) -> None:
-        with patch("core.config.profile_manager.get_app_settings_path", return_value=TEST_ROOT / "missing_app_settings.json"):
-            manager = ProfileManager(
-                profiles_root=TEST_ROOT / "profiles",
-                legacy_config_root=TEST_ROOT / "legacy_config",
-            )
+        manager = ProfileManager(
+            profiles_root=TEST_ROOT / "profiles",
+            legacy_config_root=TEST_ROOT / "legacy_config",
+        )
 
         profiles = manager.list_profiles()
 
@@ -90,6 +91,19 @@ class ProfileConfigTests(unittest.TestCase):
         self.assertEqual(profiles[0]["description"], "Test profile")
         self.assertEqual(profiles[0]["template_filename"], "recap_template.xlsx")
         self.assertEqual(manager.get_profile_dir("default"), (TEST_ROOT / "profiles" / "default").resolve())
+
+    def test_config_loader_defaults_to_bundled_default_profile_without_app_settings(self) -> None:
+        with patch("core.config.profile_manager.get_profiles_root", return_value=TEST_ROOT / "profiles"), patch(
+            "core.config.profile_manager.get_legacy_config_root",
+            return_value=TEST_ROOT / "legacy_config",
+        ), patch(
+            "core.config.config_loader.get_legacy_config_root",
+            return_value=TEST_ROOT / "legacy_config",
+        ):
+            loader = ConfigLoader()
+
+        self.assertEqual(loader.get_profile_metadata()["profile_name"], "default")
+        self.assertEqual(loader.get_template_path(), (TEST_ROOT / "profiles" / "default" / "recap_template.xlsx").resolve())
 
     def test_config_loader_reads_required_and_optional_profile_configs(self) -> None:
         loader = ConfigLoader(

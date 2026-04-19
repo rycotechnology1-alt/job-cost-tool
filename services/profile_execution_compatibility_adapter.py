@@ -9,7 +9,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Iterator
 
-from core.config import ProfileManager
 from core.models.lineage import ProfileSnapshot, TemplateArtifact, TrustedProfileVersion
 from infrastructure.persistence import LineageStore
 
@@ -30,10 +29,10 @@ class ProfileExecutionCompatibilityAdapter:
         self,
         *,
         lineage_store: LineageStore,
-        profile_manager: ProfileManager | None = None,
+        profile_manager: object | None = None,
     ) -> None:
         self._lineage_store = lineage_store
-        self._profile_manager = profile_manager or ProfileManager()
+        self._profile_manager = profile_manager
 
     @contextmanager
     def materialize_published_version_bundle(
@@ -53,14 +52,6 @@ class ProfileExecutionCompatibilityAdapter:
                 template_file_hash=trusted_profile_version.template_file_hash,
                 require_template_artifact=require_template_artifact,
             )
-            shared_legacy_dir = self._get_shared_legacy_config_dir()
-            if shared_legacy_dir is not None:
-                yield MaterializedProfileExecutionBundle(
-                    config_dir=config_dir,
-                    legacy_config_dir=shared_legacy_dir,
-                    template_path=template_path,
-                )
-                return
             with self._temporary_legacy_config_dir() as legacy_config_dir:
                 yield MaterializedProfileExecutionBundle(
                     config_dir=config_dir,
@@ -184,9 +175,3 @@ class ProfileExecutionCompatibilityAdapter:
                 return None
             current = current.get(key)
         return current
-
-    def _get_shared_legacy_config_dir(self) -> Path | None:
-        legacy_config_dir = getattr(self._profile_manager, "_legacy_config_root", None)
-        if isinstance(legacy_config_dir, Path) and legacy_config_dir.exists():
-            return legacy_config_dir
-        return None

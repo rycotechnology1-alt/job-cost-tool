@@ -18,8 +18,3 @@ def get_profiles_root() -> Path:
 def get_legacy_config_root() -> Path:
     """Return the legacy shared config directory used before profiles."""
     return get_project_root() / "config"
-
-
-def get_app_settings_path() -> Path:
-    """Return the app settings file path."""
-    return get_legacy_config_root() / "app_settings.json"

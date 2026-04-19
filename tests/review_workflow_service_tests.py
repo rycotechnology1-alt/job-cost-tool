@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.config import ConfigLoader, ProfileManager
+from core.config import ConfigLoader
 from core.models.record import EQUIPMENT, LABOR, MATERIAL, Record
 from services.review_workflow_service import load_edit_options, load_review_data, update_review_record
 
@@ -20,11 +20,10 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
     """Verify review workflow orchestration without Qt view-model dependencies."""
 
     def setUp(self) -> None:
-        ConfigLoader._shared_cache.clear()
+        ConfigLoader.clear_runtime_caches()
         shutil.rmtree(TEST_ROOT, ignore_errors=True)
         (TEST_ROOT / "profiles" / "default").mkdir(parents=True, exist_ok=True)
         (TEST_ROOT / "legacy_config").mkdir(parents=True, exist_ok=True)
-        self.settings_path = TEST_ROOT / "app_settings.json"
 
         self._write_json(
             TEST_ROOT / "profiles" / "default" / "profile.json",
@@ -78,14 +77,13 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
             },
         )
         (TEST_ROOT / "profiles" / "default" / "recap_template.xlsx").write_bytes(b"template")
-        self._write_json(self.settings_path, {"active_profile": "default"})
+        self._write_json(TEST_ROOT / "legacy_config" / "phase_catalog.json", {"phases": []})
 
     def tearDown(self) -> None:
         shutil.rmtree(TEST_ROOT, ignore_errors=True)
+        ConfigLoader.clear_runtime_caches()
 
     def test_load_review_data_applies_default_omit_rules_without_dropping_records(self) -> None:
-        manager = self._build_manager()
-        loader_class = ConfigLoader
         self._write_json(
             TEST_ROOT / "profiles" / "default" / "review_rules.json",
             {"default_omit_rules": [{"phase_code": "29 .999."}]},
@@ -137,7 +135,7 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
 
         with patch(
             "services.review_workflow_service.ConfigLoader",
-            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
+            side_effect=lambda *args, **kwargs: self._build_loader(),
         ), patch(
             "services.review_workflow_service.parse_pdf",
             return_value=[matching_record, non_matching_record],
@@ -154,9 +152,6 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
         self.assertEqual(result.status_text, "Processed 2 records from sample.pdf. Ready for review.")
 
     def test_update_review_record_surfaces_blocking_issue_when_manual_unomit_removes_default_omit(self) -> None:
-        manager = self._build_manager()
-        loader_class = ConfigLoader
-
         record = Record(
             record_type=LABOR,
             phase_code="29 .999",
@@ -183,7 +178,7 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
 
         with patch(
             "services.review_workflow_service.ConfigLoader",
-            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
+            side_effect=lambda *args, **kwargs: self._build_loader(),
         ):
             result = update_review_record([record], 0, {"is_omitted": False}, file_path="sample.pdf")
 
@@ -201,9 +196,6 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
         )
 
     def test_update_review_record_resolves_slot_ids_for_classification_edits(self) -> None:
-        manager = self._build_manager()
-        loader_class = ConfigLoader
-
         record = Record(
             record_type=LABOR,
             phase_code="20",
@@ -229,7 +221,7 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
 
         with patch(
             "services.review_workflow_service.ConfigLoader",
-            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
+            side_effect=lambda *args, **kwargs: self._build_loader(),
         ), patch(
             "services.review_workflow_service.validate_records",
             side_effect=lambda records: (records, []),
@@ -248,9 +240,6 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
         self.assertEqual(result.review_records[0].recap_labor_slot_id, "labor_1")
 
     def test_update_review_record_rejects_unknown_labor_classification(self) -> None:
-        manager = self._build_manager()
-        loader_class = ConfigLoader
-
         record = Record(
             record_type=LABOR,
             phase_code="20",
@@ -276,7 +265,7 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
 
         with patch(
             "services.review_workflow_service.ConfigLoader",
-            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
+            side_effect=lambda *args, **kwargs: self._build_loader(),
         ):
             with self.assertRaisesRegex(ValueError, "Labor classification 'Not Allowed' is not allowed for this review."):
                 update_review_record(
@@ -287,9 +276,6 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
                 )
 
     def test_update_review_record_rejects_unknown_equipment_classification(self) -> None:
-        manager = self._build_manager()
-        loader_class = ConfigLoader
-
         record = Record(
             record_type=EQUIPMENT,
             phase_code="20",
@@ -314,7 +300,7 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
 
         with patch(
             "services.review_workflow_service.ConfigLoader",
-            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
+            side_effect=lambda *args, **kwargs: self._build_loader(),
         ):
             with self.assertRaisesRegex(ValueError, "Equipment classification 'Not Allowed' is not allowed for this review."):
                 update_review_record(
@@ -325,23 +311,19 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
                 )
 
     def test_load_edit_options_returns_profile_defined_choices(self) -> None:
-        manager = self._build_manager()
-        loader_class = ConfigLoader
-
         with patch(
             "services.review_workflow_service.ConfigLoader",
-            side_effect=lambda *args, **kwargs: loader_class(config_dir=manager.get_active_profile_dir()),
+            side_effect=lambda *args, **kwargs: self._build_loader(),
         ):
             labor_options, equipment_options = load_edit_options()
 
         self.assertEqual(labor_options, ["103 Journeyman"])
         self.assertEqual(equipment_options, ["Pick-up Truck"])
 
-    def _build_manager(self) -> ProfileManager:
-        return ProfileManager(
-            profiles_root=TEST_ROOT / "profiles",
-            settings_path=self.settings_path,
-            legacy_config_root=TEST_ROOT / "legacy_config",
+    def _build_loader(self) -> ConfigLoader:
+        return ConfigLoader(
+            config_dir=TEST_ROOT / "profiles" / "default",
+            legacy_config_dir=TEST_ROOT / "legacy_config",
         )
 
     def _write_json(self, path: Path, payload: object) -> None:
