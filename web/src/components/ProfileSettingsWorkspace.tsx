@@ -1517,7 +1517,7 @@ export function ProfileSettingsWorkspace({
             </div>
             <p className="muted">
               {selectedTrustedProfile?.source_kind !== "published_clone"
-                ? "Default and filesystem-backed profiles stay managed through the existing desktop/filesystem path."
+                ? "Bundled default profiles stay read-only in hosted settings. Create a web-owned profile when you need organization-specific changes."
                 : openDraftId
                   ? "Save or discard the unpublished profile changes before archiving this profile."
                   : "Archiving hides the profile from active selectors but preserves its versions, runs, and review lineage history."}

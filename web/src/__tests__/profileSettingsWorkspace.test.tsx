@@ -1261,9 +1261,19 @@ describe("Profile settings workspace", () => {
     expect(screen.queryByText("default__v1.zip")).not.toBeInTheDocument();
   });
 
-  it("does not offer any desktop sync action in the hosted profile settings flow", async () => {
+  it("uses hosted-only guidance for seeded profiles and does not surface desktop sync affordances", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock();
     render(<App />);
 
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+
+    expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/bundled default profiles stay read-only in hosted settings/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/desktop\/filesystem path/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /desktop sync/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/manual desktop sync/i)).not.toBeInTheDocument();
   });
