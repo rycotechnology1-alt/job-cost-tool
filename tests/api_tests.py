@@ -1287,7 +1287,7 @@ class Phase1ApiTests(unittest.TestCase):
         shared_blob_client = FakeBlobObjectClient()
         shared_blob_client.put_bytes(
             pathname="uploads/upload-1/report.pdf",
-            content_bytes=b"sample pdf bytes",
+            content_bytes=b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF",
             content_type="application/pdf",
         )
         hosted_client = self._create_multi_instance_client(
@@ -1320,6 +1320,47 @@ class Phase1ApiTests(unittest.TestCase):
             self.assertEqual(run_response.status_code, 201)
         finally:
             hosted_client.close()
+
+    def test_blob_upload_registration_rejects_non_pdf_blob_content(self) -> None:
+        shared_blob_client = FakeBlobObjectClient()
+        shared_blob_client.put_bytes(
+            pathname="uploads/upload-1/report.pdf",
+            content_bytes=b"not a pdf",
+            content_type="application/pdf",
+        )
+        hosted_client = self._create_multi_instance_client(
+            runtime_root=TEST_ROOT / "blob-instance-invalid-upload",
+            blob_client=shared_blob_client,
+        )
+        try:
+            response = hosted_client.post(
+                "/api/source-documents/blob-uploads",
+                json={
+                    "storage_ref": "uploads/upload-1/report.pdf",
+                    "original_filename": "report.pdf",
+                    "content_type": "application/pdf",
+                    "file_size_bytes": 9,
+                },
+            )
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("PDF", response.json()["detail"])
+
+    def test_blob_upload_registration_returns_explicit_not_implemented_for_local_storage(self) -> None:
+        response = self.client.post(
+            "/api/source-documents/blob-uploads",
+            json={
+                "storage_ref": "uploads/upload-1/report.pdf",
+                "original_filename": "report.pdf",
+                "content_type": "application/pdf",
+                "file_size_bytes": 128,
+            },
+        )
+
+        self.assertEqual(response.status_code, 501)
+        self.assertIn("vercel_blob", response.json()["detail"])
 
     def _create_processing_run_via_api(
         self,
