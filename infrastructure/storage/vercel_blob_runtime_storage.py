@@ -212,14 +212,31 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
     ) -> StoredUpload:
         """Register one browser-uploaded source document already stored in shared blob storage."""
         normalized_storage_ref = self._normalize_storage_ref(storage_ref, expected_prefix="uploads/")
-        upload_id = Path(normalized_storage_ref).parts[1]
-        created_at = self._normalize_timestamp(self._now_provider())
         filename = self._normalize_filename(original_filename)
+        if Path(normalized_storage_ref).suffix.lower() != ".pdf":
+            raise ValueError("Blob upload registration only supports PDF files.")
+        if str(content_type or "").strip().lower() != "application/pdf":
+            raise ValueError("Blob upload registration only supports application/pdf content.")
+        if int(file_size_bytes) <= 0:
+            raise ValueError("Blob upload registration requires a positive file size.")
+
+        storage_ref_parts = Path(normalized_storage_ref).parts
+        if len(storage_ref_parts) < 3:
+            raise FileNotFoundError(f"Storage reference '{storage_ref}' was not found.")
+        if storage_ref_parts[-1] != filename:
+            raise ValueError("Blob upload registration filename must match the storage reference.")
+
+        content_bytes = self._blob_client.get_bytes(normalized_storage_ref)
+        if not self._is_pdf_bytes(content_bytes):
+            raise ValueError("Blob upload registration requires a real PDF payload.")
+
+        upload_id = storage_ref_parts[1]
+        created_at = self._normalize_timestamp(self._now_provider())
         metadata = {
             "upload_id": upload_id,
             "original_filename": filename,
-            "content_type": str(content_type or "application/octet-stream"),
-            "file_size_bytes": int(file_size_bytes),
+            "content_type": "application/pdf",
+            "file_size_bytes": len(content_bytes),
             "storage_ref": normalized_storage_ref,
             "filename": filename,
             "created_at": created_at.isoformat(),
@@ -233,7 +250,7 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             upload_id=upload_id,
             original_filename=filename,
             content_type=metadata["content_type"],
-            file_size_bytes=int(file_size_bytes),
+            file_size_bytes=len(content_bytes),
             storage_ref=normalized_storage_ref,
             file_path=self._upload_root / Path(normalized_storage_ref),
             created_at=created_at,
@@ -420,6 +437,9 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         if not normalized_storage_ref.startswith(expected_prefix.strip("/")):
             raise FileNotFoundError(f"Storage reference '{storage_ref}' was not found.")
         return normalized_storage_ref
+
+    def _is_pdf_bytes(self, content_bytes: bytes) -> bool:
+        return bool(content_bytes) and content_bytes.startswith(b"%PDF-")
 
     def _sanitize_identifier(self, raw_identifier: str, *, field_name: str) -> str:
         sanitized_identifier = str(raw_identifier).replace(":", "-").replace("/", "-").strip()

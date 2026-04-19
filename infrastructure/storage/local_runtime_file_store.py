@@ -107,6 +107,19 @@ class LocalRuntimeFileStore(RuntimeStorage):
             created_at=upload_created_at,
         )
 
+    def register_blob_upload(
+        self,
+        *,
+        storage_ref: str,
+        original_filename: str,
+        content_type: str,
+        file_size_bytes: int,
+    ) -> StoredUpload:
+        """Reject direct blob registration when the runtime uses local storage."""
+        raise NotImplementedError(
+            "Blob upload registration is only supported when storage_provider=vercel_blob."
+        )
+
     def cleanup_expired_uploads(self) -> int:
         """Delete expired uploaded source documents from the temporary runtime cache."""
         if self._upload_retention_hours <= 0:

@@ -11,6 +11,8 @@ from services.review_session_service import HistoricalExportUnavailableError
 
 def to_http_exception(exc: Exception) -> HTTPException:
     """Map a known service/storage exception to an API-appropriate HTTP error."""
+    if isinstance(exc, NotImplementedError):
+        return HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=_clean_message(exc))
     if isinstance(exc, HistoricalExportUnavailableError):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=_clean_message(exc))
     if isinstance(exc, ProfileAuthoringConflictError):

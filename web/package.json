@@ -9,7 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@vercel/blob": "^1.1.1",
+    "@vercel/blob": "^2.3.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
