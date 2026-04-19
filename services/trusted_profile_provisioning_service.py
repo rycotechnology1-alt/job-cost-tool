@@ -246,9 +246,13 @@ class TrustedProfileProvisioningService:
         *,
         request_context: RequestContext | None = None,
     ) -> str:
-        """Return the hosted default selected profile name."""
-        self._ensure_request_organization(request_context)
-        return self._resolve_selected_profile_name(None)
+        """Return the current hosted default trusted-profile name for this request context."""
+        organization = self._ensure_request_organization(request_context)
+        self._ensure_profiles_available(
+            organization=organization,
+            request_context=request_context,
+        )
+        return self._get_default_trusted_profile(organization).profile_name
 
     def ensure_organization_default_profile(
         self,

@@ -59,22 +59,27 @@ class Phase1ApiTests(unittest.TestCase):
 
         self.profile_manager = ProfileManager(
             profiles_root=TEST_ROOT / "profiles",
-            settings_path=self.settings_path,
             legacy_config_root=TEST_ROOT / "legacy_config",
         )
         self.lineage_store = SqliteLineageStore()
-        self.client = TestClient(
-            create_app(
-                lineage_store=self.lineage_store,
-                database_provider="sqlite",
-                profile_manager=self.profile_manager,
-                storage_provider="local",
-                upload_root=TEST_ROOT / "runtime" / "uploads",
-                export_root=TEST_ROOT / "runtime" / "exports",
-                upload_retention_hours=24,
-                engine_version="engine-1",
-                now_provider=lambda: self.current_time,
-            )
+        self.app = create_app(
+            lineage_store=self.lineage_store,
+            database_provider="sqlite",
+            profile_manager=self.profile_manager,
+            storage_provider="local",
+            upload_root=TEST_ROOT / "runtime" / "uploads",
+            export_root=TEST_ROOT / "runtime" / "exports",
+            upload_retention_hours=24,
+            engine_version="engine-1",
+            now_provider=lambda: self.current_time,
+        )
+        self.client = TestClient(self.app)
+        provisioning_service = self.app.state.runtime.trusted_profile_service._trusted_profile_provisioning_service
+        organization = provisioning_service._ensure_request_organization(None)
+        provisioning_service._bootstrap_new_filesystem_profile(
+            organization=organization,
+            profile_name="alternate",
+            metadata=self.profile_manager.get_profile_metadata("alternate"),
         )
 
     def tearDown(self) -> None:

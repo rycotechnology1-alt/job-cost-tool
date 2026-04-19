@@ -108,7 +108,6 @@ def run_web_api_path(case: ParityCase, runtime_root: Path) -> ParityRunSnapshot:
     settings_path.write_text(json.dumps({"active_profile": case.trusted_profile_name}, indent=2), encoding="utf-8")
     profile_manager = ProfileManager(
         profiles_root=runtime_root / "profiles",
-        settings_path=settings_path,
         legacy_config_root=legacy_config_dir,
     )
     lineage_store = SqliteLineageStore()
