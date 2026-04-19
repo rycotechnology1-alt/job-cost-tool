@@ -206,23 +206,11 @@ CREATE TABLE IF NOT EXISTS trusted_profile_observations (
     UNIQUE (trusted_profile_id, observation_domain, canonical_raw_key)
 );
 
-CREATE TABLE IF NOT EXISTS trusted_profile_sync_exports (
-    trusted_profile_sync_export_id TEXT PRIMARY KEY,
-    organization_id TEXT NOT NULL REFERENCES organizations (organization_id),
-    trusted_profile_version_id TEXT NOT NULL REFERENCES trusted_profile_versions (trusted_profile_version_id),
-    artifact_storage_ref TEXT NOT NULL,
-    artifact_file_hash TEXT,
-    manifest_json TEXT,
-    created_by_user_id TEXT REFERENCES users (user_id),
-    created_at TEXT NOT NULL
-);
-
 CREATE INDEX IF NOT EXISTS ix_trusted_profiles_org ON trusted_profiles (organization_id);
 CREATE INDEX IF NOT EXISTS ix_trusted_profile_versions_profile_version ON trusted_profile_versions (trusted_profile_id, version_number);
 CREATE INDEX IF NOT EXISTS ix_trusted_profile_versions_org_profile ON trusted_profile_versions (organization_id, trusted_profile_id);
 CREATE INDEX IF NOT EXISTS ix_trusted_profile_drafts_profile ON trusted_profile_drafts (trusted_profile_id);
 CREATE INDEX IF NOT EXISTS ix_trusted_profile_observations_profile_domain ON trusted_profile_observations (trusted_profile_id, observation_domain);
-CREATE INDEX IF NOT EXISTS ix_trusted_profile_sync_exports_version ON trusted_profile_sync_exports (trusted_profile_version_id);
 CREATE INDEX IF NOT EXISTS ix_template_artifacts_org ON template_artifacts (organization_id);
 CREATE INDEX IF NOT EXISTS ix_profile_snapshots_org ON profile_snapshots (organization_id);
 CREATE INDEX IF NOT EXISTS ix_source_documents_org ON source_documents (organization_id);
