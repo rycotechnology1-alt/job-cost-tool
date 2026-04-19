@@ -5,6 +5,7 @@ import type {
   ClassificationSlotRow,
   CreateTrustedProfileRequest,
   DefaultOmitRuleRow,
+  DraftSaveRequest,
   DraftEditorStateResponse,
   EquipmentMappingRow,
   EquipmentRateRow,
@@ -181,6 +182,16 @@ export async function discardProfileDraft(
   trustedProfileDraftId: string,
 ): Promise<void> {
   await apiRequest(`/api/profile-drafts/${trustedProfileDraftId}`, { method: "DELETE" });
+}
+
+export async function updateDraftState(
+  trustedProfileDraftId: string,
+  request: DraftSaveRequest,
+): Promise<DraftEditorStateResponse> {
+  return apiJson<DraftEditorStateResponse>(
+    `/api/profile-drafts/${trustedProfileDraftId}`,
+    buildJsonRequest(request, "PATCH"),
+  );
 }
 
 export function discardProfileDraftBestEffort(trustedProfileDraftId: string): void {

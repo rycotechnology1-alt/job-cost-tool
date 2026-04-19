@@ -7,6 +7,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from dotenv import load_dotenv
+
+
+def _resolve_repo_env_path() -> Path:
+    """Return the repo-root dotenv path used for local startup."""
+    return Path(__file__).resolve().parents[1] / ".env"
+
+
+def _load_repo_dotenv() -> None:
+    """Load repo-root dotenv values for local startup without overriding real env vars."""
+    env_path = _resolve_repo_env_path()
+    if env_path.is_file():
+        load_dotenv(env_path, override=False)
+
 
 @dataclass(frozen=True, slots=True)
 class ApiSettings:
@@ -29,7 +43,11 @@ class ApiSettings:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
         """Build phase-1 API settings from environment variables with hosted defaults."""
-        environ = os.environ if env is None else env
+        if env is None:
+            _load_repo_dotenv()
+            environ = os.environ
+        else:
+            environ = env
         runtime_root = Path(environ.get("JOB_COST_API_RUNTIME_ROOT", "/tmp/job-cost-api")).expanduser()
         database_provider = str(environ.get("JOB_COST_API_DATABASE_PROVIDER", "postgres")).strip().lower() or "postgres"
         database_path = environ.get("JOB_COST_API_DATABASE_PATH") or f"{runtime_root.as_posix()}/lineage.db"

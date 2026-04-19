@@ -212,6 +212,27 @@ function validateClassificationReferences(
   laborSlots: Array<{ label: string; active: boolean }>,
   equipmentSlots: Array<{ label: string; active: boolean }>,
 ): string | null {
+  function buildRenameMap(
+    previousSlots: Array<{ label: string; active: boolean }>,
+    nextSlots: Array<{ label: string; active: boolean }>,
+  ): Map<string, string> {
+    const renameMap = new Map<string, string>();
+    for (let index = 0; index < Math.min(previousSlots.length, nextSlots.length); index += 1) {
+      const previousLabel = previousSlots[index]?.label.trim() ?? "";
+      const nextLabel = nextSlots[index]?.label.trim() ?? "";
+      if (previousLabel && nextLabel && normalizeKey(previousLabel) !== normalizeKey(nextLabel)) {
+        renameMap.set(previousLabel, nextLabel);
+      }
+    }
+    return renameMap;
+  }
+
+  function renameValue(value: string, renameMap: Map<string, string>): string {
+    return renameMap.get(value.trim()) ?? value.trim();
+  }
+
+  const laborRenameMap = buildRenameMap(draftState.labor_slots, laborSlots);
+  const equipmentRenameMap = buildRenameMap(draftState.equipment_slots, equipmentSlots);
   const activeLaborLabels = new Set(
     laborSlots.map((slot) => (slot.active ? normalizeKey(slot.label) : "")).filter(Boolean),
   );
@@ -220,34 +241,57 @@ function validateClassificationReferences(
   );
 
   for (const row of draftState.labor_mappings) {
-    const target = row.target_classification.trim();
+    const target = renameValue(row.target_classification, laborRenameMap);
     if (target && !activeLaborLabels.has(normalizeKey(target))) {
       return `Labor classification '${target}' is still referenced by labor mapping '${row.raw_value}'. Update mappings first.`;
     }
   }
 
   for (const row of draftState.labor_rates) {
-    const classification = row.classification.trim();
+    const classification = renameValue(row.classification, laborRenameMap);
     if (classification && !activeLaborLabels.has(normalizeKey(classification)) && hasConfiguredLaborRate(row)) {
       return `Labor classification '${classification}' is still referenced by configured labor rates. Update rates first.`;
     }
   }
 
   for (const row of draftState.equipment_mappings) {
-    const target = row.target_category.trim();
+    const target = renameValue(row.target_category, equipmentRenameMap);
     if (target && !activeEquipmentLabels.has(normalizeKey(target))) {
       return `Equipment classification '${target}' is still referenced by equipment mapping '${row.raw_description}'. Update mappings first.`;
     }
   }
 
   for (const row of draftState.equipment_rates) {
-    const category = row.category.trim();
+    const category = renameValue(row.category, equipmentRenameMap);
     if (category && !activeEquipmentLabels.has(normalizeKey(category)) && hasConfiguredEquipmentRate(row)) {
       return `Equipment classification '${category}' is still referenced by configured equipment rates. Update rates first.`;
     }
   }
 
   return null;
+}
+
+function applyAtomicDraftSave(
+  draftState: ReturnType<typeof buildDraftState>,
+  payload: {
+    default_omit_rules: ReturnType<typeof buildDraftState>["default_omit_rules"];
+    labor_mappings: ReturnType<typeof buildDraftState>["labor_mappings"];
+    equipment_mappings: ReturnType<typeof buildDraftState>["equipment_mappings"];
+    labor_slots: ReturnType<typeof buildDraftState>["labor_slots"];
+    equipment_slots: ReturnType<typeof buildDraftState>["equipment_slots"];
+    labor_rates: ReturnType<typeof buildDraftState>["labor_rates"];
+    equipment_rates: ReturnType<typeof buildDraftState>["equipment_rates"];
+    export_settings: ReturnType<typeof buildDraftState>["export_settings"];
+  },
+) {
+  draftState.default_omit_rules = payload.default_omit_rules;
+  draftState.labor_mappings = payload.labor_mappings;
+  draftState.equipment_mappings = payload.equipment_mappings;
+  draftState.labor_slots = payload.labor_slots;
+  draftState.equipment_slots = payload.equipment_slots;
+  draftState.labor_rates = payload.labor_rates;
+  draftState.equipment_rates = payload.equipment_rates;
+  draftState.export_settings = payload.export_settings;
 }
 
 function installSettingsFetchMock(options?: {
@@ -360,6 +404,52 @@ function installSettingsFetchMock(options?: {
     if (url === "/api/profile-drafts/draft-1" && method === "DELETE") {
       state.publishedDetail.open_draft_id = null;
       return new Response(null, { status: 204 });
+    }
+
+    if (url === "/api/profile-drafts/draft-1" && method === "PATCH") {
+      const payload = parseJsonBody<{
+        expected_draft_revision?: number;
+        default_omit_rules: ReturnType<typeof buildDraftState>["default_omit_rules"];
+        labor_mappings: ReturnType<typeof buildDraftState>["labor_mappings"];
+        equipment_mappings: ReturnType<typeof buildDraftState>["equipment_mappings"];
+        labor_slots: ReturnType<typeof buildDraftState>["labor_slots"];
+        equipment_slots: ReturnType<typeof buildDraftState>["equipment_slots"];
+        labor_rates: ReturnType<typeof buildDraftState>["labor_rates"];
+        equipment_rates: ReturnType<typeof buildDraftState>["equipment_rates"];
+        export_settings: ReturnType<typeof buildDraftState>["export_settings"];
+      }>();
+      const revisionError = requireExpectedDraftRevision(payload);
+      if (revisionError) {
+        return revisionError;
+      }
+      const nextDraftState = {
+        ...clone(state.draftState),
+        default_omit_rules: payload.default_omit_rules,
+        labor_mappings: payload.labor_mappings,
+        equipment_mappings: payload.equipment_mappings,
+        labor_rates: payload.labor_rates,
+        equipment_rates: payload.equipment_rates,
+        export_settings: payload.export_settings,
+      };
+      if (options?.enforceClassificationReferenceValidation) {
+        const validationError = validateClassificationReferences(
+          nextDraftState,
+          payload.labor_slots,
+          payload.equipment_slots,
+        );
+        if (validationError) {
+          return new Response(JSON.stringify({ detail: validationError }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+      applyAtomicDraftSave(state.draftState, payload);
+      advanceDraftRevision();
+      return new Response(JSON.stringify(state.draftState), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     if (url === "/api/profile-drafts/draft-1/default-omit" && method === "PATCH") {
@@ -633,6 +723,17 @@ function installSecondProfileCreationFetchMock(options?: {
       return new Response(null, { status: 204 });
     }
 
+    if (url === "/api/profile-drafts/draft-default" && method === "PATCH") {
+      const payload = JSON.parse(String(init?.body));
+      applyAtomicDraftSave(state.defaultDraft, payload);
+      state.defaultDraft.draft_revision += 1;
+      state.defaultDraft.draft_content_hash = `draft-default-hash-v${state.defaultDraft.draft_revision}`;
+      return new Response(JSON.stringify(state.defaultDraft), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     if (url === "/api/profile-drafts/draft-default/default-omit" && method === "PATCH") {
       const payload = JSON.parse(String(init?.body));
       state.defaultDraft.default_omit_rules = payload.default_omit_rules;
@@ -695,6 +796,17 @@ function installSecondProfileCreationFetchMock(options?: {
     if (url === "/api/profile-drafts/draft-field-team" && method === "DELETE") {
       state.secondDetail.open_draft_id = null;
       return new Response(null, { status: 204 });
+    }
+
+    if (url === "/api/profile-drafts/draft-field-team" && method === "PATCH") {
+      const payload = JSON.parse(String(init?.body));
+      applyAtomicDraftSave(state.secondDraft, payload);
+      state.secondDraft.draft_revision += 1;
+      state.secondDraft.draft_content_hash = `draft-field-team-hash-v${state.secondDraft.draft_revision}`;
+      return new Response(JSON.stringify(state.secondDraft), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     if (url === "/api/profile-drafts/draft-field-team/default-omit" && method === "PATCH") {
@@ -865,11 +977,12 @@ describe("Profile settings workspace", () => {
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:default" && (!init || !init.method || init.method === "GET"))).toBe(true);
     expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:default/draft" && init?.method === "POST")).toBe(true);
-    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/default-omit" && init?.method === "PATCH")).toBe(true);
-    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH")).toBe(true);
-    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/equipment-mappings" && init?.method === "PATCH")).toBe(true);
-    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/classifications" && init?.method === "PATCH")).toBe(true);
-    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/rates" && init?.method === "PATCH")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "PATCH")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/default-omit" && init?.method === "PATCH")).toBe(false);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH")).toBe(false);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/equipment-mappings" && init?.method === "PATCH")).toBe(false);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/classifications" && init?.method === "PATCH")).toBe(false);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/rates" && init?.method === "PATCH")).toBe(false);
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/publish" && init?.method === "POST")).toBe(true);
     expect(
       fetchCalls.filter(
@@ -983,19 +1096,14 @@ describe("Profile settings workspace", () => {
     });
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
-    const ratesCallIndex = fetchCalls.findIndex(
-      ([url, init]) => url === "/api/profile-drafts/draft-1/rates" && init?.method === "PATCH",
-    );
-    const classificationsCallIndex = fetchCalls.findIndex(
-      ([url, init]) => url === "/api/profile-drafts/draft-1/classifications" && init?.method === "PATCH",
+    const saveCallIndex = fetchCalls.findIndex(
+      ([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "PATCH",
     );
 
-    expect(ratesCallIndex).toBeGreaterThanOrEqual(0);
-    expect(classificationsCallIndex).toBeGreaterThanOrEqual(0);
-    expect(ratesCallIndex).toBeLessThan(classificationsCallIndex);
+    expect(saveCallIndex).toBeGreaterThanOrEqual(0);
 
-    const ratesPayload = JSON.parse(String(fetchCalls[ratesCallIndex]?.[1]?.body));
-    expect(ratesPayload.labor_rates).toEqual([
+    const savePayload = JSON.parse(String(fetchCalls[saveCallIndex]?.[1]?.body));
+    expect(savePayload.labor_rates).toEqual([
       {
         classification: "Journeyman",
         standard_rate: "45",
@@ -1028,19 +1136,14 @@ describe("Profile settings workspace", () => {
     });
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
-    const ratesCallIndex = fetchCalls.findIndex(
-      ([url, init]) => url === "/api/profile-drafts/draft-1/rates" && init?.method === "PATCH",
-    );
-    const classificationsCallIndex = fetchCalls.findIndex(
-      ([url, init]) => url === "/api/profile-drafts/draft-1/classifications" && init?.method === "PATCH",
+    const saveCallIndex = fetchCalls.findIndex(
+      ([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "PATCH",
     );
 
-    expect(ratesCallIndex).toBeGreaterThanOrEqual(0);
-    expect(classificationsCallIndex).toBeGreaterThanOrEqual(0);
-    expect(ratesCallIndex).toBeLessThan(classificationsCallIndex);
+    expect(saveCallIndex).toBeGreaterThanOrEqual(0);
 
-    const ratesPayload = JSON.parse(String(fetchCalls[ratesCallIndex]?.[1]?.body));
-    expect(ratesPayload.equipment_rates).toEqual([
+    const savePayload = JSON.parse(String(fetchCalls[saveCallIndex]?.[1]?.body));
+    expect(savePayload.equipment_rates).toEqual([
       {
         category: "Excavator",
         rate: "125",
@@ -1074,13 +1177,146 @@ describe("Profile settings workspace", () => {
     ).toBe(true);
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
-    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH")).toBe(
-      false,
-    );
-    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/rates" && init?.method === "PATCH")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH")).toBe(false);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "PATCH")).toBe(true);
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/publish" && init?.method === "POST")).toBe(
       false,
     );
+  });
+
+  it("saves renamed labor classifications before dependent labor mappings", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock({ enforceClassificationReferenceValidation: true });
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Labor Mappings");
+
+    await user.selectOptions(screen.getByLabelText(/labor target classification 2/i), "Foreman");
+    await user.clear(screen.getByLabelText(/labor classification label 2/i));
+    await user.type(screen.getByLabelText(/labor classification label 2/i), "Big Boy");
+    await user.selectOptions(screen.getByLabelText(/labor target classification 2/i), "Big Boy");
+
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/saved profile settings and published live version v2 for default profile/i)).toBeInTheDocument();
+    });
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    const saveCallIndex = fetchCalls.findIndex(
+      ([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "PATCH",
+    );
+
+    expect(saveCallIndex).toBeGreaterThanOrEqual(0);
+    expect(
+      fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/classifications" && init?.method === "PATCH"),
+    ).toBe(false);
+    expect(
+      fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH"),
+    ).toBe(false);
+    expect(screen.queryByText(/references unknown target classification 'big boy'/i)).not.toBeInTheDocument();
+  });
+
+  it("saves labor deactivation and remap in one atomic draft save", async () => {
+    const user = userEvent.setup();
+    const state = installSettingsFetchMock({ enforceClassificationReferenceValidation: true });
+    state.draftState.labor_mappings = [
+      {
+        raw_value: "103/J",
+        target_classification: "Journeyman",
+        notes: "Baseline row",
+        is_observed: false,
+      },
+    ];
+    state.draftState.labor_rates = [
+      {
+        classification: "Journeyman",
+        standard_rate: "45",
+        overtime_rate: "67.5",
+        double_time_rate: "90",
+      },
+      {
+        classification: "Foreman",
+        standard_rate: "55",
+        overtime_rate: "82.5",
+        double_time_rate: "110",
+      },
+    ];
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Labor Mappings");
+
+    await user.selectOptions(screen.getByLabelText(/labor target classification 1/i), "Foreman");
+
+    const journeymanRow = screen.getByLabelText(/labor classification label 1/i).closest("tr");
+    expect(journeymanRow).not.toBeNull();
+    await user.click(within(journeymanRow as HTMLTableRowElement).getByRole("checkbox"));
+
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/saved profile settings and published live version v2 for default profile/i)).toBeInTheDocument();
+    });
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "PATCH")).toBe(true);
+    expect(
+      fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/classifications" && init?.method === "PATCH"),
+    ).toBe(false);
+    expect(screen.queryByText(/still referenced by labor mapping/i)).not.toBeInTheDocument();
+  });
+
+  it("saves equipment deactivation and remap in one atomic draft save", async () => {
+    const user = userEvent.setup();
+    const state = installSettingsFetchMock({ enforceClassificationReferenceValidation: true });
+    state.draftState.equipment_mappings = [
+      {
+        raw_description: "CHEVROLET 6500 26FT BOX TRUCK (LOOPS)",
+        target_category: "Bucket Truck",
+        is_observed: false,
+      },
+    ];
+    state.draftState.equipment_rates = [
+      {
+        category: "Excavator",
+        rate: "125",
+      },
+      {
+        category: "Bucket Truck",
+        rate: "210",
+      },
+    ];
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Equipment Mappings");
+
+    await user.selectOptions(screen.getByLabelText(/equipment target category 1/i), "Excavator");
+
+    const bucketTruckRow = screen.getByLabelText(/equipment classification label 2/i).closest("tr");
+    expect(bucketTruckRow).not.toBeNull();
+    await user.click(within(bucketTruckRow as HTMLTableRowElement).getByRole("checkbox"));
+
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/saved profile settings and published live version v2 for default profile/i)).toBeInTheDocument();
+    });
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "PATCH")).toBe(true);
+    expect(
+      fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/classifications" && init?.method === "PATCH"),
+    ).toBe(false);
+    expect(screen.queryByText(/still referenced by equipment mapping/i)).not.toBeInTheDocument();
   });
 
   it("loads existing unpublished profile changes and shows save failure clearly", async () => {
@@ -1219,7 +1455,7 @@ describe("Profile settings workspace", () => {
     expect(await screen.findByLabelText(/labor raw value 2/i)).toHaveValue("SAVED-LABOR");
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
-    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/labor-mappings" && init?.method === "PATCH")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1" && init?.method === "PATCH")).toBe(true);
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-1/publish" && init?.method === "POST")).toBe(true);
   });
 
@@ -1312,7 +1548,7 @@ describe("Profile settings workspace", () => {
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profiles" && init?.method === "POST")).toBe(true);
     expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:field-team/draft" && init?.method === "POST")).toBe(true);
-    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/default-omit" && init?.method === "PATCH")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team" && init?.method === "PATCH")).toBe(true);
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/publish" && init?.method === "POST")).toBe(true);
   });
 
@@ -1406,7 +1642,7 @@ describe("Profile settings workspace", () => {
     expect(await screen.findByLabelText(/labor raw value 1/i)).toHaveValue("FIELD-LABOR");
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
-    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/labor-mappings" && init?.method === "PATCH")).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team" && init?.method === "PATCH")).toBe(true);
     expect(fetchCalls.some(([url, init]) => url === "/api/profile-drafts/draft-field-team/publish" && init?.method === "POST")).toBe(true);
   });
 

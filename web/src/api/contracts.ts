@@ -272,3 +272,15 @@ export interface DraftEditorStateResponse {
   deferred_domains: DeferredDomainsResponse;
   validation_errors: string[];
 }
+
+export interface DraftSaveRequest {
+  expected_draft_revision: number;
+  default_omit_rules: DefaultOmitRuleRow[];
+  labor_mappings: LaborMappingRow[];
+  equipment_mappings: EquipmentMappingRow[];
+  labor_slots: ClassificationSlotRow[];
+  equipment_slots: ClassificationSlotRow[];
+  labor_rates: LaborRateRow[];
+  equipment_rates: EquipmentRateRow[];
+  export_settings: ExportSettingsResponse;
+}

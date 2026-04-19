@@ -11,4 +11,5 @@ dependencies = [
   "uvicorn",
   "psycopg[binary]",
   "vercel",
+  "python-dotenv",
 ]

@@ -1040,6 +1040,486 @@ class Phase1ApiTests(unittest.TestCase):
         draft_detail_response = self.client.get(f"/api/profile-drafts/{draft_id}")
         self.assertEqual(draft_detail_response.status_code, 404)
 
+    def test_profile_draft_atomic_save_persists_renamed_classifications_and_remapped_labor_rows(self) -> None:
+        self._write_profile_bundle(
+            labor_classifications=["103 Journeyman", "103 Foreman"],
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "labor_mapping.json",
+            {
+                "raw_mappings": {"103/F": "103 Foreman"},
+                "saved_mappings": [
+                    {
+                        "raw_value": "103/F",
+                        "target_classification": "103 Foreman",
+                        "notes": "Baseline row",
+                    }
+                ],
+            },
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "rates.json",
+            {
+                "labor_rates": {
+                    "103 Journeyman": {"standard_rate": 45.0},
+                    "103 Foreman": {"standard_rate": 55.0},
+                },
+                "equipment_rates": {},
+            },
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "recap_template_map.json",
+            {
+                "worksheet_name": "Recap",
+                "header_fields": {
+                    "project": {"cell": "B6"},
+                    "job_number": {"cell": "H6"},
+                },
+                "labor_rows": {
+                    "103 Journeyman": {
+                        "st_hours": "B14",
+                        "ot_hours": "C14",
+                        "dt_hours": "D14",
+                        "st_rate": "E14",
+                        "ot_rate": "F14",
+                        "dt_rate": "G14",
+                    },
+                    "103 Foreman": {
+                        "st_hours": "B15",
+                        "ot_hours": "C15",
+                        "dt_hours": "D15",
+                        "st_rate": "E15",
+                        "ot_rate": "F15",
+                        "dt_rate": "G15",
+                    },
+                },
+                "equipment_rows": {"Pick-up Truck": {"hours_qty": "B32", "rate": "D32"}},
+                "materials_section": {
+                    "start_row": 27,
+                    "end_row": 41,
+                    "columns": {"name": "G", "amount": "H"},
+                },
+                "subcontractors_section": {
+                    "start_row": 46,
+                    "end_row": 50,
+                    "columns": {"name": "A", "amount": "C"},
+                },
+                "permits_fees_section": {
+                    "start_row": 55,
+                    "end_row": 56,
+                    "columns": {"description": "A", "amount": "C"},
+                },
+                "police_detail_section": {
+                    "start_row": 61,
+                    "end_row": 62,
+                    "columns": {"description": "A", "amount": "C"},
+                },
+                "sales_tax_area": {
+                    "rate_label_cell": "G60",
+                    "rate_input_cell": "H60",
+                    "amount_label_cell": "G61",
+                    "amount_formula_cell": "H61",
+                    "material_total_cell": "H54",
+                },
+            },
+        )
+
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_payload = draft_response.json()
+        draft_id = draft_payload["trusted_profile_draft_id"]
+
+        save_response = self.client.patch(
+            f"/api/profile-drafts/{draft_id}",
+            json={
+                "expected_draft_revision": draft_payload["draft_revision"],
+                "default_omit_rules": draft_payload["default_omit_rules"],
+                "labor_mappings": [
+                    {
+                        **draft_payload["labor_mappings"][0],
+                        "target_classification": "Big Boy",
+                    }
+                ],
+                "equipment_mappings": draft_payload["equipment_mappings"],
+                "labor_slots": [
+                    draft_payload["labor_slots"][0],
+                    {
+                        **draft_payload["labor_slots"][1],
+                        "label": "Big Boy",
+                    },
+                ],
+                "equipment_slots": draft_payload["equipment_slots"],
+                "labor_rates": draft_payload["labor_rates"],
+                "equipment_rates": draft_payload["equipment_rates"],
+                "export_settings": draft_payload["export_settings"],
+            },
+        )
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(save_response.json()["labor_slots"][1]["label"], "Big Boy")
+        self.assertEqual(save_response.json()["labor_mappings"][0]["target_classification"], "Big Boy")
+        self.assertEqual(save_response.json()["labor_rates"][1]["classification"], "Big Boy")
+
+    def test_profile_draft_atomic_save_allows_deactivation_after_labor_remap_in_one_request(self) -> None:
+        self._write_profile_bundle(
+            labor_classifications=["103 Journeyman", "103 Foreman"],
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "labor_mapping.json",
+            {
+                "raw_mappings": {"103/J": "103 Journeyman"},
+                "saved_mappings": [
+                    {
+                        "raw_value": "103/J",
+                        "target_classification": "103 Journeyman",
+                        "notes": "Baseline row",
+                    }
+                ],
+            },
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "rates.json",
+            {
+                "labor_rates": {
+                    "103 Journeyman": {"standard_rate": 45.0},
+                    "103 Foreman": {"standard_rate": 55.0},
+                },
+                "equipment_rates": {},
+            },
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "recap_template_map.json",
+            {
+                "worksheet_name": "Recap",
+                "header_fields": {
+                    "project": {"cell": "B6"},
+                    "job_number": {"cell": "H6"},
+                },
+                "labor_rows": {
+                    "103 Journeyman": {
+                        "st_hours": "B14",
+                        "ot_hours": "C14",
+                        "dt_hours": "D14",
+                        "st_rate": "E14",
+                        "ot_rate": "F14",
+                        "dt_rate": "G14",
+                    },
+                    "103 Foreman": {
+                        "st_hours": "B15",
+                        "ot_hours": "C15",
+                        "dt_hours": "D15",
+                        "st_rate": "E15",
+                        "ot_rate": "F15",
+                        "dt_rate": "G15",
+                    },
+                },
+                "equipment_rows": {"Pick-up Truck": {"hours_qty": "B32", "rate": "D32"}},
+                "materials_section": {
+                    "start_row": 27,
+                    "end_row": 41,
+                    "columns": {"name": "G", "amount": "H"},
+                },
+                "subcontractors_section": {
+                    "start_row": 46,
+                    "end_row": 50,
+                    "columns": {"name": "A", "amount": "C"},
+                },
+                "permits_fees_section": {
+                    "start_row": 55,
+                    "end_row": 56,
+                    "columns": {"description": "A", "amount": "C"},
+                },
+                "police_detail_section": {
+                    "start_row": 61,
+                    "end_row": 62,
+                    "columns": {"description": "A", "amount": "C"},
+                },
+                "sales_tax_area": {
+                    "rate_label_cell": "G60",
+                    "rate_input_cell": "H60",
+                    "amount_label_cell": "G61",
+                    "amount_formula_cell": "H61",
+                    "material_total_cell": "H54",
+                },
+            },
+        )
+
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_payload = draft_response.json()
+        draft_id = draft_payload["trusted_profile_draft_id"]
+
+        save_response = self.client.patch(
+            f"/api/profile-drafts/{draft_id}",
+            json={
+                "expected_draft_revision": draft_payload["draft_revision"],
+                "default_omit_rules": draft_payload["default_omit_rules"],
+                "labor_mappings": [
+                    {
+                        **draft_payload["labor_mappings"][0],
+                        "target_classification": "103 Foreman",
+                    }
+                ],
+                "equipment_mappings": draft_payload["equipment_mappings"],
+                "labor_slots": [
+                    {
+                        **draft_payload["labor_slots"][0],
+                        "active": False,
+                    },
+                    draft_payload["labor_slots"][1],
+                ],
+                "equipment_slots": draft_payload["equipment_slots"],
+                "labor_rates": [
+                    row
+                    for row in draft_payload["labor_rates"]
+                    if row["classification"] == "103 Foreman"
+                ],
+                "equipment_rates": draft_payload["equipment_rates"],
+                "export_settings": draft_payload["export_settings"],
+            },
+        )
+        self.assertEqual(save_response.status_code, 200)
+        self.assertFalse(save_response.json()["labor_slots"][0]["active"])
+        self.assertEqual(save_response.json()["labor_mappings"][0]["target_classification"], "103 Foreman")
+        self.assertEqual(
+            [row["classification"] for row in save_response.json()["labor_rates"]],
+            ["103 Foreman"],
+        )
+
+    def test_profile_draft_atomic_save_allows_deactivation_after_equipment_remap_in_one_request(self) -> None:
+        self._write_profile_bundle(
+            equipment_classifications=["Excavator", "Box Truck"],
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "equipment_mapping.json",
+            {
+                "raw_mappings": {"CHEVROLET 6500": "Box Truck"},
+                "saved_mappings": [
+                    {
+                        "raw_description": "CHEVROLET 6500",
+                        "target_category": "Box Truck",
+                    }
+                ],
+            },
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "rates.json",
+            {
+                "labor_rates": {},
+                "equipment_rates": {
+                    "Excavator": {"rate": 125.0},
+                    "Box Truck": {"rate": 210.0},
+                },
+            },
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "recap_template_map.json",
+            {
+                "worksheet_name": "Recap",
+                "header_fields": {
+                    "project": {"cell": "B6"},
+                    "job_number": {"cell": "H6"},
+                },
+                "labor_rows": {"103 Journeyman": {"st_hours": "B14", "ot_hours": "C14", "dt_hours": "D14", "st_rate": "E14", "ot_rate": "F14", "dt_rate": "G14"}},
+                "equipment_rows": {
+                    "Excavator": {"hours_qty": "B32", "rate": "D32"},
+                    "Box Truck": {"hours_qty": "B33", "rate": "D33"},
+                },
+                "materials_section": {
+                    "start_row": 27,
+                    "end_row": 41,
+                    "columns": {"name": "G", "amount": "H"},
+                },
+                "subcontractors_section": {
+                    "start_row": 46,
+                    "end_row": 50,
+                    "columns": {"name": "A", "amount": "C"},
+                },
+                "permits_fees_section": {
+                    "start_row": 55,
+                    "end_row": 56,
+                    "columns": {"description": "A", "amount": "C"},
+                },
+                "police_detail_section": {
+                    "start_row": 61,
+                    "end_row": 62,
+                    "columns": {"description": "A", "amount": "C"},
+                },
+                "sales_tax_area": {
+                    "rate_label_cell": "G60",
+                    "rate_input_cell": "H60",
+                    "amount_label_cell": "G61",
+                    "amount_formula_cell": "H61",
+                    "material_total_cell": "H54",
+                },
+            },
+        )
+
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_payload = draft_response.json()
+        draft_id = draft_payload["trusted_profile_draft_id"]
+
+        save_response = self.client.patch(
+            f"/api/profile-drafts/{draft_id}",
+            json={
+                "expected_draft_revision": draft_payload["draft_revision"],
+                "default_omit_rules": draft_payload["default_omit_rules"],
+                "labor_mappings": draft_payload["labor_mappings"],
+                "equipment_mappings": [
+                    {
+                        **draft_payload["equipment_mappings"][0],
+                        "target_category": "Excavator",
+                    }
+                ],
+                "labor_slots": draft_payload["labor_slots"],
+                "equipment_slots": [
+                    draft_payload["equipment_slots"][0],
+                    {
+                        **draft_payload["equipment_slots"][1],
+                        "active": False,
+                    },
+                ],
+                "labor_rates": draft_payload["labor_rates"],
+                "equipment_rates": [
+                    row
+                    for row in draft_payload["equipment_rates"]
+                    if row["category"] == "Excavator"
+                ],
+                "export_settings": draft_payload["export_settings"],
+            },
+        )
+        self.assertEqual(save_response.status_code, 200)
+        self.assertFalse(save_response.json()["equipment_slots"][1]["active"])
+        self.assertEqual(save_response.json()["equipment_mappings"][0]["target_category"], "Excavator")
+        self.assertEqual(
+            [row["category"] for row in save_response.json()["equipment_rates"]],
+            ["Excavator"],
+        )
+
+    def test_profile_draft_atomic_save_rejects_inactive_classification_reference_in_final_payload(self) -> None:
+        self._write_profile_bundle(
+            equipment_classifications=["Excavator", "Box Truck"],
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "equipment_mapping.json",
+            {
+                "raw_mappings": {"CHEVROLET 6500": "Box Truck"},
+                "saved_mappings": [
+                    {
+                        "raw_description": "CHEVROLET 6500",
+                        "target_category": "Box Truck",
+                    }
+                ],
+            },
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "rates.json",
+            {
+                "labor_rates": {},
+                "equipment_rates": {
+                    "Excavator": {"rate": 125.0},
+                    "Box Truck": {"rate": 210.0},
+                },
+            },
+        )
+        self._write_json(
+            TEST_ROOT / "profiles" / "default" / "recap_template_map.json",
+            {
+                "worksheet_name": "Recap",
+                "header_fields": {
+                    "project": {"cell": "B6"},
+                    "job_number": {"cell": "H6"},
+                },
+                "labor_rows": {"103 Journeyman": {"st_hours": "B14", "ot_hours": "C14", "dt_hours": "D14", "st_rate": "E14", "ot_rate": "F14", "dt_rate": "G14"}},
+                "equipment_rows": {
+                    "Excavator": {"hours_qty": "B32", "rate": "D32"},
+                    "Box Truck": {"hours_qty": "B33", "rate": "D33"},
+                },
+                "materials_section": {
+                    "start_row": 27,
+                    "end_row": 41,
+                    "columns": {"name": "G", "amount": "H"},
+                },
+                "subcontractors_section": {
+                    "start_row": 46,
+                    "end_row": 50,
+                    "columns": {"name": "A", "amount": "C"},
+                },
+                "permits_fees_section": {
+                    "start_row": 55,
+                    "end_row": 56,
+                    "columns": {"description": "A", "amount": "C"},
+                },
+                "police_detail_section": {
+                    "start_row": 61,
+                    "end_row": 62,
+                    "columns": {"description": "A", "amount": "C"},
+                },
+                "sales_tax_area": {
+                    "rate_label_cell": "G60",
+                    "rate_input_cell": "H60",
+                    "amount_label_cell": "G61",
+                    "amount_formula_cell": "H61",
+                    "material_total_cell": "H54",
+                },
+            },
+        )
+
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_payload = draft_response.json()
+        draft_id = draft_payload["trusted_profile_draft_id"]
+
+        save_response = self.client.patch(
+            f"/api/profile-drafts/{draft_id}",
+            json={
+                "expected_draft_revision": draft_payload["draft_revision"],
+                "default_omit_rules": draft_payload["default_omit_rules"],
+                "labor_mappings": draft_payload["labor_mappings"],
+                "equipment_mappings": draft_payload["equipment_mappings"],
+                "labor_slots": draft_payload["labor_slots"],
+                "equipment_slots": [
+                    draft_payload["equipment_slots"][0],
+                    {
+                        **draft_payload["equipment_slots"][1],
+                        "active": False,
+                    },
+                ],
+                "labor_rates": draft_payload["labor_rates"],
+                "equipment_rates": [
+                    row
+                    for row in draft_payload["equipment_rates"]
+                    if row["category"] == "Excavator"
+                ],
+                "export_settings": draft_payload["export_settings"],
+            },
+        )
+        self.assertEqual(save_response.status_code, 400)
+        self.assertIn("still referenced by equipment mapping", save_response.json()["detail"])
+
+    def test_profile_draft_atomic_save_requires_current_draft_revision(self) -> None:
+        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
+        self.assertEqual(draft_response.status_code, 201)
+        draft_payload = draft_response.json()
+        draft_id = draft_payload["trusted_profile_draft_id"]
+
+        save_response = self.client.patch(
+            f"/api/profile-drafts/{draft_id}",
+            json={
+                "expected_draft_revision": draft_payload["draft_revision"] + 1,
+                "default_omit_rules": draft_payload["default_omit_rules"],
+                "labor_mappings": draft_payload["labor_mappings"],
+                "equipment_mappings": draft_payload["equipment_mappings"],
+                "labor_slots": draft_payload["labor_slots"],
+                "equipment_slots": draft_payload["equipment_slots"],
+                "labor_rates": draft_payload["labor_rates"],
+                "equipment_rates": draft_payload["equipment_rates"],
+                "export_settings": draft_payload["export_settings"],
+            },
+        )
+        self.assertEqual(save_response.status_code, 409)
+        self.assertIn("expected_draft_revision", save_response.json()["detail"]["field_errors"])
+
     def test_profile_draft_delete_discards_open_draft_without_changing_published_version(self) -> None:
         detail_before = self.client.get("/api/profiles/trusted-profile:org-default:default")
         self.assertEqual(detail_before.status_code, 200)

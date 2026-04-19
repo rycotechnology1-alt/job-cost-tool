@@ -226,5 +226,18 @@ class ExportSettingsPatchRequest(ExpectedDraftRevisionRequest):
     export_settings: ExportSettingsResponse = Field(default_factory=ExportSettingsResponse)
 
 
+class DraftSaveRequest(ExpectedDraftRevisionRequest):
+    """Request body for atomically replacing the full editable draft state."""
+
+    default_omit_rules: list[DefaultOmitRuleRow] = Field(default_factory=list)
+    labor_mappings: list[LaborMappingRow] = Field(default_factory=list)
+    equipment_mappings: list[EquipmentMappingRow] = Field(default_factory=list)
+    labor_slots: list[ClassificationSlotRow] = Field(default_factory=list)
+    equipment_slots: list[ClassificationSlotRow] = Field(default_factory=list)
+    labor_rates: list[LaborRateRow] = Field(default_factory=list)
+    equipment_rates: list[EquipmentRateRow] = Field(default_factory=list)
+    export_settings: ExportSettingsResponse = Field(default_factory=ExportSettingsResponse)
+
+
 class PublishDraftRequest(ExpectedDraftRevisionRequest):
     """Request body for publishing one draft through optimistic concurrency."""

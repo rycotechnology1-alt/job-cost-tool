@@ -5,6 +5,7 @@ import type {
   ClassificationSlotRow,
   CreateTrustedProfileRequest,
   DefaultOmitRuleRow,
+  DraftSaveRequest,
   DraftEditorStateResponse,
   EquipmentMappingRow,
   EquipmentRateRow,
@@ -19,6 +20,7 @@ type DraftSyncReason =
   | "reset"
   | "profileSwitch"
   | "open"
+  | "save"
   | "defaultOmit"
   | "laborMappings"
   | "equipmentMappings"
@@ -54,15 +56,7 @@ interface ProfileSettingsWorkspaceProps {
   onTrustedProfileNameChange: (value: string) => void;
   onReloadProfileDetail: () => Promise<void> | void;
   onOpenDraft: () => Promise<void> | void;
-  onSaveDefaultOmit: (rows: DefaultOmitRuleRow[]) => Promise<boolean> | boolean;
-  onSaveLaborMappings: (rows: LaborMappingRow[]) => Promise<boolean> | boolean;
-  onSaveEquipmentMappings: (rows: EquipmentMappingRow[]) => Promise<boolean> | boolean;
-  onSaveClassifications: (
-    laborSlots: ClassificationSlotRow[],
-    equipmentSlots: ClassificationSlotRow[],
-  ) => Promise<boolean> | boolean;
-  onSaveRates: (laborRates: LaborRateRow[], equipmentRates: EquipmentRateRow[]) => Promise<boolean> | boolean;
-  onSaveExportSettings: (exportSettings: ExportSettingsResponse) => Promise<boolean> | boolean;
+  onSaveDraft: (request: Omit<DraftSaveRequest, "expected_draft_revision">) => Promise<boolean> | boolean;
   onPublishDraft: (trustedProfileDraftId?: string) => Promise<boolean> | boolean;
   onDiscardDraft: (trustedProfileDraftId: string) => Promise<boolean> | boolean;
   onCreateTrustedProfile: (request: CreateTrustedProfileRequest) => Promise<void> | void;
@@ -666,12 +660,7 @@ export function ProfileSettingsWorkspace({
   onTrustedProfileNameChange,
   onReloadProfileDetail,
   onOpenDraft,
-  onSaveDefaultOmit,
-  onSaveLaborMappings,
-  onSaveEquipmentMappings,
-  onSaveClassifications,
-  onSaveRates,
-  onSaveExportSettings,
+  onSaveDraft,
   onPublishDraft,
   onDiscardDraft,
   onCreateTrustedProfile,
@@ -778,6 +767,9 @@ export function ProfileSettingsWorkspace({
     switch (draftSyncToken.reason) {
       case "open":
       case "profileSwitch":
+        break;
+      case "save":
+        syncAllFromDraft(selectedProfileDraft);
         break;
       case "defaultOmit":
         setDefaultOmitRules(cloneRows(selectedProfileDraft.default_omit_rules));
@@ -1220,22 +1212,21 @@ export function ProfileSettingsWorkspace({
     if (ratesDirty && ratesValidation.messages.length > 0) {
       return false;
     }
-    if (defaultOmitDirty && !(await onSaveDefaultOmit(defaultOmitRules))) {
-      return false;
+    if (dirtySections.length === 0) {
+      return true;
     }
-    if (laborMappingsDirty && !(await onSaveLaborMappings(laborMappings))) {
-      return false;
-    }
-    if (equipmentMappingsDirty && !(await onSaveEquipmentMappings(equipmentMappings))) {
-      return false;
-    }
-    if (ratesDirty && !(await onSaveRates(effectiveLaborRates, effectiveEquipmentRates))) {
-      return false;
-    }
-    if (classificationsDirty && !(await onSaveClassifications(laborSlots, equipmentSlots))) {
-      return false;
-    }
-    if (exportSettingsDirty && !(await onSaveExportSettings(exportSettings))) {
+    if (
+      !(await onSaveDraft({
+        default_omit_rules: defaultOmitRules,
+        labor_mappings: laborMappings,
+        equipment_mappings: equipmentMappings,
+        labor_slots: laborSlots,
+        equipment_slots: equipmentSlots,
+        labor_rates: effectiveLaborRates,
+        equipment_rates: effectiveEquipmentRates,
+        export_settings: exportSettings,
+      }))
+    ) {
       return false;
     }
     setRestoredDraftNotice("");
