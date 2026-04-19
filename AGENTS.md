@@ -3,18 +3,17 @@
 Use `.\.venv\Scripts\python.exe` for all Python commands, tests, and dependency checks in this repo.
 
 ## Current Product State
-This repository is a web-first job cost recap product built around a shared Python engine and service layer.
+This repository is a hosted web job cost recap product built around a shared Python engine, service layer, and hosted persistence/runtime seams.
 
 Current delivery model:
-- `web/` is the primary operator-facing shell.
-- `api/` is the primary backend boundary for browser workflows.
-- `app/` remains a valuable desktop fallback and reference implementation.
+- `web/` is the operator-facing product shell.
+- `api/` is the backend boundary for browser workflows.
+- hosted deployment is the supported production model
 
 Current product surface:
 - browser upload, processing, review, and export workflows are active
 - browser trusted-profile selection and profile-settings authoring are active
-- shared persistence, lineage, and runtime-storage seams now support local and hosted-oriented workflows
-- desktop still matters as a fallback and as a correctness reference when shared behavior is touched
+- shared persistence, lineage, and runtime-storage seams support hosted workflows and explicit local development paths
 
 This repo no longer carries a repo-local tracker workflow. Use the current code, tests, `README.md`, and active plan/spec docs for context when needed.
 
@@ -25,13 +24,13 @@ Treat this repo as:
 - a reusable product engine in `core/`
 - a reusable orchestration layer in `services/`
 - a persistence/runtime layer in `infrastructure/`
-- a web-first delivery system with desktop fallback
+- a hosted web/API delivery system
 
 Default assumptions:
 - prefer reusable engine/service logic over delivery-specific logic
 - preserve lineage, immutability, and published-version rules
 - keep API and UI layers thin
-- keep desktop stable when desktop code is touched
+- prefer hosted runtime seams over local-disk assumptions
 - avoid unnecessary platform sprawl or speculative infrastructure
 - treat one-organization internal use as the default unless the task explicitly expands scope
 
@@ -49,7 +48,6 @@ Meaningful work should preserve these product realities:
 - export-only behavior should stay in export, not leak backward into parsing or normalization
 - raw mapping source and resolved recap/export classification must stay separate
 - profile/config behavior should remain data-driven
-- current hardened desktop behavior is still a useful correctness reference when shared logic is touched
 - review and export behavior must continue to respect immutable processing snapshots and exact revision lineage
 
 ---
@@ -90,7 +88,6 @@ Infrastructure concerns behind stable seams:
 Interface-specific behavior:
 - FastAPI routes and schemas
 - React/browser UI
-- PySide windows, dialogs, tables, and widget refreshes
 
 Keep business logic out of route glue and UI glue when a service, core, or infrastructure seam is cleaner.
 
@@ -115,7 +112,7 @@ Prefer:
 Avoid:
 - broad rewrites unless requested
 - mixing unrelated refactor, feature, and UI redesign in one change
-- embedding business rules directly in React components, FastAPI routes, or PySide widgets
+- embedding business rules directly in React components or FastAPI routes
 - speculative platform buildout that is not needed for the task
 
 Web/API work is normal in-scope, but it should stay thin over the accepted service and product rules rather than turning into infrastructure sprawl.
@@ -159,13 +156,8 @@ If a bug is fixed, prefer a regression test that would have caught it.
 
 ---
 
-## Desktop And Web Guidance
-The web product is the primary delivery path, but desktop still matters.
-
-When touching desktop code:
-- preserve stability
-- keep UI glue thin
-- avoid reintroducing desktop-only ownership of shared workflow logic
+## Web/API Guidance
+The web product is the supported delivery path.
 
 When touching web/API code:
 - treat the existing web/API stack as a real product surface, not scaffolding
@@ -199,11 +191,10 @@ After meaningful code changes, provide a concise summary that includes:
   - application/services
   - persistence/API
   - web delivery
-  - desktop shell
   - tests
   - config/docs
 - test impact
-- desktop/web impact when relevant
+- web impact when relevant
 - any notable risks or follow-up items
 
 ---
@@ -211,9 +202,8 @@ After meaningful code changes, provide a concise summary that includes:
 ## Success Condition
 This file is being followed correctly when:
 
-- the web product continues to improve without unnecessary platform sprawl
+- the hosted web product continues to improve without unnecessary platform sprawl
 - shared engine/service behavior stays protected
-- desktop remains stable when touched
 - lineage and published-version rules stay intact
 - guidance docs stay aligned with the real repo state
 - repo guidance stays useful without relying on a separate tracker workflow
