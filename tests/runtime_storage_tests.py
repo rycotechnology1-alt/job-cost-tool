@@ -206,19 +206,6 @@ class VercelBlobRuntimeStorageTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.instance_a.get_export_artifact(stored_artifact.storage_ref)
 
-    def test_profile_sync_export_saved_by_one_instance_can_be_downloaded_by_another(self) -> None:
-        stored_artifact = self.instance_a.save_profile_sync_export(
-            trusted_profile_version_id="trusted-profile-version:123",
-            original_filename="default__v1.zip",
-            content_bytes=b"profile-sync-bytes",
-            content_type="application/zip",
-        )
-
-        resolved_artifact = self.instance_b.get_profile_sync_export(stored_artifact.storage_ref)
-
-        self.assertEqual(resolved_artifact.storage_ref, stored_artifact.storage_ref)
-        self.assertEqual(resolved_artifact.file_path.read_bytes(), b"profile-sync-bytes")
-
     def test_get_upload_rejects_expired_remote_upload_without_request_time_cleanup(self) -> None:
         stored_upload = self.instance_a.save_upload(
             original_filename="report.pdf",

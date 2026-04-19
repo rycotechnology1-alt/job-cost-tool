@@ -289,7 +289,6 @@ class LineageServiceTests(unittest.TestCase):
                 "trusted_profile_versions",
                 "trusted_profile_drafts",
                 "trusted_profile_observations",
-                "trusted_profile_sync_exports",
                 "template_artifacts",
                 "profile_snapshots",
                 "source_documents",
@@ -300,6 +299,7 @@ class LineageServiceTests(unittest.TestCase):
                 "export_artifacts",
             }
             self.assertTrue(expected_tables.issubset(tables))
+            self.assertNotIn("trusted_profile_sync_exports", tables)
 
             connection.execute(
                 "INSERT INTO organizations (organization_id, slug, display_name, created_at) VALUES (?, ?, ?, ?)",

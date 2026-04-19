@@ -26,7 +26,6 @@ TABLE_IMPORT_ORDER = [
     "reviewed_record_edits",
     "export_artifacts",
     "trusted_profile_observations",
-    "trusted_profile_sync_exports",
 ]
 
 BOOLEAN_COLUMNS = {
