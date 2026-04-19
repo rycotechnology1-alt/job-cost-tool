@@ -11,10 +11,18 @@ class RepoShapeTests(unittest.TestCase):
         self._assert_runtime_python_sources_do_not_reference_desktop_surface()
 
     def test_active_guidance_no_longer_describes_desktop_fallback(self) -> None:
+        disallowed_phrases = (
+            "desktop fallback",
+            "desktop sync",
+            "desktop reference",
+            "correctness reference",
+            "reference implementation",
+            "pyside6",
+        )
         for path in [Path("README.md"), Path("AGENTS.md")]:
             text = path.read_text(encoding="utf-8").casefold()
-            self.assertNotIn("desktop fallback", text)
-            self.assertNotIn("pyside6", text)
+            for phrase in disallowed_phrases:
+                self.assertNotIn(phrase, text)
 
     def _assert_requirements_do_not_reference_pyside6(self) -> None:
         requirements_text = Path("requirements.txt").read_text(encoding="utf-8")
