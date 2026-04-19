@@ -9,3 +9,5 @@ build/
 tests/_tmp/
 runtime/
 .env
+
+.vercel
