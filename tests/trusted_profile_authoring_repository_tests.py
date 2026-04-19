@@ -547,12 +547,21 @@ class TrustedProfileAuthoringRepositoryTests(unittest.TestCase):
         resolved = self.provisioning_service.resolve_current_published_profile(
             request_context=request_context
         )
+        explicitly_selected_default = self.provisioning_service.resolve_current_published_profile(
+            profile_name="default",
+            request_context=request_context,
+        )
 
         self.assertEqual(self.provisioning_service.get_selected_profile_name(request_context=request_context), "alternate")
         self.assertEqual(resolved.trusted_profile.profile_name, "alternate")
         self.assertEqual(
             resolved.trusted_profile_version.bundle_payload["behavioral_bundle"]["labor_mapping"]["raw_mappings"]["103/J"],
             "Alternate Journeyman",
+        )
+        self.assertEqual(explicitly_selected_default.trusted_profile.profile_name, "default")
+        self.assertEqual(
+            explicitly_selected_default.trusted_profile_version.bundle_payload["behavioral_bundle"]["labor_mapping"]["raw_mappings"]["103/J"],
+            "Default Journeyman",
         )
 
     def test_materialize_published_version_bundle_writes_processing_bundle_from_persistence(self) -> None:
