@@ -17,7 +17,6 @@ from core.models.lineage import (
     TrustedProfile,
     TrustedProfileDraft,
     TrustedProfileObservation,
-    TrustedProfileSyncExport,
     TrustedProfileVersion,
     User,
 )
@@ -179,18 +178,6 @@ class LineageStore(Protocol):
         unresolved_only: bool = False,
         unmerged_only: bool = False,
     ) -> list[TrustedProfileObservation]: ...
-
-    def create_trusted_profile_sync_export(
-        self,
-        sync_export: TrustedProfileSyncExport,
-    ) -> TrustedProfileSyncExport: ...
-
-    def get_trusted_profile_sync_export_for_organization(
-        self,
-        *,
-        organization_id: str,
-        trusted_profile_sync_export_id: str,
-    ) -> TrustedProfileSyncExport: ...
 
     def get_or_create_source_document(self, source_document: SourceDocument) -> SourceDocument: ...
 

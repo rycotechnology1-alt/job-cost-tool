@@ -287,63 +287,6 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         self._blob_client.delete_path(self._metadata_path_for_storage_ref(normalized_storage_ref))
         self._delete_cached_path(self._export_root, normalized_storage_ref)
 
-    def save_profile_sync_export(
-        self,
-        *,
-        trusted_profile_version_id: str,
-        original_filename: str,
-        content_bytes: bytes,
-        content_type: str | None = None,
-    ) -> StoredArtifact:
-        """Persist one profile sync artifact in shared blob storage."""
-        filename = self._normalize_filename(original_filename) or "trusted-profile-sync.zip"
-        if not content_bytes:
-            raise ValueError("Profile sync export content_bytes must not be empty.")
-
-        sanitized_version_id = self._sanitize_identifier(
-            trusted_profile_version_id,
-            field_name="trusted_profile_version_id",
-        )
-        artifact_id = uuid4().hex
-        storage_ref = f"profile-sync-exports/{sanitized_version_id}/{artifact_id}/{filename}"
-        metadata = {
-            "trusted_profile_version_id": str(trusted_profile_version_id),
-            "original_filename": filename,
-            "content_type": str(content_type or "application/zip"),
-            "file_size_bytes": len(content_bytes),
-            "storage_ref": storage_ref,
-            "filename": filename,
-        }
-        self._blob_client.put_bytes(
-            pathname=storage_ref,
-            content_bytes=content_bytes,
-            content_type=metadata["content_type"],
-        )
-        self._write_metadata_blob(
-            pathname=self._metadata_path_for_storage_ref(storage_ref),
-            metadata=metadata,
-        )
-        file_path = self._materialize_cache_file(
-            root=self._export_root,
-            pathname=storage_ref,
-            content_bytes=content_bytes,
-            metadata=metadata,
-        )
-        return StoredArtifact(
-            storage_ref=storage_ref,
-            original_filename=filename,
-            content_type=metadata["content_type"],
-            file_size_bytes=len(content_bytes),
-            file_path=file_path,
-        )
-
-    def get_profile_sync_export(self, storage_ref: str) -> StoredArtifact:
-        """Resolve one profile sync artifact from shared blob storage."""
-        return self._get_artifact(
-            storage_ref=storage_ref,
-            expected_prefix="profile-sync-exports/",
-        )
-
     def _get_artifact(
         self,
         *,

@@ -237,19 +237,6 @@ export interface CreateTrustedProfileRequest {
   seed_trusted_profile_id?: string | null;
 }
 
-export interface ProfileSyncExportResponse {
-  trusted_profile_sync_export_id: string;
-  trusted_profile_version_id: string;
-  trusted_profile_id: string;
-  profile_name: string;
-  display_name: string;
-  version_number: number;
-  archive_filename: string;
-  artifact_file_hash: string | null;
-  created_at: string;
-  download_url: string;
-}
-
 export interface DraftEditorStateResponse {
   trusted_profile_draft_id: string;
   trusted_profile_id: string;

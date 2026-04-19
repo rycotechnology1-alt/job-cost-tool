@@ -66,7 +66,9 @@ class Phase1ApiTests(unittest.TestCase):
         self.client = TestClient(
             create_app(
                 lineage_store=self.lineage_store,
+                database_provider="sqlite",
                 profile_manager=self.profile_manager,
+                storage_provider="local",
                 upload_root=TEST_ROOT / "runtime" / "uploads",
                 export_root=TEST_ROOT / "runtime" / "exports",
                 upload_retention_hours=24,
@@ -1225,62 +1227,11 @@ class Phase1ApiTests(unittest.TestCase):
             draft_response.json()["equipment_mappings"],
         )
 
-    def test_profile_sync_export_creation_and_download_use_published_version_only(self) -> None:
-        detail_response = self.client.get("/api/profiles/trusted-profile:org-default:default")
-        self.assertEqual(detail_response.status_code, 200)
-        version_id = detail_response.json()["current_published_version"]["trusted_profile_version_id"]
+    def test_profile_sync_endpoint_is_not_registered(self) -> None:
+        version_id = "trusted-profile-version:org-default:default:v1"
 
-        export_response = self.client.post(
-            f"/api/profile-versions/{version_id}/desktop-sync-export"
-        )
-        self.assertEqual(export_response.status_code, 201)
-        export_payload = export_response.json()
+        response = self.client.post(f"/api/profile-versions/{version_id}/desktop-sync-export")
 
-        download_response = self.client.get(export_payload["download_url"])
-        self.assertEqual(download_response.status_code, 200)
-        self.assertIn('filename="default__v1.zip"', download_response.headers["content-disposition"])
-
-        with zipfile.ZipFile(io.BytesIO(download_response.content)) as archive:
-            manifest = json.loads(archive.read("default__v1/manifest.json").decode("utf-8"))
-            profile_json = json.loads(archive.read("default__v1/profile.json").decode("utf-8"))
-            template_bytes = archive.read("default__v1/recap_template.xlsx")
-
-        self.assertEqual(export_payload["version_number"], 1)
-        self.assertEqual(manifest["trusted_profile_version_id"], version_id)
-        self.assertEqual(manifest["profile_name"], "default")
-        self.assertEqual(profile_json["template_filename"], "recap_template.xlsx")
-        self.assertTrue(template_bytes)
-
-    def test_profile_sync_export_rejects_draft_ids_and_missing_template_artifacts(self) -> None:
-        draft_response = self.client.post("/api/profiles/trusted-profile:org-default:default/draft")
-        self.assertEqual(draft_response.status_code, 201)
-        draft_id = draft_response.json()["trusted_profile_draft_id"]
-
-        wrong_source_response = self.client.post(
-            f"/api/profile-versions/{draft_id}/desktop-sync-export"
-        )
-        self.assertEqual(wrong_source_response.status_code, 404)
-
-        detail_response = self.client.get("/api/profiles/trusted-profile:org-default:default")
-        version_id = detail_response.json()["current_published_version"]["trusted_profile_version_id"]
-        self.lineage_store._connection.execute(
-            """
-            UPDATE trusted_profile_versions
-            SET template_artifact_id = NULL
-            WHERE trusted_profile_version_id = ?
-            """,
-            (version_id,),
-        )
-        self.lineage_store._connection.commit()
-
-        missing_template_response = self.client.post(
-            f"/api/profile-versions/{version_id}/desktop-sync-export"
-        )
-        self.assertEqual(missing_template_response.status_code, 404)
-        self.assertIn("does not include a template artifact", missing_template_response.json()["detail"])
-
-    def test_profile_sync_export_download_returns_not_found_for_unknown_artifact(self) -> None:
-        response = self.client.get("/api/profile-sync-exports/does-not-exist/download")
         self.assertEqual(response.status_code, 404)
 
     def test_shared_blob_storage_supports_cross_instance_upload_process_export_and_download(self) -> None:
@@ -1323,17 +1274,6 @@ class Phase1ApiTests(unittest.TestCase):
             self.assertEqual(export_download.status_code, 200)
             self.assertTrue(export_download.content)
 
-            profile_detail = instance_one.get("/api/profiles/trusted-profile:org-default:default")
-            self.assertEqual(profile_detail.status_code, 200)
-            version_id = profile_detail.json()["current_published_version"]["trusted_profile_version_id"]
-            sync_export_response = instance_one.post(
-                f"/api/profile-versions/{version_id}/desktop-sync-export"
-            )
-            self.assertEqual(sync_export_response.status_code, 201)
-
-            sync_download = instance_two.get(sync_export_response.json()["download_url"])
-            self.assertEqual(sync_download.status_code, 200)
-            self.assertTrue(sync_download.content)
         finally:
             instance_one.close()
             instance_two.close()
@@ -1383,7 +1323,9 @@ class Phase1ApiTests(unittest.TestCase):
             return TestClient(
                 create_app(
                     lineage_store=self.lineage_store,
+                    database_provider="sqlite",
                     profile_manager=self.profile_manager,
+                    storage_provider="local",
                     upload_root=TEST_ROOT / "runtime" / "uploads",
                     export_root=TEST_ROOT / "runtime" / "exports",
                     upload_retention_hours=24,

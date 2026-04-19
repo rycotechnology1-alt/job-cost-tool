@@ -486,37 +486,6 @@ function installSettingsFetchMock(options?: {
       });
     }
 
-    if (url === "/api/profile-versions/trusted-profile-version-1/desktop-sync-export" && method === "POST") {
-      return new Response(
-        JSON.stringify({
-          trusted_profile_sync_export_id: "sync-export-1",
-          trusted_profile_version_id: "trusted-profile-version-1",
-          trusted_profile_id: "trusted-profile:org-default:default",
-          profile_name: "default",
-          display_name: "Default Profile",
-          version_number: 1,
-          archive_filename: "default__v1.zip",
-          artifact_file_hash: "sync-hash-1",
-          created_at: "2026-04-06T12:00:00Z",
-          download_url: "/api/profile-sync-exports/sync-export-1/download",
-        }),
-        {
-          status: 201,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    if (url === "/api/profile-sync-exports/sync-export-1/download" && method === "GET") {
-      return new Response(new Blob(["sync archive bytes"]), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/zip",
-          "Content-Disposition": 'attachment; filename="default__v1.zip"',
-        },
-      });
-    }
-
     throw new Error(`Unhandled fetch call for ${method} ${url}`);
   });
 
@@ -1290,6 +1259,13 @@ describe("Profile settings workspace", () => {
     expect(screen.queryByText("Live Profile Summary")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /create desktop sync archive/i })).not.toBeInTheDocument();
     expect(screen.queryByText("default__v1.zip")).not.toBeInTheDocument();
+  });
+
+  it("does not offer any desktop sync action in the hosted profile settings flow", async () => {
+    render(<App />);
+
+    expect(screen.queryByRole("button", { name: /desktop sync/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/manual desktop sync/i)).not.toBeInTheDocument();
   });
 
   it("creates a second profile and saves its settings through the simplified current-profile flow", async () => {

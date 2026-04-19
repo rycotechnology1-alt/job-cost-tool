@@ -18,7 +18,6 @@ from api.schemas.profile_authoring import (
     LaborMinimumHoursRuleResponse,
     LaborRateRow,
     PhaseOptionRow,
-    ProfileSyncExportResponse,
     ProfileVersionSummaryResponse,
     PublishedProfileDetailResponse,
     TemplateMetadataResponse,
@@ -30,7 +29,7 @@ from api.schemas.trusted_profiles import TrustedProfileResponse
 from api.schemas.uploads import SourceUploadResponse
 from infrastructure.storage import StoredUpload
 from services.lineage_service import build_historical_export_status
-from services.profile_authoring_service import DraftEditorState, ProfileSyncExportResult, PublishedProfileDetail
+from services.profile_authoring_service import DraftEditorState, PublishedProfileDetail
 from services.processing_run_service import ProcessingRunResult, ProcessingRunState
 from services.review_session_service import ReviewSessionExportResult, ReviewSessionState
 from services.trusted_profile_service import TrustedProfileSummary
@@ -216,22 +215,6 @@ def to_draft_editor_state_response(state: DraftEditorState) -> DraftEditorStateR
         equipment_rates=[EquipmentRateRow(**row) for row in state.equipment_rates],
         deferred_domains=_to_deferred_domains_response(state.deferred_domains),
         validation_errors=list(state.validation_errors),
-    )
-
-
-def to_profile_sync_export_response(result: ProfileSyncExportResult) -> ProfileSyncExportResponse:
-    """Build the API response returned after one desktop-sync export is created."""
-    return ProfileSyncExportResponse(
-        trusted_profile_sync_export_id=result.trusted_profile_sync_export_id,
-        trusted_profile_version_id=result.trusted_profile_version_id,
-        trusted_profile_id=result.trusted_profile_id,
-        profile_name=result.profile_name,
-        display_name=result.display_name,
-        version_number=result.version_number,
-        archive_filename=result.archive_filename,
-        artifact_file_hash=result.artifact_file_hash,
-        created_at=result.created_at,
-        download_url=f"/api/profile-sync-exports/{result.trusted_profile_sync_export_id}/download",
     )
 
 

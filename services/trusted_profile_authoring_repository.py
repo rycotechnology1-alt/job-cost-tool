@@ -12,7 +12,6 @@ from core.models.lineage import (
     TrustedProfile,
     TrustedProfileDraft,
     TrustedProfileObservation,
-    TrustedProfileSyncExport,
     TrustedProfileVersion,
 )
 from infrastructure.persistence import LineageStore
@@ -379,24 +378,6 @@ class TrustedProfileAuthoringRepository:
                 is_resolved=True,
                 resolved_at=resolved_timestamp,
             )
-        )
-
-    def record_sync_export(
-        self,
-        sync_export: TrustedProfileSyncExport,
-    ) -> TrustedProfileSyncExport:
-        """Persist one sync-export audit record."""
-        return self._lineage_store.create_trusted_profile_sync_export(sync_export)
-
-    def get_sync_export(
-        self,
-        organization_id: str,
-        trusted_profile_sync_export_id: str,
-    ) -> TrustedProfileSyncExport:
-        """Fetch one persisted desktop-sync export audit record by id."""
-        return self._lineage_store.get_trusted_profile_sync_export_for_organization(
-            organization_id=organization_id,
-            trusted_profile_sync_export_id=trusted_profile_sync_export_id,
         )
 
     def _build_hash_payload(
