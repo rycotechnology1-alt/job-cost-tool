@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
-import os
-
 from api.app import create_app
 
 
-if not os.environ.get("JOB_COST_API_POSTGRES_POOLED_URL"):
-    os.environ["JOB_COST_API_DATABASE_PROVIDER"] = "sqlite"
-    os.environ["JOB_COST_API_STORAGE_PROVIDER"] = "local"
+class _LazyApp:
+    title = "Job Cost Tool API"
 
-app = create_app()
+    def __init__(self) -> None:
+        self._app = None
+
+    def _resolve(self):
+        if self._app is None:
+            self._app = create_app()
+        return self._app
+
+    async def __call__(self, scope, receive, send):
+        await self._resolve()(scope, receive, send)
+
+    def __getattr__(self, name: str):
+        return getattr(self._resolve(), name)
+
+
+app = _LazyApp()
