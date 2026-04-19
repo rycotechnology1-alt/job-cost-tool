@@ -5,6 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReviewSessionResponse } from "../api/contracts";
 import App from "../App";
 
+const { uploadMock } = vi.hoisted(() => ({
+  uploadMock: vi.fn(),
+}));
+
+vi.mock("@vercel/blob/client", () => ({
+  upload: uploadMock,
+}));
+
 const trustedProfilesPayload = [
   {
     trusted_profile_id: "trusted-profile:org-default:default",
@@ -554,6 +562,28 @@ function installFetchMock(
       );
     }
 
+    if (url === "/api/source-documents/blob-uploads" && init?.method === "POST") {
+      const payload = JSON.parse(String(init.body ?? "{}")) as {
+        storage_ref?: string;
+        original_filename?: string;
+        content_type?: string;
+        file_size_bytes?: number;
+      };
+      const uploadId = payload.storage_ref?.split("/")[1] ?? `upload-${state.uploadCounter + 1}`;
+      state.uploadCounter += 1;
+      state.uploadFilenamesById.set(uploadId, payload.original_filename ?? "report.pdf");
+      return jsonResponse(
+        {
+          upload_id: uploadId,
+          original_filename: payload.original_filename ?? "report.pdf",
+          content_type: payload.content_type ?? "application/pdf",
+          file_size_bytes: payload.file_size_bytes ?? 1024,
+          storage_ref: payload.storage_ref ?? `uploads/${uploadId}/report.pdf`,
+        },
+        201,
+      );
+    }
+
     if (url === "/api/runs" && init?.method === "POST") {
       const payload = JSON.parse(String(init.body ?? "{}")) as { trusted_profile_name?: string; upload_id?: string };
       const uploadId = payload.upload_id ?? "";
@@ -680,10 +710,15 @@ describe("App", () => {
     URL.createObjectURL = vi.fn(() => "blob:download-url");
     URL.revokeObjectURL = vi.fn();
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    uploadMock.mockReset();
+    uploadMock.mockResolvedValue({
+      pathname: "uploads/upload-1/report.pdf",
+    });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     URL.createObjectURL = originalCreateObjectUrl;
     URL.revokeObjectURL = originalRevokeObjectUrl;
   });
@@ -1059,6 +1094,29 @@ describe("App", () => {
     const runRequests = fetchCalls.filter(([url]) => url === "/api/runs");
     expect(uploadRequests).toHaveLength(2);
     expect(runRequests).toHaveLength(3);
+  });
+
+  it("uploads staged PDFs through Vercel Blob instead of the Python upload route when hosted uploads are enabled", async () => {
+    vi.stubEnv("VITE_ENABLE_BLOB_CLIENT_UPLOADS", "true");
+    installFetchMock();
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.upload(
+      screen.getByLabelText(/source report pdf/i),
+      new File(["pdf-bytes"], "report.pdf", { type: "application/pdf" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    expect(uploadMock).toHaveBeenCalled();
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url]) => url === "/api/source-documents/uploads")).toBe(false);
+    expect(fetchCalls.some(([url]) => url === "/api/source-documents/blob-uploads")).toBe(true);
   });
 
   it("bulk omits and re-includes selected rows while keeping totals in sync", async () => {

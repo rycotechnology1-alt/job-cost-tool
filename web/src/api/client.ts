@@ -1,4 +1,7 @@
+import { upload } from "@vercel/blob/client";
+
 import type {
+  BlobUploadRegistrationRequest,
   ClassificationSlotRow,
   CreateTrustedProfileRequest,
   DefaultOmitRuleRow,
@@ -108,6 +111,24 @@ function parseDownloadFilename(response: Response): string {
 }
 
 export async function uploadSourceDocument(file: File): Promise<SourceUploadResponse> {
+  if (import.meta.env.VITE_ENABLE_BLOB_CLIENT_UPLOADS === "true") {
+    const pathname = `uploads/${crypto.randomUUID()}/${file.name}`;
+    const blob = await upload(pathname, file, {
+      access: "private",
+      handleUploadUrl: "/api/blob-upload",
+    });
+    const registrationRequest: BlobUploadRegistrationRequest = {
+      storage_ref: blob.pathname,
+      original_filename: file.name,
+      content_type: file.type || "application/pdf",
+      file_size_bytes: file.size,
+    };
+    return apiJson<SourceUploadResponse>(
+      "/api/source-documents/blob-uploads",
+      buildJsonRequest(registrationRequest),
+    );
+  }
+
   const formData = new FormData();
   formData.append("file", file);
   return apiJson<SourceUploadResponse>("/api/source-documents/uploads", {

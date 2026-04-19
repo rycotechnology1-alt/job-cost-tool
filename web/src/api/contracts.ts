@@ -6,6 +6,13 @@ export interface SourceUploadResponse {
   storage_ref: string;
 }
 
+export interface BlobUploadRegistrationRequest {
+  storage_ref: string;
+  original_filename: string;
+  content_type: string;
+  file_size_bytes: number;
+}
+
 export interface TrustedProfileResponse {
   trusted_profile_id: string;
   profile_name: string;

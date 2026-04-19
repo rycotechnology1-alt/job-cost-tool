@@ -51,6 +51,16 @@ class RuntimeStorage(Protocol):
     def get_upload(self, upload_id: str) -> StoredUpload:
         """Resolve one uploaded source document by upload id."""
 
+    def register_blob_upload(
+        self,
+        *,
+        storage_ref: str,
+        original_filename: str,
+        content_type: str,
+        file_size_bytes: int,
+    ) -> StoredUpload:
+        """Register one upload that was already written to shared blob storage."""
+
     def cleanup_expired_uploads(self) -> int:
         """Delete expired uploaded source documents and return the number removed."""
 

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from api.dependencies import ApiRuntime, get_runtime
 from api.errors import to_http_exception
-from api.schemas.uploads import SourceUploadResponse
+from api.schemas.uploads import BlobUploadRegistrationRequest, SourceUploadResponse
 from api.serializers import to_upload_response
 
 
@@ -30,6 +30,24 @@ async def upload_source_document(
             original_filename=original_filename,
             content_bytes=await file.read(),
             content_type=file.content_type,
+        )
+        return to_upload_response(upload)
+    except Exception as exc:  # pragma: no cover - exercised through API tests
+        raise to_http_exception(exc) from exc
+
+
+@router.post("/blob-uploads", response_model=SourceUploadResponse, status_code=status.HTTP_201_CREATED)
+def register_blob_upload(
+    request: BlobUploadRegistrationRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+) -> SourceUploadResponse:
+    """Register one PDF that the browser uploaded directly to blob storage."""
+    try:
+        upload = runtime.file_store.register_blob_upload(
+            storage_ref=request.storage_ref,
+            original_filename=request.original_filename,
+            content_type=request.content_type,
+            file_size_bytes=request.file_size_bytes,
         )
         return to_upload_response(upload)
     except Exception as exc:  # pragma: no cover - exercised through API tests

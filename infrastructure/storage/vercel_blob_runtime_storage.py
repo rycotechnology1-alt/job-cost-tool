@@ -202,6 +202,43 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             created_at=created_at,
         )
 
+    def register_blob_upload(
+        self,
+        *,
+        storage_ref: str,
+        original_filename: str,
+        content_type: str,
+        file_size_bytes: int,
+    ) -> StoredUpload:
+        """Register one browser-uploaded source document already stored in shared blob storage."""
+        normalized_storage_ref = self._normalize_storage_ref(storage_ref, expected_prefix="uploads/")
+        upload_id = Path(normalized_storage_ref).parts[1]
+        created_at = self._normalize_timestamp(self._now_provider())
+        filename = self._normalize_filename(original_filename)
+        metadata = {
+            "upload_id": upload_id,
+            "original_filename": filename,
+            "content_type": str(content_type or "application/octet-stream"),
+            "file_size_bytes": int(file_size_bytes),
+            "storage_ref": normalized_storage_ref,
+            "filename": filename,
+            "created_at": created_at.isoformat(),
+            "expires_at": self._expires_at(created_at).isoformat() if self._upload_retention_hours > 0 else None,
+        }
+        self._write_metadata_blob(
+            pathname=self._metadata_path_for_upload(upload_id),
+            metadata=metadata,
+        )
+        return StoredUpload(
+            upload_id=upload_id,
+            original_filename=filename,
+            content_type=metadata["content_type"],
+            file_size_bytes=int(file_size_bytes),
+            storage_ref=normalized_storage_ref,
+            file_path=self._upload_root / Path(normalized_storage_ref),
+            created_at=created_at,
+        )
+
     def cleanup_expired_uploads(self) -> int:
         """Delete expired uploaded source documents from shared blob storage explicitly."""
         deleted_count = 0
