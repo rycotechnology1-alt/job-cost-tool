@@ -29,7 +29,7 @@ class ApiSettings:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
         """Build phase-1 API settings from environment variables with hosted defaults."""
-        environ = env or os.environ
+        environ = os.environ if env is None else env
         runtime_root = Path(environ.get("JOB_COST_API_RUNTIME_ROOT", "/tmp/job-cost-api")).expanduser()
         database_provider = str(environ.get("JOB_COST_API_DATABASE_PROVIDER", "postgres")).strip().lower() or "postgres"
         database_path = environ.get("JOB_COST_API_DATABASE_PATH") or f"{runtime_root.as_posix()}/lineage.db"
