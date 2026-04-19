@@ -10,7 +10,7 @@ from typing import Mapping
 
 @dataclass(frozen=True, slots=True)
 class ApiSettings:
-    """Small runtime configuration seam for local API startup and tests."""
+    """Small runtime configuration seam for hosted API startup and tests."""
 
     database_provider: str
     database_path: str | Path
@@ -28,17 +28,17 @@ class ApiSettings:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "ApiSettings":
-        """Build phase-1 API settings from environment variables with safe local defaults."""
+        """Build phase-1 API settings from environment variables with hosted defaults."""
         environ = env or os.environ
-        runtime_root = Path(environ.get("JOB_COST_API_RUNTIME_ROOT", "runtime/api")).expanduser()
-        database_provider = str(environ.get("JOB_COST_API_DATABASE_PROVIDER", "sqlite")).strip().lower() or "sqlite"
-        database_path = environ.get("JOB_COST_API_DATABASE_PATH") or str(runtime_root / "lineage.db")
+        runtime_root = Path(environ.get("JOB_COST_API_RUNTIME_ROOT", "/tmp/job-cost-api")).expanduser()
+        database_provider = str(environ.get("JOB_COST_API_DATABASE_PROVIDER", "postgres")).strip().lower() or "postgres"
+        database_path = environ.get("JOB_COST_API_DATABASE_PATH") or f"{runtime_root.as_posix()}/lineage.db"
         postgres_admin_url = str(environ.get("JOB_COST_API_POSTGRES_ADMIN_URL", "")).strip() or None
         postgres_pooled_url = str(environ.get("JOB_COST_API_POSTGRES_POOLED_URL", "")).strip() or None
         postgres_schema = str(environ.get("JOB_COST_API_POSTGRES_SCHEMA", "public")).strip() or "public"
         auth_mode = str(environ.get("JOB_COST_API_AUTH_MODE", "local")).strip().lower() or "local"
         auth_secret = str(environ.get("JOB_COST_API_AUTH_SECRET", "")).strip() or None
-        storage_provider = str(environ.get("JOB_COST_API_STORAGE_PROVIDER", "local")).strip().lower() or "local"
+        storage_provider = str(environ.get("JOB_COST_API_STORAGE_PROVIDER", "vercel_blob")).strip().lower() or "vercel_blob"
         blob_read_write_token = str(environ.get("BLOB_READ_WRITE_TOKEN", "")).strip() or None
         upload_root = Path(environ.get("JOB_COST_API_UPLOAD_ROOT", str(runtime_root / "uploads"))).expanduser()
         export_root = Path(environ.get("JOB_COST_API_EXPORT_ROOT", str(runtime_root / "exports"))).expanduser()

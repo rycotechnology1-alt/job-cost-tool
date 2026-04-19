@@ -9,14 +9,16 @@ from api.settings import ApiSettings
 
 
 class ApiSettingsTests(unittest.TestCase):
-    """Verify phase-1 API defaults stay simple and locally runnable."""
+    """Verify phase-1 API defaults stay simple and hosted-friendly."""
 
-    def test_from_env_uses_phase1_local_defaults(self) -> None:
+    def test_hosted_defaults_use_postgres_blob_and_tmp_paths(self) -> None:
         settings = ApiSettings.from_env({})
 
-        self.assertEqual(settings.database_path, str(Path("runtime/api") / "lineage.db"))
-        self.assertEqual(settings.upload_root, Path("runtime/api/uploads"))
-        self.assertEqual(settings.export_root, Path("runtime/api/exports"))
+        self.assertEqual(settings.database_provider, "postgres")
+        self.assertEqual(settings.storage_provider, "vercel_blob")
+        self.assertEqual(settings.database_path, "/tmp/job-cost-api/lineage.db")
+        self.assertEqual(settings.upload_root, Path("/tmp/job-cost-api/uploads"))
+        self.assertEqual(settings.export_root, Path("/tmp/job-cost-api/exports"))
         self.assertEqual(settings.upload_retention_hours, 24)
         self.assertEqual(settings.engine_version, "dev-local")
 
