@@ -13,3 +13,12 @@ class SourceUploadResponse(ApiModel):
     content_type: str
     file_size_bytes: int
     storage_ref: str
+
+
+class BlobUploadRegistrationRequest(ApiModel):
+    """Metadata for one PDF already uploaded directly to blob storage."""
+
+    storage_ref: str
+    original_filename: str
+    content_type: str
+    file_size_bytes: int

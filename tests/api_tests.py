@@ -1283,6 +1283,44 @@ class Phase1ApiTests(unittest.TestCase):
             instance_one.close()
             instance_two.close()
 
+    def test_registered_blob_upload_can_be_processed(self) -> None:
+        shared_blob_client = FakeBlobObjectClient()
+        shared_blob_client.put_bytes(
+            pathname="uploads/upload-1/report.pdf",
+            content_bytes=b"sample pdf bytes",
+            content_type="application/pdf",
+        )
+        hosted_client = self._create_multi_instance_client(
+            runtime_root=TEST_ROOT / "blob-instance-registered-upload",
+            blob_client=shared_blob_client,
+        )
+        try:
+            response = hosted_client.post(
+                "/api/source-documents/blob-uploads",
+                json={
+                    "storage_ref": "uploads/upload-1/report.pdf",
+                    "original_filename": "report.pdf",
+                    "content_type": "application/pdf",
+                    "file_size_bytes": 7340032,
+                },
+            )
+
+            self.assertEqual(response.status_code, 201)
+            upload_id = response.json()["upload_id"]
+
+            with patch(
+                "services.review_workflow_service.parse_pdf",
+                return_value=[self._make_material_record(vendor_name_normalized="Vendor A")],
+            ):
+                run_response = hosted_client.post(
+                    "/api/runs",
+                    json={"upload_id": upload_id, "trusted_profile_name": "default"},
+                )
+
+            self.assertEqual(run_response.status_code, 201)
+        finally:
+            hosted_client.close()
+
     def _create_processing_run_via_api(
         self,
         *,
