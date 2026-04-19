@@ -2,9 +2,9 @@
 
 ## Overview
 
-Job Cost Tool is a web-first job cost recap product for turning Vista/Viewpoint-style T&M job cost PDF reports into reviewed, export-ready Excel recap workbooks.
+Job Cost Tool is a hosted web job cost recap product for turning Vista/Viewpoint-style T&M job cost PDF reports into reviewed, export-ready Excel recap workbooks.
 
-The primary operator workflow now runs through `api/` + `web/`, backed by shared Python engine and service layers. `app/` still matters as a stable desktop fallback and reference implementation. This is not a generic OCR pipeline or a one-click "trust everything" converter. The product preserves report-body fidelity and traceability, applies config-driven normalization and validation, supports review/correction, and exports through a template-driven workbook flow.
+The supported delivery surfaces are `api/` and `web/`, backed by shared Python engine, service, and infrastructure layers. The hosted deployment model uses Vercel-hosted API/web delivery, Neon Postgres for lineage and profile persistence, and Vercel Blob for uploaded and generated artifacts. This is not a generic OCR pipeline or a one-click "trust everything" converter. The product preserves report-body fidelity and traceability, applies config-driven normalization and validation, supports review/correction, and exports through a template-driven workbook flow.
 
 ## What The Tool Does
 
@@ -12,7 +12,7 @@ Input:
 - PDF job cost detail reports
 
 Output:
-- Excel recap workbooks based on the active profile's template and recap template map
+- Excel recap workbooks based on the selected published profile version's template and recap template map
 
 Core workflow:
 1. Read and extract PDF pages.
@@ -20,7 +20,7 @@ Core workflow:
 3. Tokenize lines into structured record fields.
 4. Apply phase-aware family routing and config-driven normalization.
 5. Validate recap readiness and surface blocking issues.
-6. Let a user review, correct, or omit records in the desktop UI.
+6. Let a user review, correct, or omit records in the browser workspace.
 7. Export reviewed records into the configured recap workbook template.
 
 ## Product Principles
@@ -31,6 +31,7 @@ Core workflow:
 - Record families are intentional and distinct.
 - Export-only shaping rules should stay in export instead of leaking back into parsing or normalization.
 - Configuration should drive mappings, slots, rates, and workbook behavior wherever practical.
+- Review, export, and profile authoring must respect immutable processing snapshots and exact revision lineage.
 
 ## Supported Record Families
 
@@ -83,7 +84,7 @@ Typical blockers include:
 
 The product is a review-assisted workflow, not just a fire-and-forget batch converter.
 
-The primary review surface is the browser workspace, with desktop retained as a fallback/reference shell. The review layer supports:
+The browser workspace supports:
 - filtering records
 - inspecting record details and warnings
 - correcting recap labor classification
@@ -93,13 +94,13 @@ The primary review surface is the browser workspace, with desktop retained as a 
 
 ### 5. Export
 
-Export is template-driven. The tool builds a recap payload from the validated record set and writes it into the active profile's recap workbook template using the configured recap template map and rates.
+Export is template-driven. The tool builds a recap payload from the validated record set and writes it into the selected published profile version's recap workbook template using the configured recap template map and rates.
 
 Export behavior is intentionally separate from parsing/normalization behavior.
 
 ## Architecture Overview
 
-The repo is organized around a reusable product core, shared orchestration services, and two delivery shells.
+The repo is organized around a reusable product core, shared orchestration services, hosted persistence/runtime seams, and web delivery.
 
 - `core/`
   Domain and product-engine code:
@@ -107,7 +108,7 @@ The repo is organized around a reusable product core, shared orchestration servi
   - normalization
   - validation
   - export payload shaping and workbook writing
-  - config/profile interpretation
+  - profile/config interpretation
   - record models and supporting helpers
 
 - `services/`
@@ -116,7 +117,14 @@ The repo is organized around a reusable product core, shared orchestration servi
   - review sessions and append-only edits
   - trusted-profile authoring
   - export orchestration
-  - runtime storage and persistence seams
+  - profile resolution
+
+- `infrastructure/`
+  Hosted persistence and runtime seams:
+  - Postgres lineage stores
+  - runtime storage implementations
+  - schema and migration support
+  - hosted/local composition helpers
 
 - `api/`
   Thin FastAPI contracts over shared services:
@@ -127,27 +135,17 @@ The repo is organized around a reusable product core, shared orchestration servi
   - trusted profiles and profile drafts
 
 - `web/`
-  Primary browser delivery shell:
-  - staged upload and processing
+  Browser delivery shell:
+  - upload and processing flows
   - grouped review workflow
   - export actions
   - trusted-profile settings and authoring
 
-- `app/`
-  PySide6 desktop fallback/reference shell:
-  - main window
-  - review workflow widgets
-  - settings dialog
-  - review/settings view-models
-
 - `profiles/`
-  Profile bundles. The bundled default profile lives in `profiles/default/`.
-
-- `config/`
-  Shared app-level and fallback config files. This includes app settings and shared reference config such as the phase catalog.
+  Profile bundles and fixtures, including the bundled default profile in `profiles/default/`.
 
 - `tests/`
-  Focused unit/regression coverage for parser behavior, normalization rules, export behavior, profile/config loading, and review display behavior.
+  Focused unit and regression coverage for parser behavior, normalization rules, export behavior, profile/config loading, lineage rules, API contracts, and hosted runtime seams.
 
 - `tools/`
   Small diagnostic utilities such as parsed-record CSV dumping.
@@ -172,7 +170,7 @@ Legacy compatibility shapes such as `keyword_mappings`, `phase_defaults`, `alias
 
 ### Profiles
 
-Profiles define the active recap behavior bundle:
+Published trusted-profile versions define the active recap behavior bundle:
 
 - parsing/input interpretation
 - phase mapping
@@ -187,158 +185,102 @@ Profiles define the active recap behavior bundle:
 The bundled default profile metadata lives at:
 - `profiles/default/profile.json`
 
-In practice, profile bundles live under `profiles/<profile_name>/` and are managed through the profile system used by the desktop app.
+Filesystem profile bundles remain useful as fixtures and seed assets, but the supported operational model is persisted trusted profiles and published versions used by API workflows.
 
 ### Slot-Based Recap Handling
 
-Labor and equipment recap classifications now use fixed-capacity slot definitions rather than loose rename-by-position behavior. That gives the export layer stable slot identities even when displayed labels change.
+Labor and equipment recap classifications use fixed-capacity slot definitions rather than loose rename-by-position behavior. That gives the export layer stable slot identities even when displayed labels change.
 
 Relevant profile-side files include:
 - `target_labor_classifications.json`
 - `target_equipment_classifications.json`
 - `recap_template_map.json`
 
-### Shared Config
+## Hosted Deployment Model
 
-Some app-level/shared files still live under `config/`, including:
-- `app_settings.json`
-- `phase_catalog.json`
+Production deployment is hosted-only:
 
-The active profile is tracked in app settings, while the actual business bundle is the active profile under `profiles/` when available.
+- `web/` builds the browser client deployed on Vercel
+- `api/` provides the ASGI app for hosted API execution
+- Neon Postgres stores processing lineage, review data, and trusted-profile authoring state
+- Vercel Blob stores uploaded source documents and generated artifacts
 
-## Export Model
-
-Export is driven by:
-
-- the active profile's recap template workbook
-- `recap_template_map.json`
-- configured labor/equipment rates
-- normalized record families and recap slot assignments
-
-The export stack is intentionally template-driven:
-- `core/export/recap_mapper.py` builds the recap payload
-- `core/export/excel_exporter.py` writes workbook output
-
-This repo does not try to infer arbitrary workbook layouts at runtime. Export behavior is explicit and profile-configured.
-
-## Repo Structure
-
-High-value directories and files:
-
-- `app/main.py`: desktop entry point
-- `app/window.py`: main review window
-- `app/viewmodels/`: review/settings workflow coordination
-- `app/widgets/`: PySide UI widgets
-- `core/parsing/`: PDF page extraction, line classification, tokenizer, report parser
-- `core/normalization/`: labor, equipment, material, and family normalization
-- `core/validation/`: export-readiness validation rules
-- `core/export/`: recap payload mapping and workbook writing
-- `core/config/`: profile/config loading, slot handling, profile management
-- `services/`: thin pipeline orchestration
-- `profiles/default/`: bundled default profile
-- `config/`: shared app/fallback config
-- `tests/`: regression-focused automated coverage
-- `tools/debug_dump_parsed_records.py`: diagnostic parser dump utility
+The supported runtime should fail clearly when required hosted configuration is missing rather than silently falling back to local-disk assumptions.
 
 ## Running Locally
 
-Install dependencies:
+Install Python dependencies:
 
 ```powershell
-pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Launch the desktop app:
+Run the API locally:
 
 ```powershell
-python -m app.main
+.\.venv\Scripts\python.exe -m uvicorn api.asgi:app --reload
 ```
 
-Launch the API locally:
+Run the web app locally:
 
 ```powershell
-python -m uvicorn api.asgi:app --reload
+npm --prefix web install
+npm --prefix web run dev
 ```
 
-### Postgres Env Prep
+## Environment
 
-Before the Postgres-backed runtime lands, you can stage the Neon connection strings now:
+Hosted verification and deployment depend on environment variables for:
 
-1. Copy `.env.example` to `.env` in the repo root.
-2. Paste your Neon direct admin/migration string into `JOB_COST_API_POSTGRES_ADMIN_URL`.
-3. Paste your Neon pooled app string into `JOB_COST_API_POSTGRES_POOLED_URL`.
+- database provider and Neon Postgres connection strings
+- runtime storage provider configuration
+- Vercel Blob token/configuration
+- any API-facing app settings required by the current hosted runtime
 
-Notes:
-- `.env` is already gitignored.
-- `JOB_COST_API_DATABASE_PROVIDER` should stay `sqlite` for now.
-- This repo does not consume those Postgres vars yet; this is a clean staging step so the next phase can wire them in without inventing names later.
-
-Launch the web app locally:
-
-```powershell
-cd web
-npm install
-npm run dev
-```
+Use `.env.example` and the current API/runtime configuration code as the source of truth for exact variable names.
 
 ## Testing
 
-Run the full test suite:
+Run the targeted Python verification used by the hosted product surface:
 
 ```powershell
-python -m unittest discover -s tests -p "*_tests.py"
+.\.venv\Scripts\python.exe -m pytest tests/repo_shape_tests.py tests/api_tests.py tests/processing_run_service_tests.py tests/review_session_service_tests.py tests/profile_authoring_service_tests.py tests/trusted_profile_authoring_repository_tests.py tests/postgres_lineage_store_tests.py tests/runtime_storage_tests.py tests/profile_config_tests.py -q
 ```
 
-Common focused suites include:
+Run the web checks:
 
 ```powershell
-python -m unittest tests.report_parser_tests tests.tokenizer_tests tests.normalization_tests tests.export_tests
-python -m unittest tests.profile_config_tests
-```
-
-Run the browser test/build checks:
-
-```powershell
-cd web
-npm test
-npm run build
+npm --prefix web test
+npm --prefix web run build
+vercel build
 ```
 
 ## Current Status
 
-This repository is no longer an early scaffold. It is a working internal product with substantial real-world parser, normalization, validation, review, lineage, and export behavior.
+This repository is a working internal hosted product with substantial parser, normalization, validation, review, lineage, trusted-profile authoring, and export behavior.
 
 Current status in plain terms:
-- web-first internal product
-- browser review/export/profile-settings workflows are active product surfaces
-- desktop fallback/reference shell remains supported
+- hosted web/API product
+- browser upload, review, export, and profile-settings workflows are active product surfaces
 - review-assisted rather than fully automatic
 - heavily config-driven
 - template-driven Excel export
 - actively hardened against real report edge cases
 
-## Current Limitations
-
-- The tool still depends on report text quality from PDF extraction.
-- Human review is still an intentional part of the workflow.
-- Export is designed around configured recap templates, not arbitrary workbook discovery.
-- Runtime storage and deployment assumptions should stay explicit as the web footprint evolves.
-- Some cleanup/refactor opportunities may remain, but the supported runtime model is the modern raw-first/slot-based model reflected in the current configs and tests.
-
 ## Development Notes
 
-- Prefer changes in `core/` and `services/` when behavior should stay portable across web and desktop.
-- Keep API and UI layers thin; business rules belong in domain/config/service layers where possible.
-- Keep PySide widget code thin when desktop code is touched.
-- Add regression tests for parser, normalization, validation, export, and config-loading changes.
+- Prefer changes in `core/`, `services/`, and `infrastructure/` when behavior should stay reusable.
+- Keep API and React layers thin; business rules belong in domain/config/service layers where possible.
+- Preserve immutable processing-run, review-session, and published-profile lineage.
+- Add regression tests for parser, normalization, validation, export, workflow, persistence, and hosted-runtime changes.
 - Keep `AGENTS.md` and `README.md` aligned with meaningful architecture or workflow changes.
 
 ## Future Direction
 
-This repo should be treated as a shared product engine plus a web-first delivery system with desktop fallback.
+This repo should be treated as a shared product engine plus a hosted web/API delivery system.
 
 Future work should continue improving:
 - web review, export, and profile-settings reliability
 - shared parsing, normalization, validation, and lineage behavior
+- hosted persistence and runtime storage reliability
 - export portability and traceability
-- desktop stability when desktop code is touched
