@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 import unittest
@@ -23,6 +24,18 @@ class RepoShapeTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8").casefold()
             for phrase in disallowed_phrases:
                 self.assertNotIn(phrase, text)
+
+    def test_vercel_config_rewrites_browser_api_routes_to_python_entrypoint(self) -> None:
+        vercel_config = json.loads(Path("vercel.json").read_text(encoding="utf-8"))
+        rewrites = vercel_config.get("rewrites", [])
+        self.assertIn(
+            {
+                "source": "/api/(.*)",
+                "destination": "/api/index",
+            },
+            rewrites,
+            "vercel.json should route browser API traffic through the Python entrypoint.",
+        )
 
     def _assert_requirements_do_not_reference_pyside6(self) -> None:
         requirements_text = Path("requirements.txt").read_text(encoding="utf-8")
