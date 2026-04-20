@@ -8,6 +8,6 @@ build/
 *.spec
 tests/_tmp/
 runtime/
-.env
+.env*
 
 .vercel
