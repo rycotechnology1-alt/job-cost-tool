@@ -903,11 +903,10 @@ th {
 
 .review-group-toggle {
   width: 100%;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(12rem, 1.6fr) repeat(4, minmax(7.5rem, 1fr));
   gap: 0.65rem 1rem;
-  justify-content: space-between;
-  align-items: center;
+  align-items: start;
   padding: 0.85rem 0.95rem;
   border-radius: 0;
   background: transparent;
@@ -922,6 +921,28 @@ th {
 }
 
 .review-group-title {
+  font-weight: 700;
+  justify-self: start;
+  align-self: center;
+}
+
+.review-group-metric {
+  display: grid;
+  gap: 0.14rem;
+  justify-items: end;
+  text-align: right;
+}
+
+.review-group-metric-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6e848d;
+}
+
+.review-group-metric-value {
+  font-size: 0.95rem;
   font-weight: 700;
 }
 
@@ -1404,6 +1425,10 @@ th {
   color: #d7cdc4;
 }
 
+.app-shell-review .review-group-metric-label {
+  color: #b4a79c;
+}
+
 .app-shell-review .review-group-toggle:hover:not(:disabled) {
   background: rgba(54, 49, 47, 0.98);
 }
@@ -1842,6 +1867,14 @@ th {
   .settings-hero-side {
     grid-template-columns: 1fr;
   }
+
+  .review-group-toggle {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .review-group-title {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1860,6 +1893,15 @@ th {
   th,
   td {
     padding: 0.68rem 0.7rem;
+  }
+
+  .review-group-toggle {
+    grid-template-columns: 1fr;
+  }
+
+  .review-group-metric {
+    justify-items: start;
+    text-align: left;
   }
 
   .app-shell-review {

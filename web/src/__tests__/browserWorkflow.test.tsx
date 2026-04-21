@@ -769,6 +769,11 @@ describe("App", () => {
     expect(screen.queryByText("Concrete delivery")).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /^type$/i })).not.toBeInTheDocument();
     expect(within(screen.getByRole("table")).getAllByRole("columnheader")).toHaveLength(7);
+    const materialToggle = screen.getByRole("button", { name: /show material/i });
+    expect(within(materialToggle).getByText(/^Rows$/i)).toBeInTheDocument();
+    expect(within(materialToggle).getByText(/^Raw$/i)).toBeInTheDocument();
+    expect(within(materialToggle).getByText(/^Included$/i)).toBeInTheDocument();
+    expect(within(materialToggle).queryByText(/^Omitted$/i)).not.toBeInTheDocument();
 
     await expandFamily(user, "Show Material");
     await clickRowByText(user, "Concrete delivery");

@@ -420,10 +420,24 @@ export function ReviewWorkspace({
                               <span className="review-group-title">
                                 {isExpanded ? "Hide" : "Show"} {group.label}
                               </span>
-                              <span>{group.rows.length} rows</span>
-                              <span>Raw {formatCurrency(group.rawCost)}</span>
-                              <span>Included {formatCurrency(group.includedCost)}</span>
-                              {group.omittedCost > 0 ? <span>Omitted {formatCurrency(group.omittedCost)}</span> : null}
+                              <span className="review-group-metric">
+                                <span className="review-group-metric-label">Rows</span>
+                                <span className="review-group-metric-value">{group.rows.length}</span>
+                              </span>
+                              <span className="review-group-metric">
+                                <span className="review-group-metric-label">Raw</span>
+                                <span className="review-group-metric-value">{formatCurrency(group.rawCost)}</span>
+                              </span>
+                              <span className="review-group-metric">
+                                <span className="review-group-metric-label">Included</span>
+                                <span className="review-group-metric-value">{formatCurrency(group.includedCost)}</span>
+                              </span>
+                              {group.omittedCost > 0 ? (
+                                <span className="review-group-metric">
+                                  <span className="review-group-metric-label">Omitted</span>
+                                  <span className="review-group-metric-value">{formatCurrency(group.omittedCost)}</span>
+                                </span>
+                              ) : null}
                             </button>
                           </td>
                         </tr>
