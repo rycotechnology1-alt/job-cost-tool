@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -767,6 +767,8 @@ describe("App", () => {
     expect(screen.getByText(/select a row to inspect its source context and apply edits/i)).toBeInTheDocument();
     expect(screen.getAllByText("$500.00").length).toBeGreaterThan(0);
     expect(screen.queryByText("Concrete delivery")).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: /^type$/i })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("table")).getAllByRole("columnheader")).toHaveLength(7);
 
     await expandFamily(user, "Show Material");
     await clickRowByText(user, "Concrete delivery");

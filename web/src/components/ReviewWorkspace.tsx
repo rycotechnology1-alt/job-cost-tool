@@ -391,12 +391,11 @@ export function ReviewWorkspace({
                 <thead>
                   <tr>
                     <th>Select</th>
-                    <th>Type</th>
                     <th>Vendor</th>
                     <th>Labor Class</th>
                     <th>Equipment Class</th>
                     <th>Cost</th>
-                    <th>Source</th>
+                    <th className="review-source-column">Source</th>
                     <th>Attention</th>
                   </tr>
                 </thead>
@@ -406,7 +405,7 @@ export function ReviewWorkspace({
                     return (
                       <Fragment key={group.familyKey}>
                         <tr key={`${group.familyKey}-group`} className="review-group-row">
-                          <td colSpan={8}>
+                          <td colSpan={7}>
                             <button
                               type="button"
                               className="review-group-toggle"
@@ -430,7 +429,6 @@ export function ReviewWorkspace({
                         </tr>
                         {isExpanded
                           ? group.rows.map((row) => {
-                              const currentType = row.record.record_type_normalized ?? row.record.record_type;
                               const currentVendor = row.record.vendor_name_normalized ?? row.record.vendor_name;
                               const currentLabor =
                                 row.record.recap_labor_classification ??
@@ -457,10 +455,6 @@ export function ReviewWorkspace({
                                     />
                                   </td>
                                   <td>
-                                    <div className="cell-primary">{renderPrimary(currentType)}</div>
-                                    <div className="cell-secondary">{renderPrimary(row.record.record_type, "-")}</div>
-                                  </td>
-                                  <td>
                                     <div className="cell-primary">{renderPrimary(currentVendor)}</div>
                                     <div className="cell-secondary">
                                       {renderPrimary(row.record.vendor_name ?? row.record.vendor_id_raw)}
@@ -480,9 +474,9 @@ export function ReviewWorkspace({
                                       {row.record.hours ? `${row.record.hours} ${row.record.hour_type ?? "hrs"}` : "-"}
                                     </div>
                                   </td>
-                                  <td>
-                                    <div className="cell-primary">{renderPrimary(row.record.raw_description)}</div>
-                                    <div className="cell-secondary">{formatSourceLabel(row)}</div>
+                                  <td className="review-source-cell">
+                                    <div className="cell-primary review-source-primary">{renderPrimary(row.record.raw_description)}</div>
+                                    <div className="cell-secondary review-source-secondary">{formatSourceLabel(row)}</div>
                                   </td>
                                   <td>
                                     <div className="attention-pill">{buildAttentionSummary(row)}</div>
