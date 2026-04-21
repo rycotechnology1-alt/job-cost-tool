@@ -13,7 +13,7 @@ from unittest.mock import patch
 from openpyxl import Workbook, load_workbook
 
 from core.config import ConfigLoader, ProfileManager
-from core.models import MATERIAL, PendingRecordEdit, Record
+from core.models import EQUIPMENT, LABOR, MATERIAL, PendingRecordEdit, Record
 from core.models.lineage import User
 from infrastructure.persistence.sqlite_lineage_store import SqliteLineageStore
 from infrastructure.storage import StoredArtifact
@@ -195,6 +195,120 @@ class ReviewSessionServiceTests(unittest.TestCase):
             ["103 General FM", "103 Foreman", "103 Journeyman"],
         )
         self.assertEqual(state.equipment_classification_options, ["Pick-up Truck"])
+
+    def test_manual_equipment_category_fix_clears_review_warnings_without_mutating_run_record(self) -> None:
+        processing_result = self._create_processing_run_with_record(
+            self._make_unmapped_equipment_record(),
+        )
+        processing_run_id = processing_result.processing_run.processing_run_id
+
+        initial_state = self.review_session_service.open_review_session(processing_run_id)
+        updated_state = self.review_session_service.apply_review_edits(
+            processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"equipment_category": "Pick-up Truck"},
+                )
+            ],
+        )
+
+        persisted_run_records = self.lineage_store.list_run_records(processing_run_id)
+
+        self.assertIn("Equipment recap category is missing.", "\n".join(initial_state.records[0].warnings))
+        self.assertEqual(updated_state.records[0].equipment_category, "Pick-up Truck")
+        self.assertEqual(updated_state.records[0].warnings, [])
+        self.assertEqual(updated_state.blocking_issues, [])
+        self.assertEqual(persisted_run_records[0].canonical_record["equipment_category"], None)
+        self.assertIn(
+            "Equipment description did not match a configured target equipment category.",
+            persisted_run_records[0].canonical_record["warnings"],
+        )
+
+    def test_manual_labor_fix_clears_mapping_warning_and_medium_confidence_review_flag(self) -> None:
+        processing_result = self._create_processing_run_with_record(
+            self._make_unmapped_labor_record(),
+        )
+
+        updated_state = self.review_session_service.apply_review_edits(
+            processing_result.processing_run.processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"recap_labor_classification": "103 Journeyman"},
+                )
+            ],
+        )
+
+        self.assertEqual(updated_state.records[0].recap_labor_classification, "103 Journeyman")
+        self.assertEqual(updated_state.records[0].warnings, [])
+        self.assertEqual(updated_state.blocking_issues, [])
+
+    def test_manual_vendor_fix_clears_vendor_resolution_warning(self) -> None:
+        processing_result = self._create_processing_run_with_record(
+            self._make_missing_vendor_material_record(),
+        )
+
+        updated_state = self.review_session_service.apply_review_edits(
+            processing_result.processing_run.processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"vendor_name_normalized": "Vendor Reviewed"},
+                )
+            ],
+        )
+
+        self.assertEqual(updated_state.records[0].vendor_name_normalized, "Vendor Reviewed")
+        self.assertEqual(updated_state.records[0].warnings, [])
+        self.assertEqual(updated_state.blocking_issues, [])
+
+    def test_manual_omit_clears_effective_review_warnings_and_blockers(self) -> None:
+        processing_result = self._create_processing_run_with_record(
+            self._make_unmapped_equipment_record(),
+        )
+
+        updated_state = self.review_session_service.apply_review_edits(
+            processing_result.processing_run.processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"is_omitted": True},
+                )
+            ],
+        )
+
+        self.assertTrue(updated_state.records[0].is_omitted)
+        self.assertEqual(updated_state.records[0].warnings, [])
+        self.assertEqual(updated_state.blocking_issues, [])
+
+    def test_manual_fix_preserves_unrelated_ambiguity_warning(self) -> None:
+        processing_result = self._create_processing_run_with_record(
+            self._make_unmapped_equipment_record(
+                warnings=["PR detail line family is ambiguous and should be reviewed."],
+            ),
+        )
+
+        updated_state = self.review_session_service.apply_review_edits(
+            processing_result.processing_run.processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"equipment_category": "Pick-up Truck"},
+                )
+            ],
+        )
+
+        self.assertIn("PR detail line family is ambiguous and should be reviewed.", updated_state.records[0].warnings)
+        self.assertNotIn(
+            "Equipment description did not match a configured target equipment category.",
+            updated_state.records[0].warnings,
+        )
+        self.assertNotIn("Medium-confidence record should be reviewed before export.", updated_state.records[0].warnings)
+        self.assertEqual(
+            updated_state.blocking_issues,
+            ["Record on page 1 (unknown phase, equipment): Record still contains unresolved parsing or normalization ambiguity."],
+        )
 
     def test_export_uses_one_exact_session_revision_even_after_later_edits_exist(self) -> None:
         processing_result = self._create_processing_run()
@@ -406,6 +520,9 @@ class ReviewSessionServiceTests(unittest.TestCase):
 
     def _create_processing_run(self):
         parsed_record = self._make_material_record(vendor_name_normalized="Vendor A")
+        return self._create_processing_run_with_record(parsed_record)
+
+    def _create_processing_run_with_record(self, parsed_record: Record):
         with patch(
             "services.review_workflow_service.parse_pdf",
             return_value=[parsed_record],
@@ -580,6 +697,74 @@ class ReviewSessionServiceTests(unittest.TestCase):
             record_type_normalized=MATERIAL,
             recap_labor_classification=None,
             vendor_name_normalized=vendor_name_normalized,
+        )
+
+    def _make_missing_vendor_material_record(self) -> Record:
+        return Record(
+            record_type=MATERIAL,
+            phase_code="50",
+            raw_description="Material line",
+            cost=100.0,
+            hours=None,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="Material source",
+            record_type_normalized=MATERIAL,
+            recap_labor_classification=None,
+            vendor_name_normalized=None,
+        )
+
+    def _make_unmapped_equipment_record(self, *, warnings: list[str] | None = None) -> Record:
+        return Record(
+            record_type=EQUIPMENT,
+            phase_code=None,
+            raw_description="627/2025 crane truck",
+            cost=100.0,
+            hours=8.0,
+            hour_type="EA",
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="627/2025 crane truck",
+            equipment_category=None,
+            confidence=0.9,
+            warnings=list(warnings or []),
+            source_page=1,
+            source_line_text="Equipment source",
+            record_type_normalized=None,
+        )
+
+    def _make_unmapped_labor_record(self) -> Record:
+        return Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor line",
+            cost=100.0,
+            hours=8.0,
+            hour_type="ST",
+            union_code="103",
+            labor_class_raw="ZZ",
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="Labor source",
+            record_type_normalized=None,
+            recap_labor_classification=None,
         )
 
     def _write_json(self, path: Path, payload: object) -> None:

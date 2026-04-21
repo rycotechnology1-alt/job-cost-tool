@@ -35,7 +35,7 @@ from services.profile_authoring_errors import ProfileAuthoringPersistenceConflic
 from services.profile_execution_compatibility_adapter import ProfileExecutionCompatibilityAdapter
 from services.request_context import RequestContext, is_local_request_context, resolve_request_context
 from services.review_workflow_service import load_edit_options, prepare_review_updates
-from services.validation_service import validate_records
+from services.validation_service import validate_review_records
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +135,11 @@ class ReviewSessionService:
             run_records=context.run_records,
             reviewed_record_edits=reviewed_record_edits,
         )
-        validated_records, blocking_issues = validate_records(effective_records)
+        base_records = rebuild_review_records(
+            run_records=context.run_records,
+            reviewed_record_edits=[],
+        )
+        validated_records, blocking_issues = validate_review_records(base_records, effective_records)
         with self._profile_execution_compatibility_adapter.materialize_snapshot_bundle(
             context.profile_snapshot,
             require_template_artifact=False,

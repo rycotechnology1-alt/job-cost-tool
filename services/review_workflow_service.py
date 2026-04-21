@@ -11,7 +11,7 @@ from core.models.record import Record
 from core.review_defaults import apply_default_omit_rules
 from services.normalization_service import normalize_records
 from services.parsing_service import parse_pdf
-from services.validation_service import validate_records
+from services.validation_service import validate_records, validate_review_records
 
 EDITABLE_FIELDS = {
     "recap_labor_classification",
@@ -87,7 +87,7 @@ def update_review_record(
         return None
     next_review_records = list(review_records)
     next_review_records[record_index] = replace(next_review_records[record_index], **allowed_updates)
-    records, blocking_issues = validate_records(next_review_records)
+    records, blocking_issues = validate_review_records(review_records, next_review_records)
     return ReviewUpdateResult(
         review_records=next_review_records,
         records=list(records),

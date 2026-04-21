@@ -310,6 +310,105 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
                     file_path="sample.pdf",
                 )
 
+    def test_update_review_record_clears_equipment_mapping_warnings_after_manual_category_fix(self) -> None:
+        record = Record(
+            record_type=EQUIPMENT,
+            phase_code="20",
+            raw_description="Crane truck line",
+            cost=100.0,
+            hours=8.0,
+            hour_type="EA",
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="627/2025 crane truck",
+            equipment_category=None,
+            confidence=0.6,
+            warnings=[
+                "Equipment description did not match a configured target equipment category.",
+                "Medium-confidence record should be reviewed before export.",
+                "BLOCKING: Equipment recap category is missing.",
+            ],
+            source_page=1,
+            source_line_text="source",
+            record_type_normalized=EQUIPMENT,
+            recap_equipment_slot_id=None,
+            is_omitted=False,
+        )
+
+        with patch(
+            "services.review_workflow_service.ConfigLoader",
+            side_effect=lambda *args, **kwargs: self._build_loader(),
+        ):
+            result = update_review_record(
+                [record],
+                0,
+                {"equipment_category": "Pick-up Truck"},
+                file_path="sample.pdf",
+            )
+
+        self.assertIsNotNone(result)
+        if result is None:
+            self.fail("Expected review update result.")
+        self.assertEqual(result.records[0].equipment_category, "Pick-up Truck")
+        self.assertEqual(result.records[0].warnings, [])
+        self.assertEqual(result.blocking_issues, [])
+
+    def test_update_review_record_preserves_unrelated_warnings_after_manual_equipment_fix(self) -> None:
+        record = Record(
+            record_type=EQUIPMENT,
+            phase_code="20",
+            raw_description="Crane truck line",
+            cost=100.0,
+            hours=8.0,
+            hour_type="EA",
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="627/2025 crane truck",
+            equipment_category=None,
+            confidence=0.6,
+            warnings=[
+                "PR detail line family is ambiguous and should be reviewed.",
+                "Equipment description did not match a configured target equipment category.",
+                "Medium-confidence record should be reviewed before export.",
+                "BLOCKING: Record still contains unresolved parsing or normalization ambiguity.",
+                "BLOCKING: Equipment recap category is missing.",
+            ],
+            source_page=1,
+            source_line_text="source",
+            record_type_normalized=EQUIPMENT,
+            recap_equipment_slot_id=None,
+            is_omitted=False,
+        )
+
+        with patch(
+            "services.review_workflow_service.ConfigLoader",
+            side_effect=lambda *args, **kwargs: self._build_loader(),
+        ):
+            result = update_review_record(
+                [record],
+                0,
+                {"equipment_category": "Pick-up Truck"},
+                file_path="sample.pdf",
+            )
+
+        self.assertIsNotNone(result)
+        if result is None:
+            self.fail("Expected review update result.")
+        self.assertIn("PR detail line family is ambiguous and should be reviewed.", result.records[0].warnings)
+        self.assertNotIn(
+            "Equipment description did not match a configured target equipment category.",
+            result.records[0].warnings,
+        )
+        self.assertNotIn("Medium-confidence record should be reviewed before export.", result.records[0].warnings)
+        self.assertEqual(
+            result.blocking_issues,
+            ["Record on page 1 (phase 20, equipment): Record still contains unresolved parsing or normalization ambiguity."],
+        )
+
     def test_load_edit_options_returns_profile_defined_choices(self) -> None:
         with patch(
             "services.review_workflow_service.ConfigLoader",

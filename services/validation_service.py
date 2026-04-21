@@ -4,6 +4,7 @@ from typing import List, Tuple
 
 from core.models.record import Record
 from core.validation.validator import validate_records as validate_record_list
+from core.validation.validator import validate_review_records as validate_review_record_list
 
 
 def validate_records(records: List[Record]) -> Tuple[List[Record], List[str]]:
@@ -25,3 +26,11 @@ def validate_records(records: List[Record]) -> Tuple[List[Record], List[str]]:
     - Export to Excel
     """
     return validate_record_list(records)
+
+
+def validate_review_records(
+    base_records: List[Record],
+    records: List[Record],
+) -> Tuple[List[Record], List[str]]:
+    """Validate review records after resolving warnings superseded by manual edits."""
+    return validate_review_record_list(base_records, records)
