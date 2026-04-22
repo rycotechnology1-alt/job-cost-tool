@@ -131,6 +131,24 @@ class DraftEditorState:
     validation_errors: list[str]
 
 
+@dataclass(frozen=True, slots=True)
+class BlockingProcessingRunSummary:
+    """Small summary of an unfinished run that would be discarded during profile delete."""
+
+    processing_run_id: str
+    source_filename: str
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedProfileDeleteImpact:
+    """Whether one trusted profile can be deleted right now and what blocks it."""
+
+    can_delete: bool
+    discard_blocking_runs_available: bool
+    blocking_runs: list[BlockingProcessingRunSummary]
+
+
 class ProfileAuthoringService:
     """Orchestrate persisted published profile inspection, draft edits, validation, and publish."""
 
@@ -253,6 +271,99 @@ class ProfileAuthoringService:
         self._repository.unarchive_trusted_profile(
             trusted_profile.organization_id,
             trusted_profile_id,
+        )
+
+    def get_trusted_profile_delete_impact(
+        self,
+        trusted_profile_id: str,
+        *,
+        request_context: RequestContext | None = None,
+    ) -> TrustedProfileDeleteImpact:
+        """Return whether one trusted profile can be permanently deleted right now."""
+        trusted_profile = self._get_scoped_trusted_profile(
+            trusted_profile_id,
+            request_context=request_context,
+        )
+        if not self._is_trusted_profile_delete_eligible(trusted_profile):
+            return TrustedProfileDeleteImpact(
+                can_delete=False,
+                discard_blocking_runs_available=False,
+                blocking_runs=[],
+            )
+
+        blocking_runs = self._list_profile_delete_blocking_runs(
+            trusted_profile.organization_id,
+            trusted_profile_id,
+        )
+        return TrustedProfileDeleteImpact(
+            can_delete=len(blocking_runs) == 0,
+            discard_blocking_runs_available=len(blocking_runs) > 0,
+            blocking_runs=blocking_runs,
+        )
+
+    def delete_trusted_profile(
+        self,
+        trusted_profile_id: str,
+        *,
+        discard_blocking_runs: bool = False,
+        request_context: RequestContext | None = None,
+    ) -> None:
+        """Permanently delete one web-created trusted profile after clearing unfinished runs."""
+        trusted_profile = self._get_scoped_trusted_profile(
+            trusted_profile_id,
+            request_context=request_context,
+        )
+        if trusted_profile.profile_name == "default":
+            raise ValueError("The default recap profile cannot be permanently deleted.")
+        if trusted_profile.source_kind != "published_clone":
+            raise ValueError("Only web-created trusted profiles can be permanently deleted from web settings.")
+
+        blocking_runs = self._list_profile_delete_blocking_runs(
+            trusted_profile.organization_id,
+            trusted_profile_id,
+        )
+        if blocking_runs and not discard_blocking_runs:
+            raise ProfileAuthoringConflictError(
+                (
+                    f"Trusted profile '{trusted_profile.display_name}' still has unfinished runs that must be "
+                    "discarded before permanent delete."
+                ),
+                error_code="trusted_profile_delete_blocked",
+                field_errors={
+                    "blocking_runs": [
+                        (
+                            f"{blocking_run.source_filename} ({blocking_run.processing_run_id}) created "
+                            f"{blocking_run.created_at.isoformat()}"
+                        )
+                        for blocking_run in blocking_runs
+                    ]
+                },
+            )
+
+        for blocking_run in blocking_runs:
+            self._repository.purge_processing_run_workflow(
+                processing_run_id=blocking_run.processing_run_id,
+            )
+
+        version_ids = [
+            version.trusted_profile_version_id
+            for version in self._repository.list_trusted_profile_versions(trusted_profile_id)
+        ]
+        self._repository.null_downstream_base_trusted_profile_version_references(version_ids)
+
+        organization = self._repository.get_organization(trusted_profile.organization_id)
+        if organization.default_trusted_profile_id == trusted_profile_id:
+            default_profile = self._repository.get_trusted_profile_by_name(
+                trusted_profile.organization_id,
+                "default",
+            )
+            self._repository.set_organization_default_trusted_profile(
+                organization_id=trusted_profile.organization_id,
+                trusted_profile_id=default_profile.trusted_profile_id,
+            )
+
+        self._repository.delete_trusted_profile_cascade(
+            trusted_profile_id=trusted_profile_id,
         )
 
     def create_or_open_draft(
@@ -1179,6 +1290,28 @@ class ProfileAuthoringService:
         if is_local_request_context(request_context):
             return None
         return resolve_request_context(request_context).user_id
+
+    def _is_trusted_profile_delete_eligible(self, trusted_profile: TrustedProfile) -> bool:
+        """Return whether one trusted profile can ever be permanently deleted."""
+        return trusted_profile.profile_name != "default" and trusted_profile.source_kind == "published_clone"
+
+    def _list_profile_delete_blocking_runs(
+        self,
+        organization_id: str,
+        trusted_profile_id: str,
+    ) -> list[BlockingProcessingRunSummary]:
+        """Return unfinished processing runs that block deleting one trusted profile."""
+        return [
+            BlockingProcessingRunSummary(
+                processing_run_id=str(row["processing_run_id"]),
+                source_filename=str(row["source_filename"]),
+                created_at=row["created_at"],
+            )
+            for row in self._repository.list_profile_delete_blocking_runs(
+                organization_id=organization_id,
+                trusted_profile_id=trusted_profile_id,
+            )
+        ]
 
     def _build_observation_id(
         self,

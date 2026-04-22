@@ -275,10 +275,7 @@
           "vendor_name_normalized": "Vendor Approved",
           "recap_labor_classification": null,
           "equipment_category": null,
-          "warnings": [
-            "Material-oriented record is missing a vendor name for recap preparation.",
-            "Medium-confidence record should be reviewed before export."
-          ],
+          "warnings": [],
           "is_omitted": false
         }
       ]

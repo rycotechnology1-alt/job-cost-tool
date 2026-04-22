@@ -7,7 +7,9 @@ from dataclasses import asdict
 from api.schemas.common import HistoricalExportStatusResponse, ReviewRecordResponse, RunRecordResponse
 from api.schemas.exports import ExportArtifactResponse
 from api.schemas.profile_authoring import (
+    BlockingProcessingRunSummaryResponse,
     ClassificationSlotRow,
+    DeleteTrustedProfileRequest,
     DefaultOmitRuleRow,
     DeferredDomainsResponse,
     DraftEditorStateResponse,
@@ -20,6 +22,7 @@ from api.schemas.profile_authoring import (
     PhaseOptionRow,
     ProfileVersionSummaryResponse,
     PublishedProfileDetailResponse,
+    TrustedProfileDeleteImpactResponse,
     TemplateMetadataResponse,
     TemplateRowDefinitionResponse,
 )
@@ -29,7 +32,11 @@ from api.schemas.trusted_profiles import TrustedProfileResponse
 from api.schemas.uploads import SourceUploadResponse
 from infrastructure.storage import StoredUpload
 from services.lineage_service import build_historical_export_status
-from services.profile_authoring_service import DraftEditorState, PublishedProfileDetail
+from services.profile_authoring_service import (
+    DraftEditorState,
+    PublishedProfileDetail,
+    TrustedProfileDeleteImpact,
+)
 from services.processing_run_service import ProcessingRunResult, ProcessingRunState
 from services.review_session_service import ReviewSessionExportResult, ReviewSessionState
 from services.trusted_profile_service import TrustedProfileSummary
@@ -125,14 +132,30 @@ def to_export_artifact_response(result: ReviewSessionExportResult) -> ExportArti
     artifact = result.export_artifact
     return ExportArtifactResponse(
         export_artifact_id=artifact.export_artifact_id,
-        processing_run_id=artifact.processing_run_id,
-        review_session_id=artifact.review_session_id,
         session_revision=artifact.session_revision,
         artifact_kind=artifact.artifact_kind,
-        template_artifact_id=artifact.template_artifact_id,
         file_hash=artifact.file_hash,
         created_at=artifact.created_at,
+        expires_at=artifact.expires_at,
         download_url=f"/api/exports/{artifact.export_artifact_id}/download",
+    )
+
+
+def to_trusted_profile_delete_impact_response(
+    impact: TrustedProfileDeleteImpact,
+) -> TrustedProfileDeleteImpactResponse:
+    """Build the API response describing whether a trusted profile can be deleted."""
+    return TrustedProfileDeleteImpactResponse(
+        can_delete=impact.can_delete,
+        discard_blocking_runs_available=impact.discard_blocking_runs_available,
+        blocking_runs=[
+            BlockingProcessingRunSummaryResponse(
+                processing_run_id=blocking_run.processing_run_id,
+                source_filename=blocking_run.source_filename,
+                created_at=blocking_run.created_at,
+            )
+            for blocking_run in impact.blocking_runs
+        ],
     )
 
 

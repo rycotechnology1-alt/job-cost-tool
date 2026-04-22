@@ -99,7 +99,7 @@ class PostgresLineageStoreTests(unittest.TestCase):
         finally:
             runtime.lineage_store.close()
 
-    def test_postgres_preserves_immutable_runs_append_only_review_edits_and_exact_revision_exports(self) -> None:
+    def test_postgres_purges_workflow_rows_after_export_and_keeps_retained_export_metadata(self) -> None:
         processing_result = self._create_processing_run()
         processing_run_id = processing_result.processing_run.processing_run_id
 
@@ -132,9 +132,9 @@ class PostgresLineageStoreTests(unittest.TestCase):
 
         self.assertEqual(updated_state.review_session.current_revision, 1)
         self.assertEqual(updated_state.session_revision, 1)
-        self.assertEqual(persisted_run_records[0].canonical_record["vendor_name_normalized"], "Vendor A")
-        self.assertEqual(persisted_edits[0].changed_fields, {"vendor_name_normalized": "Vendor B"})
         self.assertEqual(export_result.export_artifact.session_revision, 1)
+        self.assertEqual(persisted_run_records, [])
+        self.assertEqual(persisted_edits, [])
         self.assertEqual(persisted_artifacts[0].session_revision, 1)
         self.assertEqual(worksheet["G27"].value, "Vendor B")
 
@@ -618,16 +618,13 @@ class PostgresLineageStoreTests(unittest.TestCase):
         )
         try:
             imported_profile = imported_store.get_trusted_profile(source_profile.trusted_profile_id)
-            imported_run = imported_store.get_processing_run(processing_result.processing_run.processing_run_id)
-            imported_edits = imported_store.list_reviewed_record_edits(
-                updated_state.review_session.review_session_id
-            )
 
-            self.assertEqual(imported_counts["processing_runs"], 1)
-            self.assertEqual(imported_counts["reviewed_record_edits"], 1)
+            self.assertEqual(imported_counts["processing_runs"], 0)
+            self.assertEqual(imported_counts["reviewed_record_edits"], 0)
+            self.assertEqual(imported_counts["retained_export_artifacts"], 1)
             self.assertEqual(imported_profile.trusted_profile_id, source_profile.trusted_profile_id)
-            self.assertEqual(imported_run.processing_run_id, processing_result.processing_run.processing_run_id)
-            self.assertEqual(imported_edits[0].changed_fields, {"vendor_name_normalized": "Vendor Imported"})
+            with self.assertRaises(KeyError):
+                imported_store.get_processing_run(processing_result.processing_run.processing_run_id)
             self.assertEqual(
                 imported_store.list_export_artifacts(updated_state.review_session.review_session_id)[0].session_revision,
                 1,

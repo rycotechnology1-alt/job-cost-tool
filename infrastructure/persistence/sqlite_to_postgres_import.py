@@ -25,6 +25,7 @@ TABLE_IMPORT_ORDER = [
     "review_sessions",
     "reviewed_record_edits",
     "export_artifacts",
+    "retained_export_artifacts",
     "trusted_profile_observations",
 ]
 
@@ -62,6 +63,9 @@ def import_sqlite_lineage_to_postgres(
                 )
             imported_counts: dict[str, int] = {}
             for table_name in TABLE_IMPORT_ORDER:
+                if not _sqlite_table_exists(sqlite_connection, table_name):
+                    imported_counts[table_name] = 0
+                    continue
                 rows = sqlite_connection.execute(f"SELECT * FROM {table_name}").fetchall()
                 imported_counts[table_name] = len(rows)
                 if not rows:
@@ -92,3 +96,15 @@ def _normalize_sqlite_value(table_name: str, column_name: str, value):
     if column_name in BOOLEAN_COLUMNS.get(table_name, set()):
         return bool(value)
     return value
+
+
+def _sqlite_table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        """,
+        (table_name,),
+    ).fetchone()
+    return row is not None

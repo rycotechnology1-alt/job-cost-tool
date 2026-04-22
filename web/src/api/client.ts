@@ -11,6 +11,7 @@ import type {
   EquipmentRateRow,
   ExportSettingsResponse,
   ExportArtifactResponse,
+  TrustedProfileDeleteImpactResponse,
   LaborMappingRow,
   LaborRateRow,
   ProcessingRunDetailResponse,
@@ -161,6 +162,22 @@ export async function archiveTrustedProfile(trustedProfileId: string): Promise<v
 
 export async function unarchiveTrustedProfile(trustedProfileId: string): Promise<void> {
   await apiRequest(`/api/profiles/${trustedProfileId}/unarchive`, buildJsonRequest({}));
+}
+
+export async function fetchTrustedProfileDeleteImpact(
+  trustedProfileId: string,
+): Promise<TrustedProfileDeleteImpactResponse> {
+  return apiJson<TrustedProfileDeleteImpactResponse>(`/api/profiles/${trustedProfileId}/delete-impact`);
+}
+
+export async function deleteTrustedProfile(
+  trustedProfileId: string,
+  discardBlockingRuns = false,
+): Promise<void> {
+  await apiRequest(
+    `/api/profiles/${trustedProfileId}/delete`,
+    buildJsonRequest({ discard_blocking_runs: discardBlockingRuns }),
+  );
 }
 
 export async function createOrOpenProfileDraft(

@@ -9,10 +9,12 @@ import {
   discardProfileDraft,
   discardProfileDraftBestEffort,
   createExportArtifact,
+  deleteTrustedProfile,
   createProcessingRun,
   downloadExportArtifact,
   fetchProfileDetail,
   fetchProfileDraft,
+  fetchTrustedProfileDeleteImpact,
   fetchTrustedProfiles,
   fetchProcessingRun,
   openReviewSession,
@@ -31,6 +33,7 @@ import type {
   ReviewEditFields,
   ReviewSessionResponse,
   SourceUploadResponse,
+  TrustedProfileDeleteImpactResponse,
   TrustedProfileResponse,
 } from "./api/contracts";
 import {
@@ -76,6 +79,28 @@ const maxStagedReports = 10;
 
 function buildStagedReportId(): string {
   return `staged-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) {
+    return "an upcoming cleanup window";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString();
+}
+
+function buildRetainedExportStatusMessage(
+  artifact: ExportArtifactResponse,
+  filename: string,
+): string {
+  const downloadLabel = filename.trim() || "the exported workbook";
+  if (!artifact.expires_at) {
+    return `Downloaded ${downloadLabel} from review revision ${artifact.session_revision}.`;
+  }
+  return `Downloaded ${downloadLabel} from review revision ${artifact.session_revision}. The retained download stays available until ${formatDateTime(artifact.expires_at)}.`;
 }
 
 function buildWorkspaceRows(
@@ -589,6 +614,27 @@ export default function App() {
     }
   }
 
+  async function runResultAction<T>(
+    actionLabel: string,
+    action: () => Promise<T>,
+    options?: { rethrow?: boolean },
+  ): Promise<T | null> {
+    setBusyAction(actionLabel);
+    setErrorMessage("");
+    try {
+      return await action();
+    } catch (error) {
+      const normalizedError = error instanceof Error ? error : new Error("Unexpected browser workflow error.");
+      setErrorMessage(normalizedError.message);
+      if (options?.rethrow) {
+        throw normalizedError;
+      }
+      return null;
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function handleReloadSettingsProfileDetail() {
     await runAction("Reloading published profile detail...", async () => {
       if (!selectedTrustedProfile) {
@@ -652,6 +698,18 @@ export default function App() {
     setSelectedReviewRecordKeys([]);
     selectRow(nextRows, null);
     setStatusMessage(nextStatusMessage);
+  }
+
+  function clearLoadedReviewWorkspaceState(options?: { clearExportArtifact?: boolean }) {
+    setRunDetail(null);
+    setReviewSession(null);
+    setSelectedRecordKey("");
+    setSelectedReviewRecordKeys([]);
+    setReviewContextInvalidationMessage("");
+    if (options?.clearExportArtifact ?? true) {
+      setExportArtifact(null);
+      setLastDownloadedFilename("");
+    }
   }
 
   async function handleLaunchReviewWorkspace() {
@@ -956,9 +1014,21 @@ export default function App() {
 
       const artifact = await createExportArtifact(runDetail.processing_run_id, reviewSession.current_revision);
       const filename = await downloadExportArtifact(artifact.download_url);
+      clearLoadedReviewWorkspaceState({ clearExportArtifact: false });
       setExportArtifact(artifact);
       setLastDownloadedFilename(filename);
-      setStatusMessage(`Downloaded ${filename} from review revision ${artifact.session_revision}.`);
+      setStatusMessage(buildRetainedExportStatusMessage(artifact, filename));
+    });
+  }
+
+  async function handleDownloadRetainedExportArtifact() {
+    await runAction("Downloading retained export...", async () => {
+      if (!exportArtifact) {
+        throw new Error("No retained export is available to download.");
+      }
+      const filename = await downloadExportArtifact(exportArtifact.download_url);
+      setLastDownloadedFilename(filename);
+      setStatusMessage(buildRetainedExportStatusMessage(exportArtifact, filename));
     });
   }
 
@@ -1150,6 +1220,54 @@ export default function App() {
     });
   }
 
+  async function handleFetchTrustedProfileDeleteImpact(
+    trustedProfileId: string,
+  ): Promise<TrustedProfileDeleteImpactResponse> {
+    const result = await runResultAction(
+      "Checking profile delete impact...",
+      async () => fetchTrustedProfileDeleteImpact(trustedProfileId),
+      { rethrow: true },
+    );
+    if (!result) {
+      throw new Error("Could not load the trusted profile delete impact.");
+    }
+    return result;
+  }
+
+  async function handleDeleteTrustedProfile(
+    trustedProfileId: string,
+    discardBlockingRuns: boolean,
+  ): Promise<void> {
+    await runResultAction(
+      discardBlockingRuns ? "Discarding unfinished runs and deleting profile..." : "Deleting trusted profile...",
+      async () => {
+        const profileToDelete =
+          trustedProfiles.find((profile) => profile.trusted_profile_id === trustedProfileId) ??
+          archivedTrustedProfiles.find((profile) => profile.trusted_profile_id === trustedProfileId) ??
+          selectedTrustedProfile;
+        await deleteTrustedProfile(trustedProfileId, discardBlockingRuns);
+        const profiles = await reloadSettingsTrustedProfiles();
+        const fallbackProfileName =
+          profiles.find((profile) => profile.is_active_profile)?.profile_name ?? profiles[0]?.profile_name ?? "";
+        setSelectedTrustedProfileName(fallbackProfileName);
+        setDraftState(null);
+        draftStateRef.current = null;
+        setProfileDetail(null);
+        advanceDraftSync("reset");
+        if (runDetail?.trusted_profile_id === trustedProfileId) {
+          clearLoadedReviewWorkspaceState();
+          setStatusMessage(
+            `Deleted ${profileToDelete?.display_name ?? "the selected trusted profile"} and cleared the discarded unfinished review workflow from the browser.`,
+          );
+        }
+        setSettingsStatusMessage(
+          `Permanently deleted ${profileToDelete?.display_name ?? "the selected trusted profile"}.`,
+        );
+      },
+      { rethrow: true },
+    );
+  }
+
   function handleStayOnSettings() {
     setLeaveSettingsPrompt(null);
   }
@@ -1207,6 +1325,11 @@ export default function App() {
   }
 
   const busy = busyAction !== null;
+  const retainedExportExpiresAt = exportArtifact?.expires_at ?? null;
+  const retainedExportExpired =
+    retainedExportExpiresAt !== null && !Number.isNaN(new Date(retainedExportExpiresAt).getTime())
+      ? new Date(retainedExportExpiresAt).getTime() <= Date.now()
+      : false;
   const currentWorkspaceStatusMessage = activeWorkspace === "settings" ? settingsStatusMessage : statusMessage;
   const currentWorkspaceTitle = activeWorkspace === "settings" ? "Profile Settings Workspace" : "Job Cost Review Workspace";
   const currentWorkspaceEyebrow = activeWorkspace === "settings" ? "Phase 2A Settings" : "Phase 1 Pilot Review";
@@ -1357,43 +1480,68 @@ export default function App() {
       ) : null}
 
       {activeWorkspace === "review" ? (
-        <section className="review-console">
-          <div className="review-console-rail">
-          <UploadRunPanel
-            trustedProfiles={trustedProfiles}
-            selectedTrustedProfileName={selectedTrustedProfileName}
-            stagedReports={stagedReports}
-            activeStagedReportId={activeStagedReport?.stagedReportId ?? ""}
-            busy={busy}
-            exportDisabled={!reviewSession || reviewExportInvalidated}
-            onTrustedProfileNameChange={handleReviewTrustedProfileNameChange}
-            onStageFiles={handleStageFiles}
-            onSelectStagedReport={handleSelectStagedReport}
-            onRemoveStagedReport={handleRemoveStagedReport}
-            onLaunchReviewWorkspace={() => void handleLaunchReviewWorkspace()}
-            onExportAndDownload={() => void handleExportAndDownload()}
-          />
-        </div>
+        <>
+          {exportArtifact ? (
+            <div className={retainedExportExpired ? "banner warning" : "banner success"} role="status">
+              <strong>{retainedExportExpired ? "Retained download expired." : "Retained download is available."}</strong>
+              <p>
+                {retainedExportExpired
+                  ? "The last exported workbook has passed its retention window. Process the staged report again if you need a fresh download."
+                  : `The last exported workbook${lastDownloadedFilename ? ` (${lastDownloadedFilename})` : ""} remains downloadable until ${formatDateTime(exportArtifact.expires_at)}.`}
+              </p>
+              {!retainedExportExpired ? (
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void handleDownloadRetainedExportArtifact()}
+                    disabled={busy}
+                  >
+                    Download retained workbook
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
-          <div className="review-console-main">
-            <ReviewWorkspace
-              runDetail={runDetail}
-              reviewSession={reviewSession}
-              rows={rows}
-              selectedRow={selectedRow}
-              selectedReviewRecordKeys={selectedReviewRecordKeys}
-              exportArtifact={exportArtifact}
-              exportDisabledMessage={reviewContextMessage}
+          <section className="review-console">
+            <div className="review-console-rail">
+            <UploadRunPanel
+              trustedProfiles={trustedProfiles}
+              selectedTrustedProfileName={selectedTrustedProfileName}
+              stagedReports={stagedReports}
+              activeStagedReportId={activeStagedReport?.stagedReportId ?? ""}
               busy={busy}
-              onToggleReviewRowSelection={handleReviewRowSelectionChange}
-              onSelectRow={handleActivateReviewRow}
-              onApplyBulkVendorName={handleApplyBulkVendorName}
-              onApplyBulkOmission={handleApplyBulkOmission}
-              onApplyBulkLaborClassification={handleApplyBulkLaborClassification}
-              onApplyBulkEquipmentCategory={handleApplyBulkEquipmentCategory}
+              exportDisabled={!reviewSession || reviewExportInvalidated}
+              onTrustedProfileNameChange={handleReviewTrustedProfileNameChange}
+              onStageFiles={handleStageFiles}
+              onSelectStagedReport={handleSelectStagedReport}
+              onRemoveStagedReport={handleRemoveStagedReport}
+              onLaunchReviewWorkspace={() => void handleLaunchReviewWorkspace()}
+              onExportAndDownload={() => void handleExportAndDownload()}
             />
           </div>
-        </section>
+
+            <div className="review-console-main">
+              <ReviewWorkspace
+                runDetail={runDetail}
+                reviewSession={reviewSession}
+                rows={rows}
+                selectedRow={selectedRow}
+                selectedReviewRecordKeys={selectedReviewRecordKeys}
+                exportArtifact={exportArtifact}
+                exportDisabledMessage={reviewContextMessage}
+                busy={busy}
+                onToggleReviewRowSelection={handleReviewRowSelectionChange}
+                onSelectRow={handleActivateReviewRow}
+                onApplyBulkVendorName={handleApplyBulkVendorName}
+                onApplyBulkOmission={handleApplyBulkOmission}
+                onApplyBulkLaborClassification={handleApplyBulkLaborClassification}
+                onApplyBulkEquipmentCategory={handleApplyBulkEquipmentCategory}
+              />
+            </div>
+          </section>
+        </>
       ) : (
         <ProfileSettingsWorkspace
           key={`settings-session-${settingsWorkspaceSession}`}
@@ -1416,6 +1564,8 @@ export default function App() {
           onCreateTrustedProfile={handleCreateTrustedProfile}
           onArchiveTrustedProfile={handleArchiveTrustedProfile}
           onUnarchiveTrustedProfile={handleUnarchiveTrustedProfile}
+          onFetchTrustedProfileDeleteImpact={handleFetchTrustedProfileDeleteImpact}
+          onDeleteTrustedProfile={handleDeleteTrustedProfile}
           onLeaveGuardChange={registerSettingsLeaveGuard}
         />
       )}

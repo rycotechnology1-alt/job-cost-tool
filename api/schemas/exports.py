@@ -19,11 +19,9 @@ class ExportArtifactResponse(ApiModel):
     """Metadata returned after generating one exact-revision export artifact."""
 
     export_artifact_id: str
-    processing_run_id: str
-    review_session_id: str
     session_revision: int
     artifact_kind: str
-    template_artifact_id: str | None = None
     file_hash: str | None = None
     created_at: datetime
+    expires_at: datetime | None = None
     download_url: str

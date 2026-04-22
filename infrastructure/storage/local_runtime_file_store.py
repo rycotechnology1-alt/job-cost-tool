@@ -20,16 +20,19 @@ class LocalRuntimeFileStore(RuntimeStorage):
         *,
         upload_root: str | Path,
         export_root: str | Path,
+        export_retention_hours: int | float = 24,
         upload_retention_hours: int | float = 24,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         self._upload_root = Path(upload_root).expanduser().resolve()
         self._export_root = Path(export_root).expanduser().resolve()
+        self._export_retention_hours = float(export_retention_hours)
         self._upload_retention_hours = float(upload_retention_hours)
         self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         self._upload_root.mkdir(parents=True, exist_ok=True)
         self._export_root.mkdir(parents=True, exist_ok=True)
         self.cleanup_expired_uploads()
+        self.cleanup_expired_export_artifacts()
 
     def save_upload(
         self,
@@ -138,6 +141,27 @@ class LocalRuntimeFileStore(RuntimeStorage):
                 deleted_count += 1
         return deleted_count
 
+    def cleanup_expired_export_artifacts(self) -> int:
+        """Delete expired export artifacts from the temporary runtime cache."""
+        if self._export_retention_hours <= 0:
+            return 0
+
+        deleted_count = 0
+        for metadata_path in self._export_root.rglob("metadata.json"):
+            artifact_dir = metadata_path.parent
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except Exception:
+                metadata = {}
+            created_at = self._resolve_runtime_created_at(
+                artifact_dir,
+                metadata,
+            )
+            if self._is_export_expired(created_at, metadata=metadata):
+                self._delete_runtime_dir(self._export_root, artifact_dir)
+                deleted_count += 1
+        return deleted_count
+
     def save_export_artifact(
         self,
         *,
@@ -160,6 +184,12 @@ class LocalRuntimeFileStore(RuntimeStorage):
         export_dir.mkdir(parents=True, exist_ok=False)
         file_path = (export_dir / filename).resolve()
         file_path.write_bytes(content_bytes)
+        created_at = self._normalize_timestamp(self._now_provider())
+        expires_at = (
+            created_at + timedelta(hours=self._export_retention_hours)
+            if self._export_retention_hours > 0
+            else None
+        )
 
         storage_ref = f"exports/{sanitized_run_id}/{artifact_id}/{filename}"
         metadata = {
@@ -172,6 +202,8 @@ class LocalRuntimeFileStore(RuntimeStorage):
             "file_size_bytes": len(content_bytes),
             "storage_ref": storage_ref,
             "filename": filename,
+            "created_at": created_at.isoformat(),
+            "expires_at": expires_at.isoformat() if expires_at else None,
         }
         (export_dir / "metadata.json").write_text(
             json.dumps(metadata, indent=2, sort_keys=True),
@@ -183,6 +215,8 @@ class LocalRuntimeFileStore(RuntimeStorage):
             content_type=str(metadata["content_type"]),
             file_size_bytes=len(content_bytes),
             file_path=file_path,
+            created_at=created_at,
+            expires_at=expires_at,
         )
 
     def get_export_artifact(self, storage_ref: str) -> StoredArtifact:
@@ -197,6 +231,10 @@ class LocalRuntimeFileStore(RuntimeStorage):
             raise FileNotFoundError(f"Export artifact '{storage_ref}' was not found.")
 
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        created_at = self._resolve_runtime_created_at(export_dir, metadata)
+        if self._is_export_expired(created_at, metadata=metadata):
+            self._delete_runtime_dir(self._export_root, export_dir)
+            raise FileNotFoundError(f"Export artifact '{storage_ref}' was not found.")
         file_path = (export_dir / str(metadata["filename"])).resolve()
         if not file_path.is_file():
             raise FileNotFoundError(f"Export artifact payload is missing for '{storage_ref}'.")
@@ -207,6 +245,8 @@ class LocalRuntimeFileStore(RuntimeStorage):
             content_type=str(metadata["content_type"]),
             file_size_bytes=int(metadata["file_size_bytes"]),
             file_path=file_path,
+            created_at=created_at,
+            expires_at=self._resolve_expires_at(created_at, metadata=metadata, retention_hours=self._export_retention_hours),
         )
 
     def delete_export_artifact(self, storage_ref: str) -> None:
@@ -249,9 +289,13 @@ class LocalRuntimeFileStore(RuntimeStorage):
 
     def _resolve_upload_created_at(self, upload_dir: Path, metadata: dict | None = None) -> datetime:
         """Return the upload creation timestamp from metadata or legacy filesystem state."""
+        return self._resolve_runtime_created_at(upload_dir, metadata)
+
+    def _resolve_runtime_created_at(self, runtime_dir: Path, metadata: dict | None = None) -> datetime:
+        """Return the runtime artifact creation timestamp from metadata or legacy filesystem state."""
         raw_metadata = metadata
         if raw_metadata is None:
-            metadata_path = upload_dir / "metadata.json"
+            metadata_path = runtime_dir / "metadata.json"
             if metadata_path.is_file():
                 raw_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             else:
@@ -263,7 +307,7 @@ class LocalRuntimeFileStore(RuntimeStorage):
                 return self._normalize_timestamp(datetime.fromisoformat(created_at_value))
             except ValueError:
                 pass
-        return self._fallback_created_at(upload_dir)
+        return self._fallback_created_at(runtime_dir)
 
     def _fallback_created_at(self, upload_dir: Path) -> datetime:
         """Return a best-effort timestamp for legacy uploads that predate created_at metadata."""
@@ -277,6 +321,35 @@ class LocalRuntimeFileStore(RuntimeStorage):
         if self._upload_retention_hours <= 0:
             return False
         expires_at = created_at + timedelta(hours=self._upload_retention_hours)
+        return self._normalize_timestamp(self._now_provider()) >= expires_at
+
+    def _resolve_expires_at(
+        self,
+        created_at: datetime,
+        *,
+        metadata: dict,
+        retention_hours: float,
+    ) -> datetime | None:
+        """Return the resolved artifact expiration timestamp from metadata or retention."""
+        raw_expires_at = str(metadata.get("expires_at") or "").strip()
+        if raw_expires_at:
+            try:
+                return self._normalize_timestamp(datetime.fromisoformat(raw_expires_at))
+            except ValueError:
+                pass
+        if retention_hours <= 0:
+            return None
+        return created_at + timedelta(hours=retention_hours)
+
+    def _is_export_expired(self, created_at: datetime, *, metadata: dict) -> bool:
+        """Return True when one export artifact is older than the configured retention window."""
+        expires_at = self._resolve_expires_at(
+            created_at,
+            metadata=metadata,
+            retention_hours=self._export_retention_hours,
+        )
+        if expires_at is None:
+            return False
         return self._normalize_timestamp(self._now_provider()) >= expires_at
 
     def _delete_upload_dir(self, upload_dir: Path) -> None:

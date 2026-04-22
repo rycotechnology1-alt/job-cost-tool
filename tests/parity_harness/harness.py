@@ -52,6 +52,7 @@ def run_desktop_reference_path(case: ParityCase, runtime_root: Path) -> ParityRu
             legacy_config_dir=legacy_config_dir,
         )
 
+    base_review_records = list(base_result.review_records)
     current_review_records = list(base_result.review_records)
     current_records = list(base_result.records)
     current_blockers = list(base_result.blocking_issues)
@@ -64,6 +65,7 @@ def run_desktop_reference_path(case: ParityCase, runtime_root: Path) -> ParityRu
                 current_review_records,
                 record_index,
                 dict(edit["changed_fields"]),
+                base_review_records=base_review_records,
                 file_path=str(source_path),
                 config_dir=profile_dir,
                 legacy_config_dir=legacy_config_dir,

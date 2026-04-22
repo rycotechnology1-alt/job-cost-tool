@@ -671,13 +671,11 @@ function installFetchMock(
       return jsonResponse(
         {
           export_artifact_id: "export-artifact-1",
-          processing_run_id: "processing-run-1",
-          review_session_id: "review-session-1",
           session_revision: state.currentReviewRevision,
           artifact_kind: "recap_workbook",
-          template_artifact_id: "template-artifact-1",
           file_hash: "abc123",
           created_at: "2026-04-05T12:00:00Z",
+          expires_at: "2099-04-06T12:00:00Z",
           download_url: "/api/exports/export-artifact-1/download",
         },
         201,
@@ -810,7 +808,7 @@ describe("App", () => {
     expect(JSON.parse(String(editRequest?.[1]?.body)).edits[0].record_key).toBe("record-1");
   });
 
-  it("exports and downloads the current review revision in one click", async () => {
+  it("exports, clears the loaded review state, and retains a short-lived download link", async () => {
     installFetchMock();
     const user = userEvent.setup();
     render(<App />);
@@ -831,12 +829,25 @@ describe("App", () => {
     });
 
     expect(await screen.findByText(/downloaded report-recap-rev-1\.xlsx from review revision 1/i)).toBeInTheDocument();
+    expect(await screen.findByText(/retained download is available/i)).toBeInTheDocument();
+    expect(screen.getByText(/remains downloadable until/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /download retained workbook/i })).toBeInTheDocument();
+    expect(screen.getByText(/open a report in the review workspace to inspect rows and apply corrections/i)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "report.pdf" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /download retained workbook/i }));
+
+    await waitFor(() => {
+      expect(
+        vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/exports/export-artifact-1/download"),
+      ).toHaveLength(2);
+    });
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     const exportRequest = fetchCalls.find(([url]) => url === "/api/runs/processing-run-1/exports");
     expect(exportRequest).toBeDefined();
     expect(JSON.parse(String(exportRequest?.[1]?.body)).session_revision).toBe(1);
-    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:download-url");
   });
 

@@ -228,7 +228,7 @@ def build_export_artifact(
     artifact_kind: str,
     storage_ref: str,
     created_at: datetime,
-    template_artifact_id: str | None = None,
+    expires_at: datetime | None = None,
     created_by_user_id: str | None = None,
     file_hash: str | None = None,
 ) -> ExportArtifact:
@@ -246,13 +246,11 @@ def build_export_artifact(
     return ExportArtifact(
         export_artifact_id=export_artifact_id,
         organization_id=organization_id,
-        processing_run_id=processing_run.processing_run_id,
-        review_session_id=review_session.review_session_id,
         session_revision=session_revision,
         artifact_kind=str(artifact_kind).strip() or "recap_workbook",
         storage_ref=storage_ref_text,
         created_at=created_at,
-        template_artifact_id=template_artifact_id,
+        expires_at=expires_at,
         created_by_user_id=created_by_user_id,
         file_hash=str(file_hash).strip() or None,
     )

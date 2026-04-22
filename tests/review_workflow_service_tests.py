@@ -409,6 +409,90 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
             ["Record on page 1 (phase 20, equipment): Record still contains unresolved parsing or normalization ambiguity."],
         )
 
+    def test_update_review_record_preserves_prior_manual_resolutions_across_later_edits(self) -> None:
+        first_record = Record(
+            record_type=EQUIPMENT,
+            phase_code="20",
+            raw_description="Crane truck line",
+            cost=100.0,
+            hours=8.0,
+            hour_type="EA",
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="627/2025 crane truck",
+            equipment_category=None,
+            confidence=0.6,
+            warnings=[
+                "Equipment description did not match a configured target equipment category.",
+                "Medium-confidence record should be reviewed before export.",
+                "BLOCKING: Equipment recap category is missing.",
+            ],
+            source_page=1,
+            source_line_text="source",
+            record_type_normalized=EQUIPMENT,
+            recap_equipment_slot_id=None,
+            is_omitted=False,
+        )
+        second_record = Record(
+            record_type=EQUIPMENT,
+            phase_code="21",
+            raw_description="Second crane truck line",
+            cost=120.0,
+            hours=8.0,
+            hour_type="EA",
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description="628/2025 crane truck",
+            equipment_category=None,
+            confidence=0.6,
+            warnings=[
+                "Equipment description did not match a configured target equipment category.",
+                "Medium-confidence record should be reviewed before export.",
+                "BLOCKING: Equipment recap category is missing.",
+            ],
+            source_page=1,
+            source_line_text="source-2",
+            record_type_normalized=EQUIPMENT,
+            recap_equipment_slot_id=None,
+            is_omitted=False,
+        )
+        base_review_records = [first_record, second_record]
+
+        with patch(
+            "services.review_workflow_service.ConfigLoader",
+            side_effect=lambda *args, **kwargs: self._build_loader(),
+        ):
+            first_update = update_review_record(
+                list(base_review_records),
+                0,
+                {"equipment_category": "Pick-up Truck"},
+                file_path="sample.pdf",
+                base_review_records=base_review_records,
+            )
+
+            self.assertIsNotNone(first_update)
+            if first_update is None:
+                self.fail("Expected first review update result.")
+
+            second_update = update_review_record(
+                first_update.review_records,
+                1,
+                {"equipment_category": "Pick-up Truck"},
+                file_path="sample.pdf",
+                base_review_records=base_review_records,
+            )
+
+        self.assertIsNotNone(second_update)
+        if second_update is None:
+            self.fail("Expected second review update result.")
+        self.assertEqual(second_update.records[0].warnings, [])
+        self.assertEqual(second_update.records[1].warnings, [])
+        self.assertEqual(second_update.blocking_issues, [])
+
     def test_load_edit_options_returns_profile_defined_choices(self) -> None:
         with patch(
             "services.review_workflow_service.ConfigLoader",

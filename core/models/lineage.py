@@ -232,13 +232,11 @@ class ExportArtifact:
 
     export_artifact_id: str
     organization_id: str
-    processing_run_id: str
-    review_session_id: str
     session_revision: int
     artifact_kind: str
     storage_ref: str
     created_at: datetime
-    template_artifact_id: str | None = None
+    expires_at: datetime | None = None
     created_by_user_id: str | None = None
     file_hash: str | None = None
 

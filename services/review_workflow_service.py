@@ -70,6 +70,7 @@ def update_review_record(
     record_index: int,
     updates: dict[str, object],
     *,
+    base_review_records: list[Record] | None = None,
     file_path: str | None = None,
     config_dir: str | Path | None = None,
     legacy_config_dir: str | Path | None = None,
@@ -77,6 +78,9 @@ def update_review_record(
     """Apply one record edit, then re-run validation for the full review dataset."""
     if record_index < 0 or record_index >= len(review_records):
         return None
+    validation_base_records = review_records if base_review_records is None else list(base_review_records)
+    if len(validation_base_records) != len(review_records):
+        raise ValueError("base_review_records must have the same length as review_records.")
 
     allowed_updates = prepare_review_updates(
         updates,
@@ -87,7 +91,7 @@ def update_review_record(
         return None
     next_review_records = list(review_records)
     next_review_records[record_index] = replace(next_review_records[record_index], **allowed_updates)
-    records, blocking_issues = validate_review_records(review_records, next_review_records)
+    records, blocking_issues = validate_review_records(validation_base_records, next_review_records)
     return ReviewUpdateResult(
         review_records=next_review_records,
         records=list(records),

@@ -13,6 +13,7 @@ import type {
   LaborMappingRow,
   LaborRateRow,
   PublishedProfileDetailResponse,
+  TrustedProfileDeleteImpactResponse,
   TrustedProfileResponse,
 } from "../api/contracts";
 
@@ -62,6 +63,8 @@ interface ProfileSettingsWorkspaceProps {
   onCreateTrustedProfile: (request: CreateTrustedProfileRequest) => Promise<void> | void;
   onArchiveTrustedProfile: () => Promise<void> | void;
   onUnarchiveTrustedProfile: (trustedProfileId: string, displayName: string) => Promise<void> | void;
+  onFetchTrustedProfileDeleteImpact: (trustedProfileId: string) => Promise<TrustedProfileDeleteImpactResponse>;
+  onDeleteTrustedProfile: (trustedProfileId: string, discardBlockingRuns: boolean) => Promise<void>;
   onLeaveGuardChange?: (guard: ProfileSettingsLeaveGuard | null) => void;
 }
 
@@ -84,6 +87,14 @@ interface RetainedDraftWorkspaceState {
   labor_rates: LaborRateRow[];
   equipment_rates: EquipmentRateRow[];
   dirty_sections: string[];
+}
+
+interface DeleteConfirmationState {
+  trustedProfileId: string;
+  profileDisplayName: string;
+  impact: TrustedProfileDeleteImpactResponse;
+  hasOpenDraft: boolean;
+  hasLocalUnsavedEdits: boolean;
 }
 
 function prettyJson(value: unknown): string {
@@ -666,6 +677,8 @@ export function ProfileSettingsWorkspace({
   onCreateTrustedProfile,
   onArchiveTrustedProfile,
   onUnarchiveTrustedProfile,
+  onFetchTrustedProfileDeleteImpact,
+  onDeleteTrustedProfile,
   onLeaveGuardChange,
 }: ProfileSettingsWorkspaceProps) {
   const [defaultOmitRules, setDefaultOmitRules] = useState<DefaultOmitRuleRow[]>([]);
@@ -686,6 +699,7 @@ export function ProfileSettingsWorkspace({
   const [bulkEquipmentTarget, setBulkEquipmentTarget] = useState("");
   const [retainedDraftStates, setRetainedDraftStates] = useState<Record<string, RetainedDraftWorkspaceState>>({});
   const [restoredDraftNotice, setRestoredDraftNotice] = useState("");
+  const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmationState | null>(null);
   const lastDraftIdRef = useRef<string | null>(null);
   const hydratedDraftKeyRef = useRef<string | null>(null);
 
@@ -1014,6 +1028,9 @@ export function ProfileSettingsWorkspace({
     selectedTrustedProfile?.source_kind === "published_clone" &&
     !openDraftId &&
     !selectedProfileDraft;
+  const canDeleteSelectedProfile =
+    selectedTrustedProfile?.source_kind === "published_clone" &&
+    selectedTrustedProfile.profile_name !== "default";
   const createProfileDisabled =
     busy ||
     !selectedTrustedProfile ||
@@ -1042,6 +1059,10 @@ export function ProfileSettingsWorkspace({
       return next.length === current.length && next.every((rowKey, index) => rowKey === current[index]) ? current : next;
     });
   }, [equipmentMappingEntries]);
+
+  useEffect(() => {
+    setDeleteConfirmation(null);
+  }, [selectedTrustedProfile?.trusted_profile_id]);
 
   useEffect(() => {
     if (
@@ -1346,9 +1367,121 @@ export function ProfileSettingsWorkspace({
     await onUnarchiveTrustedProfile(profile.trusted_profile_id, profile.display_name);
   }
 
+  async function handleDeleteProfile() {
+    if (!selectedTrustedProfile || !canDeleteSelectedProfile) {
+      return;
+    }
+    try {
+      const impact = await onFetchTrustedProfileDeleteImpact(selectedTrustedProfile.trusted_profile_id);
+      if (impact.can_delete) {
+        const draftNotice =
+          openDraftId || selectedRetainedDraftState
+            ? " Any unpublished drafts and retained browser-only edits for this profile will also be deleted."
+            : "";
+        if (
+          !window.confirm(
+            `Permanently delete ${selectedTrustedProfile.display_name}? This removes its drafts, observations, published versions, and profile row.${draftNotice}`,
+          )
+        ) {
+          return;
+        }
+        await onDeleteTrustedProfile(selectedTrustedProfile.trusted_profile_id, false);
+        return;
+      }
+      setDeleteConfirmation({
+        trustedProfileId: selectedTrustedProfile.trusted_profile_id,
+        profileDisplayName: selectedTrustedProfile.display_name,
+        impact,
+        hasOpenDraft: Boolean(openDraftId),
+        hasLocalUnsavedEdits: Boolean(selectedRetainedDraftState),
+      });
+    } catch {
+      return;
+    }
+  }
+
+  async function handleDiscardRunsAndDeleteProfile() {
+    if (!deleteConfirmation) {
+      return;
+    }
+    try {
+      await onDeleteTrustedProfile(deleteConfirmation.trustedProfileId, true);
+      setDeleteConfirmation(null);
+    } catch (error) {
+      if (!(error instanceof ApiRequestError) || error.errorCode !== "trusted_profile_delete_blocked") {
+        return;
+      }
+      const impact = await onFetchTrustedProfileDeleteImpact(deleteConfirmation.trustedProfileId);
+      setDeleteConfirmation((current) =>
+        current
+          ? {
+              ...current,
+              impact,
+            }
+          : current,
+      );
+    }
+  }
+
   return (
     <section className="workspace-shell settings-shell">
       <h2 className="sr-only">{selectedTrustedProfile?.display_name ?? "Choose a trusted profile"}</h2>
+
+      {deleteConfirmation ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="dialog-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-profile-title"
+          >
+            <p className="eyebrow">Permanent Delete</p>
+            <h2 id="delete-profile-title">Delete {deleteConfirmation.profileDisplayName}?</h2>
+            <p>
+              This profile still has unfinished processing runs. Deleting it now will discard those runs and remove the
+              profile&apos;s drafts, observations, published versions, and profile row.
+            </p>
+            {deleteConfirmation.hasOpenDraft || deleteConfirmation.hasLocalUnsavedEdits ? (
+              <p className="muted">
+                {deleteConfirmation.hasOpenDraft
+                  ? "Open unpublished profile changes"
+                  : "Retained browser-only profile edits"}
+                {deleteConfirmation.hasOpenDraft && deleteConfirmation.hasLocalUnsavedEdits
+                  ? " and retained browser-only edits"
+                  : ""}
+                {" "}for this profile will also be deleted.
+              </p>
+            ) : null}
+            <div className="workspace-callout">
+              <strong>{deleteConfirmation.impact.blocking_runs.length} unfinished run{deleteConfirmation.impact.blocking_runs.length === 1 ? "" : "s"} will be discarded</strong>
+              <ul className="message-list">
+                {deleteConfirmation.impact.blocking_runs.map((blockingRun) => (
+                  <li key={blockingRun.processing_run_id}>
+                    {blockingRun.source_filename} ({blockingRun.processing_run_id}) created {formatArchivedAt(blockingRun.created_at)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="actions">
+              <button
+                type="button"
+                onClick={() => void handleDiscardRunsAndDeleteProfile()}
+                disabled={busy || !deleteConfirmation.impact.discard_blocking_runs_available}
+              >
+                Discard runs and delete
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setDeleteConfirmation(null)}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       <div className="settings-console">
         <aside className="settings-sidebar-column" aria-label="Profile settings controls">
@@ -1513,6 +1646,39 @@ export function ProfileSettingsWorkspace({
                   ? "Save or discard the unpublished profile changes before archiving this profile."
                   : "Archiving hides the profile from active selectors but preserves its versions, runs, and review lineage history."}
             </p>
+            </div>
+            <div className="workspace-callout">
+            <strong>Permanent delete</strong>
+            <p>
+              Permanent delete is only available for web-created profiles. The seeded default recap profile cannot be
+              deleted.
+            </p>
+            {canDeleteSelectedProfile ? (
+              <>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void handleDeleteProfile()}
+                    disabled={busy}
+                  >
+                    Permanently delete selected profile
+                  </button>
+                </div>
+                <p className="muted">
+                  Deleting removes drafts, observations, published versions, and the profile row itself. If unfinished
+                  runs still reference this profile, you&apos;ll be asked to discard them first.
+                </p>
+              </>
+            ) : (
+              <p className="muted">
+                {selectedTrustedProfile?.profile_name === "default"
+                  ? "The seeded default recap profile remains the fallback profile and cannot be permanently deleted."
+                  : selectedTrustedProfile?.source_kind !== "published_clone"
+                    ? "Only web-created profiles expose permanent delete in hosted settings."
+                    : "Choose a web-created profile to use permanent delete."}
+              </p>
+            )}
             </div>
             <div className="workspace-callout">
             <strong>Archived profiles</strong>

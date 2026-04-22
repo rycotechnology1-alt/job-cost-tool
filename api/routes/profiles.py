@@ -10,6 +10,7 @@ from api.request_context import get_request_context
 from api.schemas.profile_authoring import (
     ClassificationsPatchRequest,
     CreateTrustedProfileRequest,
+    DeleteTrustedProfileRequest,
     DraftSaveRequest,
     DefaultOmitPatchRequest,
     DraftEditorStateResponse,
@@ -19,10 +20,12 @@ from api.schemas.profile_authoring import (
     PublishDraftRequest,
     PublishedProfileDetailResponse,
     RatesPatchRequest,
+    TrustedProfileDeleteImpactResponse,
 )
 from api.serializers import (
     to_draft_editor_state_response,
     to_published_profile_detail_response,
+    to_trusted_profile_delete_impact_response,
 )
 from services.request_context import RequestContext
 
@@ -95,6 +98,45 @@ def unarchive_trusted_profile(
     try:
         runtime.profile_authoring_service.unarchive_trusted_profile(
             trusted_profile_id,
+            request_context=request_context,
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profiles_router.get(
+    "/{trusted_profile_id}/delete-impact",
+    response_model=TrustedProfileDeleteImpactResponse,
+)
+def get_trusted_profile_delete_impact(
+    trusted_profile_id: str,
+    runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
+) -> TrustedProfileDeleteImpactResponse:
+    """Return whether one trusted profile can be permanently deleted right now."""
+    try:
+        impact = runtime.profile_authoring_service.get_trusted_profile_delete_impact(
+            trusted_profile_id,
+            request_context=request_context,
+        )
+        return to_trusted_profile_delete_impact_response(impact)
+    except Exception as exc:  # pragma: no cover - exercised via API tests
+        raise to_http_exception(exc) from exc
+
+
+@profiles_router.post("/{trusted_profile_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
+def delete_trusted_profile(
+    trusted_profile_id: str,
+    request: DeleteTrustedProfileRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
+) -> Response:
+    """Permanently delete one trusted profile after clearing any unfinished runs."""
+    try:
+        runtime.profile_authoring_service.delete_trusted_profile(
+            trusted_profile_id,
+            discard_blocking_runs=request.discard_blocking_runs,
             request_context=request_context,
         )
         return Response(status_code=status.HTTP_204_NO_CONTENT)

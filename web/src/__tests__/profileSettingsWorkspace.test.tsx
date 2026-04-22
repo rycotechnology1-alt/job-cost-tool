@@ -586,6 +586,11 @@ function installSecondProfileCreationFetchMock(options?: {
   deferFieldTeamDetailOnce?: boolean;
   failFieldTeamDetailOnce?: boolean;
   includeSecondProfileInitially?: boolean;
+  deleteBlockingRuns?: Array<{
+    processing_run_id: string;
+    source_filename: string;
+    created_at: string;
+  }>;
 }) {
   const defaultProfile = clone(trustedProfilesPayload[0]);
   const secondProfile = {
@@ -665,6 +670,7 @@ function installSecondProfileCreationFetchMock(options?: {
     defaultDraft,
     secondDetail,
     secondDraft,
+    deleteBlockingRuns: clone(options?.deleteBlockingRuns ?? []),
   };
   let deferredFieldTeamDetailResolve: (() => void) | null = null;
   let deferredFieldTeamDetailUsed = false;
@@ -854,6 +860,63 @@ function installSecondProfileCreationFetchMock(options?: {
     if (url === "/api/profiles/trusted-profile:org-default:field-team/unarchive" && method === "POST") {
       state.activeTrustedProfiles = [defaultProfile, secondProfile];
       state.archivedTrustedProfiles = [];
+      return new Response(null, {
+        status: 204,
+      });
+    }
+
+    if (url === "/api/profiles/trusted-profile:org-default:field-team/delete-impact" && method === "GET") {
+      return new Response(
+        JSON.stringify({
+          can_delete: state.deleteBlockingRuns.length === 0,
+          discard_blocking_runs_available: state.deleteBlockingRuns.length > 0,
+          blocking_runs: state.deleteBlockingRuns,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    if (url === "/api/profiles/trusted-profile:org-default:default/delete-impact" && method === "GET") {
+      return new Response(
+        JSON.stringify({
+          can_delete: false,
+          discard_blocking_runs_available: false,
+          blocking_runs: [],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
+    if (url === "/api/profiles/trusted-profile:org-default:field-team/delete" && method === "POST") {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as { discard_blocking_runs?: boolean };
+      if (state.deleteBlockingRuns.length > 0 && !payload.discard_blocking_runs) {
+        return new Response(
+          JSON.stringify({
+            detail: {
+              message: "Trusted profile 'Field Team' still has unfinished runs that must be discarded before permanent delete.",
+              error_code: "trusted_profile_delete_blocked",
+            },
+          }),
+          {
+            status: 409,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+      state.deleteBlockingRuns = [];
+      state.activeTrustedProfiles = state.activeTrustedProfiles.filter(
+        (profile) => profile.trusted_profile_id !== secondProfile.trusted_profile_id,
+      );
+      state.archivedTrustedProfiles = state.archivedTrustedProfiles.filter(
+        (profile) => profile.trusted_profile_id !== secondProfile.trusted_profile_id,
+      );
+      state.secondDetail.open_draft_id = null;
       return new Response(null, {
         status: 204,
       });
@@ -1784,6 +1847,76 @@ describe("Profile settings workspace", () => {
 
     const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
     expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:field-team/unarchive" && init?.method === "POST")).toBe(true);
+  });
+
+  it("never shows permanent delete for the seeded default recap profile", async () => {
+    const user = userEvent.setup();
+    installSettingsFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+
+    expect(await screen.findByRole("heading", { name: "Default Profile" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /permanently delete selected profile/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/default recap profile remains the fallback profile and cannot be permanently deleted/i)).toBeInTheDocument();
+  });
+
+  it("opens a blocker modal and can discard unfinished runs before deleting a web-created profile", async () => {
+    const user = userEvent.setup();
+    installSecondProfileCreationFetchMock({
+      deleteBlockingRuns: [
+        {
+          processing_run_id: "processing-run:field-team:1",
+          source_filename: "field-team-report.pdf",
+          created_at: "2026-04-07T14:30:00Z",
+        },
+      ],
+    });
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
+    await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
+    await screen.findByRole("heading", { name: "Field Team" });
+
+    await user.click(screen.getByRole("button", { name: /permanently delete selected profile/i }));
+
+    expect(await screen.findByRole("dialog", { name: /delete field team/i })).toBeInTheDocument();
+    expect(screen.getByText(/field-team-report\.pdf/i)).toBeInTheDocument();
+    expect(screen.getByText(/processing-run:field-team:1/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /discard runs and delete/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Default Profile" })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Field Team" })).not.toBeInTheDocument();
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:field-team/delete-impact" && (!init || !init.method || init.method === "GET"))).toBe(true);
+    expect(fetchCalls.some(([url, init]) => url === "/api/profiles/trusted-profile:org-default:field-team/delete" && init?.method === "POST")).toBe(true);
+  });
+
+  it("permanently deletes an unblocked web-created profile from settings", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    installSecondProfileCreationFetchMock();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await user.type(screen.getByLabelText(/new profile display name/i), "Field Team");
+    await user.click(screen.getByRole("button", { name: /create profile from published version/i }));
+    await screen.findByRole("heading", { name: "Field Team" });
+
+    await user.click(screen.getByRole("button", { name: /permanently delete selected profile/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Default Profile" })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: "Field Team" })).not.toBeInTheDocument();
   });
 
   it("surfaces server-side create conflicts inline on the matching profile fields", async () => {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import Field
 
 from api.schemas.common import ApiModel
@@ -241,3 +243,25 @@ class DraftSaveRequest(ExpectedDraftRevisionRequest):
 
 class PublishDraftRequest(ExpectedDraftRevisionRequest):
     """Request body for publishing one draft through optimistic concurrency."""
+
+
+class BlockingProcessingRunSummaryResponse(ApiModel):
+    """Small summary of one unfinished run that blocks profile delete."""
+
+    processing_run_id: str
+    source_filename: str
+    created_at: datetime
+
+
+class TrustedProfileDeleteImpactResponse(ApiModel):
+    """Whether one trusted profile can be deleted right now and what blocks it."""
+
+    can_delete: bool
+    discard_blocking_runs_available: bool
+    blocking_runs: list[BlockingProcessingRunSummaryResponse] = Field(default_factory=list)
+
+
+class DeleteTrustedProfileRequest(ApiModel):
+    """Request body for permanently deleting one trusted profile."""
+
+    discard_blocking_runs: bool = False

@@ -120,14 +120,24 @@ export interface ReviewEditDelta {
 
 export interface ExportArtifactResponse {
   export_artifact_id: string;
-  processing_run_id: string;
-  review_session_id: string;
   session_revision: number;
   artifact_kind: string;
-  template_artifact_id: string | null;
   file_hash: string | null;
   created_at: string;
+  expires_at: string | null;
   download_url: string;
+}
+
+export interface BlockingProcessingRunSummaryResponse {
+  processing_run_id: string;
+  source_filename: string;
+  created_at: string;
+}
+
+export interface TrustedProfileDeleteImpactResponse {
+  can_delete: boolean;
+  discard_blocking_runs_available: boolean;
+  blocking_runs: BlockingProcessingRunSummaryResponse[];
 }
 
 export interface ProfileVersionSummaryResponse {

@@ -109,6 +109,7 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         read_write_token: str | None = None,
         upload_root: str | Path,
         export_root: str | Path,
+        export_retention_hours: int | float = 24,
         upload_retention_hours: int | float = 24,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
@@ -117,6 +118,7 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         )
         self._upload_root = Path(upload_root).expanduser().resolve()
         self._export_root = Path(export_root).expanduser().resolve()
+        self._export_retention_hours = float(export_retention_hours)
         self._upload_retention_hours = float(upload_retention_hours)
         self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         self._upload_root.mkdir(parents=True, exist_ok=True)
@@ -274,6 +276,31 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             deleted_count += 1
         return deleted_count
 
+    def cleanup_expired_export_artifacts(self) -> int:
+        """Delete expired export artifacts from shared blob storage explicitly."""
+        deleted_count = 0
+        for metadata_path in self._blob_client.list_paths(prefix="exports/"):
+            if not metadata_path.endswith("/metadata.json"):
+                continue
+            try:
+                metadata = self._read_metadata_blob(metadata_path)
+            except FileNotFoundError:
+                continue
+            try:
+                is_expired = self._is_export_expired(metadata)
+            except (FileNotFoundError, ValueError):
+                self._delete_export_artifact_paths(metadata_path=metadata_path)
+                deleted_count += 1
+                continue
+            if not is_expired:
+                continue
+            self._delete_export_artifact_paths(
+                metadata_path=metadata_path,
+                storage_ref=str(metadata.get("storage_ref") or "").strip() or None,
+            )
+            deleted_count += 1
+        return deleted_count
+
     def save_export_artifact(
         self,
         *,
@@ -293,6 +320,8 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         sanitized_run_id = self._sanitize_identifier(processing_run_id, field_name="processing_run_id")
         artifact_id = uuid4().hex
         storage_ref = f"exports/{sanitized_run_id}/{artifact_id}/{filename}"
+        created_at = self._normalize_timestamp(self._now_provider())
+        expires_at = self._artifact_expires_at(created_at, retention_hours=self._export_retention_hours)
         metadata = {
             "processing_run_id": str(processing_run_id),
             "session_revision": session_revision,
@@ -303,6 +332,8 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             "file_size_bytes": len(content_bytes),
             "storage_ref": storage_ref,
             "filename": filename,
+            "created_at": created_at.isoformat(),
+            "expires_at": expires_at.isoformat() if expires_at else None,
         }
         self._blob_client.put_bytes(
             pathname=storage_ref,
@@ -325,6 +356,8 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             content_type=metadata["content_type"],
             file_size_bytes=len(content_bytes),
             file_path=file_path,
+            created_at=created_at,
+            expires_at=expires_at,
         )
 
     def get_export_artifact(self, storage_ref: str) -> StoredArtifact:
@@ -349,6 +382,11 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
     ) -> StoredArtifact:
         normalized_storage_ref = self._normalize_storage_ref(storage_ref, expected_prefix=expected_prefix)
         metadata = self._read_metadata_blob(self._metadata_path_for_storage_ref(normalized_storage_ref))
+        if self._is_export_expired(metadata):
+            self._blob_client.delete_path(normalized_storage_ref)
+            self._blob_client.delete_path(self._metadata_path_for_storage_ref(normalized_storage_ref))
+            self._delete_cached_path(self._export_root, normalized_storage_ref)
+            raise FileNotFoundError(f"Storage reference '{storage_ref}' was not found.")
         content_bytes = self._blob_client.get_bytes(normalized_storage_ref)
         file_path = self._materialize_cache_file(
             root=self._export_root,
@@ -362,6 +400,8 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             content_type=str(metadata["content_type"]),
             file_size_bytes=int(metadata["file_size_bytes"]),
             file_path=file_path,
+            created_at=self._metadata_timestamp(metadata, "created_at"),
+            expires_at=self._artifact_expires_from_metadata(metadata, retention_hours=self._export_retention_hours),
         )
 
     def _write_metadata_blob(
@@ -382,6 +422,25 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         if not isinstance(metadata, dict):
             raise FileNotFoundError(pathname)
         return metadata
+
+    def _delete_export_artifact_paths(
+        self,
+        *,
+        metadata_path: str,
+        storage_ref: str | None = None,
+    ) -> None:
+        artifact_prefix = metadata_path.rsplit("/", 1)[0] + "/"
+        deleted_storage_refs: set[str] = set()
+        for artifact_path in self._blob_client.list_paths(prefix=artifact_prefix):
+            self._blob_client.delete_path(artifact_path)
+            if artifact_path.endswith("/metadata.json"):
+                continue
+            deleted_storage_refs.add(artifact_path)
+            self._delete_cached_path(self._export_root, artifact_path)
+        self._blob_client.delete_path(metadata_path)
+        normalized_storage_ref = str(storage_ref or "").strip()
+        if normalized_storage_ref and normalized_storage_ref not in deleted_storage_refs:
+            self._delete_cached_path(self._export_root, normalized_storage_ref)
 
     def _materialize_cache_file(
         self,
@@ -464,6 +523,36 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             expires_at = self._normalize_timestamp(datetime.fromisoformat(raw_expires_at))
         else:
             expires_at = self._expires_at(self._metadata_timestamp(metadata, "created_at"))
+        return self._normalize_timestamp(self._now_provider()) >= expires_at
+
+    def _artifact_expires_at(self, created_at: datetime, *, retention_hours: float) -> datetime | None:
+        if retention_hours <= 0:
+            return None
+        return created_at + timedelta(hours=retention_hours)
+
+    def _artifact_expires_from_metadata(
+        self,
+        metadata: dict[str, object],
+        *,
+        retention_hours: float,
+    ) -> datetime | None:
+        raw_expires_at = str(metadata.get("expires_at") or "").strip()
+        if raw_expires_at:
+            return self._normalize_timestamp(datetime.fromisoformat(raw_expires_at))
+        if retention_hours <= 0:
+            return None
+        return self._artifact_expires_at(
+            self._metadata_timestamp(metadata, "created_at"),
+            retention_hours=retention_hours,
+        )
+
+    def _is_export_expired(self, metadata: dict[str, object]) -> bool:
+        expires_at = self._artifact_expires_from_metadata(
+            metadata,
+            retention_hours=self._export_retention_hours,
+        )
+        if expires_at is None:
+            return False
         return self._normalize_timestamp(self._now_provider()) >= expires_at
 
     def _normalize_timestamp(self, value: datetime) -> datetime:

@@ -30,6 +30,8 @@ class StoredArtifact:
     content_type: str
     file_size_bytes: int
     file_path: Path
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
 
 
 class ExpiredUploadError(FileNotFoundError):
@@ -80,3 +82,6 @@ class RuntimeStorage(Protocol):
 
     def delete_export_artifact(self, storage_ref: str) -> None:
         """Delete one previously stored export artifact by storage reference."""
+
+    def cleanup_expired_export_artifacts(self) -> int:
+        """Delete expired export artifacts and return the number removed."""

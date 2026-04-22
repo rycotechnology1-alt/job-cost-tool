@@ -60,8 +60,8 @@ export function ExportPanel({
                   <dd>{exportArtifact.session_revision}</dd>
                 </div>
                 <div>
-                  <dt>Template artifact</dt>
-                  <dd>{exportArtifact.template_artifact_id ?? "—"}</dd>
+                  <dt>Expires</dt>
+                  <dd>{exportArtifact.expires_at ?? "—"}</dd>
                 </div>
                 <div>
                   <dt>Download</dt>

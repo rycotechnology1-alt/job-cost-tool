@@ -1288,6 +1288,111 @@ class PostgresLineageStore:
         ).fetchall()
         return [_processing_run_from_row(row) for row in rows]
 
+    def list_profile_delete_blocking_runs(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_id: str,
+    ) -> list[dict[str, object]]:
+        """Return unfinished processing runs that block one trusted-profile delete action."""
+        rows = self._connection.execute(
+            """
+            SELECT run.processing_run_id,
+                   document.original_filename AS source_filename,
+                   run.created_at
+            FROM processing_runs run
+            JOIN source_documents document
+              ON document.source_document_id = run.source_document_id
+            WHERE run.organization_id = %s
+              AND run.trusted_profile_id = %s
+            ORDER BY run.created_at ASC, run.processing_run_id ASC
+            """,
+            (organization_id, trusted_profile_id),
+        ).fetchall()
+        return [
+            {
+                "processing_run_id": row["processing_run_id"],
+                "source_filename": row["source_filename"],
+                "created_at": _parse_dt(row["created_at"]),
+            }
+            for row in rows
+        ]
+
+    def purge_processing_run_workflow(self, *, processing_run_id: str) -> None:
+        """Delete one processing run plus its review workflow, pruning orphaned snapshot/source rows."""
+        with self._connection.transaction():
+            run_row = self._connection.execute(
+                """
+                SELECT source_document_id, profile_snapshot_id
+                FROM processing_runs
+                WHERE processing_run_id = %s
+                """,
+                (processing_run_id,),
+            ).fetchone()
+            if run_row is None:
+                raise KeyError(f"ProcessingRun '{processing_run_id}' was not found.")
+
+            self._connection.execute(
+                """
+                UPDATE trusted_profile_observations
+                SET first_seen_processing_run_id = CASE
+                        WHEN first_seen_processing_run_id = %s THEN NULL
+                        ELSE first_seen_processing_run_id
+                    END,
+                    last_seen_processing_run_id = CASE
+                        WHEN last_seen_processing_run_id = %s THEN NULL
+                        ELSE last_seen_processing_run_id
+                    END
+                WHERE first_seen_processing_run_id = %s
+                   OR last_seen_processing_run_id = %s
+                """,
+                (processing_run_id, processing_run_id, processing_run_id, processing_run_id),
+            )
+            self._connection.execute(
+                "DELETE FROM reviewed_record_edits WHERE processing_run_id = %s",
+                (processing_run_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM review_sessions WHERE processing_run_id = %s",
+                (processing_run_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM run_records WHERE processing_run_id = %s",
+                (processing_run_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM processing_runs WHERE processing_run_id = %s",
+                (processing_run_id,),
+            )
+
+            snapshot_reference_count = self._connection.execute(
+                """
+                SELECT COUNT(*) AS reference_count
+                FROM processing_runs
+                WHERE profile_snapshot_id = %s
+                """,
+                (run_row["profile_snapshot_id"],),
+            ).fetchone()
+            if int(snapshot_reference_count["reference_count"] or 0) == 0:
+                self._connection.execute(
+                    "DELETE FROM profile_snapshots WHERE profile_snapshot_id = %s",
+                    (run_row["profile_snapshot_id"],),
+                )
+
+            source_reference_count = self._connection.execute(
+                """
+                SELECT COUNT(*) AS reference_count
+                FROM processing_runs
+                WHERE source_document_id = %s
+                """,
+                (run_row["source_document_id"],),
+            ).fetchone()
+            if int(source_reference_count["reference_count"] or 0) == 0:
+                self._connection.execute(
+                    "DELETE FROM source_documents WHERE source_document_id = %s",
+                    (run_row["source_document_id"],),
+                )
+
     def get_or_create_review_session(self, review_session: ReviewSession) -> ReviewSession:
         """Create or reuse the phase-1 primary review session for one processing run."""
         row = self._connection.execute(
@@ -1468,32 +1573,28 @@ class PostgresLineageStore:
         """Persist export lineage for one exact review-session revision."""
         self._connection.execute(
             """
-            INSERT INTO export_artifacts (
+            INSERT INTO retained_export_artifacts (
                 export_artifact_id,
                 organization_id,
-                processing_run_id,
-                review_session_id,
                 session_revision,
                 artifact_kind,
                 storage_ref,
-                template_artifact_id,
                 file_hash,
                 created_by_user_id,
-                created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                created_at,
+                expires_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 export_artifact.export_artifact_id,
                 export_artifact.organization_id,
-                export_artifact.processing_run_id,
-                export_artifact.review_session_id,
                 export_artifact.session_revision,
                 export_artifact.artifact_kind,
                 export_artifact.storage_ref,
-                export_artifact.template_artifact_id,
                 export_artifact.file_hash,
                 export_artifact.created_by_user_id,
                 _dt(export_artifact.created_at),
+                _dt(export_artifact.expires_at) if export_artifact.expires_at else None,
             ),
         )
         self._connection.commit()
@@ -1502,7 +1603,7 @@ class PostgresLineageStore:
     def get_export_artifact(self, export_artifact_id: str) -> ExportArtifact:
         """Fetch one persisted export artifact."""
         row = self._connection.execute(
-            "SELECT * FROM export_artifacts WHERE export_artifact_id = %s",
+            "SELECT * FROM retained_export_artifacts WHERE export_artifact_id = %s",
             (export_artifact_id,),
         ).fetchone()
         if row is None:
@@ -1518,7 +1619,7 @@ class PostgresLineageStore:
         """Fetch one persisted export artifact scoped to one organization."""
         row = self._connection.execute(
             """
-            SELECT * FROM export_artifacts
+            SELECT * FROM retained_export_artifacts
             WHERE export_artifact_id = %s AND organization_id = %s
             """,
             (export_artifact_id, organization_id),
@@ -1531,13 +1632,110 @@ class PostgresLineageStore:
         """Fetch export artifacts in creation order for one review session."""
         rows = self._connection.execute(
             """
-            SELECT * FROM export_artifacts
-            WHERE review_session_id = %s
+            SELECT * FROM retained_export_artifacts
             ORDER BY created_at ASC, export_artifact_id ASC
             """,
-            (review_session_id,),
         ).fetchall()
         return [_export_artifact_from_row(row) for row in rows]
+
+    def delete_export_artifact(self, export_artifact_id: str) -> None:
+        """Delete one persisted retained export artifact row."""
+        self._connection.execute(
+            "DELETE FROM retained_export_artifacts WHERE export_artifact_id = %s",
+            (export_artifact_id,),
+        )
+        self._connection.commit()
+
+    def list_expired_export_artifacts(self, *, expires_before: datetime) -> list[ExportArtifact]:
+        """Return retained export artifact rows that have expired."""
+        rows = self._connection.execute(
+            """
+            SELECT * FROM retained_export_artifacts
+            WHERE expires_at IS NOT NULL
+              AND expires_at <= %s
+            ORDER BY expires_at ASC, export_artifact_id ASC
+            """,
+            (_dt(expires_before),),
+        ).fetchall()
+        return [_export_artifact_from_row(row) for row in rows]
+
+    def null_downstream_base_trusted_profile_version_references(
+        self,
+        trusted_profile_version_ids: list[str],
+    ) -> None:
+        """Clear downstream base-version references that point at soon-to-be-deleted versions."""
+        normalized_ids = [str(version_id).strip() for version_id in trusted_profile_version_ids if str(version_id).strip()]
+        if not normalized_ids:
+            return
+        self._connection.execute(
+            """
+            UPDATE trusted_profile_versions
+            SET base_trusted_profile_version_id = NULL
+            WHERE base_trusted_profile_version_id = ANY(%s)
+            """,
+            (normalized_ids,),
+        )
+        self._connection.execute(
+            """
+            UPDATE trusted_profile_drafts
+            SET base_trusted_profile_version_id = NULL
+            WHERE base_trusted_profile_version_id = ANY(%s)
+            """,
+            (normalized_ids,),
+        )
+        self._connection.commit()
+
+    def delete_trusted_profile_cascade(self, *, trusted_profile_id: str) -> None:
+        """Delete one trusted profile plus its drafts, observations, versions, and orphaned snapshots."""
+        version_rows = self._connection.execute(
+            """
+            SELECT trusted_profile_version_id
+            FROM trusted_profile_versions
+            WHERE trusted_profile_id = %s
+            ORDER BY version_number ASC
+            """,
+            (trusted_profile_id,),
+        ).fetchall()
+        version_ids = [row["trusted_profile_version_id"] for row in version_rows]
+        with self._connection.transaction():
+            self._connection.execute(
+                """
+                UPDATE trusted_profiles
+                SET current_published_version_id = NULL
+                WHERE trusted_profile_id = %s
+                """,
+                (trusted_profile_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM trusted_profile_observations WHERE trusted_profile_id = %s",
+                (trusted_profile_id,),
+            )
+            self._connection.execute(
+                "DELETE FROM trusted_profile_drafts WHERE trusted_profile_id = %s",
+                (trusted_profile_id,),
+            )
+            if version_ids:
+                self._connection.execute(
+                    """
+                    DELETE FROM profile_snapshots
+                    WHERE trusted_profile_version_id = ANY(%s)
+                      AND profile_snapshot_id NOT IN (
+                          SELECT profile_snapshot_id FROM processing_runs
+                      )
+                    """,
+                    (version_ids,),
+                )
+                self._connection.execute(
+                    """
+                    DELETE FROM trusted_profile_versions
+                    WHERE trusted_profile_version_id = ANY(%s)
+                    """,
+                    (version_ids,),
+                )
+            self._connection.execute(
+                "DELETE FROM trusted_profiles WHERE trusted_profile_id = %s",
+                (trusted_profile_id,),
+            )
 
 def _dt(value: datetime) -> str:
     """Serialize datetimes for persistence."""
@@ -1708,14 +1906,14 @@ def _source_document_from_row(row: dict[str, object]) -> SourceDocument:
 
 
 def _processing_run_from_row(row: dict[str, object]) -> ProcessingRun:
-        return ProcessingRun(
-            processing_run_id=row["processing_run_id"],
-            organization_id=row["organization_id"],
-            source_document_id=row["source_document_id"],
-            profile_snapshot_id=row["profile_snapshot_id"],
-            trusted_profile_id=row["trusted_profile_id"],
-            trusted_profile_version_id=row["trusted_profile_version_id"],
-            status=row["status"],
+    return ProcessingRun(
+        processing_run_id=row["processing_run_id"],
+        organization_id=row["organization_id"],
+        source_document_id=row["source_document_id"],
+        profile_snapshot_id=row["profile_snapshot_id"],
+        trusted_profile_id=row["trusted_profile_id"],
+        trusted_profile_version_id=row["trusted_profile_version_id"],
+        status=row["status"],
         engine_version=row["engine_version"],
         aggregate_blockers=tuple(json.loads(row["aggregate_blockers_json"])),
         created_by_user_id=row["created_by_user_id"],
@@ -1767,15 +1965,13 @@ def _export_artifact_from_row(row: dict[str, object]) -> ExportArtifact:
     return ExportArtifact(
         export_artifact_id=row["export_artifact_id"],
         organization_id=row["organization_id"],
-        processing_run_id=row["processing_run_id"],
-        review_session_id=row["review_session_id"],
         session_revision=int(row["session_revision"]),
         artifact_kind=row["artifact_kind"],
         storage_ref=row["storage_ref"],
-        template_artifact_id=row["template_artifact_id"],
         created_by_user_id=row["created_by_user_id"],
         file_hash=row["file_hash"],
         created_at=_parse_dt(row["created_at"]),
+        expires_at=_parse_dt(row["expires_at"]) if row["expires_at"] else None,
     )
 
 

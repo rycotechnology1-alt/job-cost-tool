@@ -24,6 +24,7 @@ class RuntimeStorageTests(unittest.TestCase):
         self.store = LocalRuntimeFileStore(
             upload_root=TEST_ROOT / "uploads",
             export_root=TEST_ROOT / "exports",
+            export_retention_hours=24,
             upload_retention_hours=24,
             now_provider=lambda: self.current_time,
         )
@@ -58,6 +59,22 @@ class RuntimeStorageTests(unittest.TestCase):
 
         self.assertFalse(stored_artifact.file_path.exists())
         self.assertFalse((stored_artifact.file_path.parent / "metadata.json").exists())
+        with self.assertRaises(FileNotFoundError):
+            self.store.get_export_artifact(stored_artifact.storage_ref)
+
+    def test_cleanup_expired_export_artifacts_deletes_directory(self) -> None:
+        stored_artifact = self.store.save_export_artifact(
+            processing_run_id="processing-run:123",
+            session_revision=2,
+            original_filename="recap-export.xlsx",
+            content_bytes=b"workbook-bytes",
+        )
+
+        self.current_time += timedelta(hours=25)
+        deleted_count = self.store.cleanup_expired_export_artifacts()
+
+        self.assertEqual(deleted_count, 1)
+        self.assertFalse(stored_artifact.file_path.exists())
         with self.assertRaises(FileNotFoundError):
             self.store.get_export_artifact(stored_artifact.storage_ref)
 
@@ -145,6 +162,7 @@ class VercelBlobRuntimeStorageTests(unittest.TestCase):
             blob_client=self.blob_client,
             upload_root=TEST_ROOT / "instance-a" / "uploads",
             export_root=TEST_ROOT / "instance-a" / "exports",
+            export_retention_hours=24,
             upload_retention_hours=24,
             now_provider=lambda: self.current_time,
         )
@@ -152,6 +170,7 @@ class VercelBlobRuntimeStorageTests(unittest.TestCase):
             blob_client=self.blob_client,
             upload_root=TEST_ROOT / "instance-b" / "uploads",
             export_root=TEST_ROOT / "instance-b" / "exports",
+            export_retention_hours=24,
             upload_retention_hours=24,
             now_provider=lambda: self.current_time,
         )
@@ -205,6 +224,50 @@ class VercelBlobRuntimeStorageTests(unittest.TestCase):
         self.assertFalse((TEST_ROOT / "instance-b" / "exports" / stored_artifact.storage_ref).exists())
         with self.assertRaises(FileNotFoundError):
             self.instance_a.get_export_artifact(stored_artifact.storage_ref)
+
+    def test_cleanup_expired_export_artifacts_deletes_remote_payload_and_metadata(self) -> None:
+        stored_artifact = self.instance_a.save_export_artifact(
+            processing_run_id="processing-run:123",
+            session_revision=1,
+            original_filename="recap.xlsx",
+            content_bytes=b"export-bytes",
+        )
+
+        self.current_time += timedelta(hours=25)
+        deleted_count = self.instance_b.cleanup_expired_export_artifacts()
+
+        self.assertEqual(deleted_count, 1)
+        self.assertEqual(self.blob_client.list_paths(prefix="exports/"), [])
+        with self.assertRaises(FileNotFoundError):
+            self.instance_a.get_export_artifact(stored_artifact.storage_ref)
+
+    def test_cleanup_expired_export_artifacts_deletes_legacy_metadata_missing_created_at(self) -> None:
+        artifact_storage_ref = "exports/processing-run-123/legacy-artifact/recap.xlsx"
+        self.blob_client.put_bytes(
+            pathname=artifact_storage_ref,
+            content_bytes=b"legacy-export-bytes",
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.blob_client.put_bytes(
+            pathname="exports/processing-run-123/legacy-artifact/metadata.json",
+            content_bytes=json.dumps(
+                {
+                    "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "file_size_bytes": len(b"legacy-export-bytes"),
+                    "original_filename": "recap.xlsx",
+                    "session_revision": 1,
+                    "storage_ref": artifact_storage_ref,
+                },
+                indent=2,
+                sort_keys=True,
+            ).encode("utf-8"),
+            content_type="application/json",
+        )
+
+        deleted_count = self.instance_b.cleanup_expired_export_artifacts()
+
+        self.assertEqual(deleted_count, 1)
+        self.assertEqual(self.blob_client.list_paths(prefix="exports/"), [])
 
     def test_get_upload_rejects_expired_remote_upload_without_request_time_cleanup(self) -> None:
         stored_upload = self.instance_a.save_upload(

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from core.models.lineage import (
+    Organization,
     TrustedProfile,
     TrustedProfileDraft,
     TrustedProfileObservation,
@@ -74,6 +75,22 @@ class TrustedProfileAuthoringRepository:
         return self._lineage_store.set_current_published_version(
             trusted_profile_id,
             trusted_profile_version_id,
+        )
+
+    def get_organization(self, organization_id: str) -> Organization:
+        """Fetch one persisted organization row by id."""
+        return self._lineage_store.get_organization(organization_id)
+
+    def set_organization_default_trusted_profile(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_id: str,
+    ) -> Organization:
+        """Persist the default trusted-profile pointer for one organization."""
+        return self._lineage_store.set_organization_default_trusted_profile(
+            organization_id=organization_id,
+            trusted_profile_id=trusted_profile_id,
         )
 
     def get_current_published_version(
@@ -287,6 +304,35 @@ class TrustedProfileAuthoringRepository:
         """Discard one mutable draft without affecting published lineage."""
         self.get_draft(organization_id, trusted_profile_draft_id)
         self._lineage_store.delete_trusted_profile_draft(trusted_profile_draft_id)
+
+    def list_profile_delete_blocking_runs(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_id: str,
+    ) -> list[dict[str, object]]:
+        """Return unfinished processing runs that currently block deleting one trusted profile."""
+        return self._lineage_store.list_profile_delete_blocking_runs(
+            organization_id=organization_id,
+            trusted_profile_id=trusted_profile_id,
+        )
+
+    def purge_processing_run_workflow(self, *, processing_run_id: str) -> None:
+        """Delete one persisted processing/review workflow state tree."""
+        self._lineage_store.purge_processing_run_workflow(processing_run_id=processing_run_id)
+
+    def null_downstream_base_trusted_profile_version_references(
+        self,
+        trusted_profile_version_ids: list[str],
+    ) -> None:
+        """Clear downstream base-version pointers that reference soon-to-be-deleted versions."""
+        self._lineage_store.null_downstream_base_trusted_profile_version_references(
+            trusted_profile_version_ids
+        )
+
+    def delete_trusted_profile_cascade(self, *, trusted_profile_id: str) -> None:
+        """Delete one trusted profile and its authoring rows after callers handle blockers and references."""
+        self._lineage_store.delete_trusted_profile_cascade(trusted_profile_id=trusted_profile_id)
 
     def upsert_observation(
         self,

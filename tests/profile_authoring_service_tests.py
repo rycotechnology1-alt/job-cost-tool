@@ -362,6 +362,95 @@ class ProfileAuthoringServiceTests(unittest.TestCase):
         with self.assertRaises(ProfileAuthoringConflictError):
             self.service.unarchive_trusted_profile(created_detail.trusted_profile_id)
 
+    def test_delete_trusted_profile_rejects_seeded_default_profile(self) -> None:
+        delete_impact = self.service.get_trusted_profile_delete_impact(
+            "trusted-profile:org-default:default",
+        )
+
+        self.assertFalse(delete_impact.can_delete)
+        self.assertFalse(delete_impact.discard_blocking_runs_available)
+        with self.assertRaises(ValueError):
+            self.service.delete_trusted_profile("trusted-profile:org-default:default")
+
+    def test_delete_trusted_profile_reports_blocking_unfinished_runs_and_can_discard_them(self) -> None:
+        created_detail = self.service.create_trusted_profile(
+            profile_name="field-team",
+            display_name="Field Team",
+            description="Second trusted profile",
+            seed_trusted_profile_id="trusted-profile:org-default:default",
+        )
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[self._make_labor_record(raw_description="Reference line")],
+        ):
+            run_result = self.processing_run_service.create_processing_run(
+                self.source_document_path,
+                profile_name="field-team",
+            )
+
+        delete_impact = self.service.get_trusted_profile_delete_impact(created_detail.trusted_profile_id)
+
+        self.assertFalse(delete_impact.can_delete)
+        self.assertTrue(delete_impact.discard_blocking_runs_available)
+        self.assertEqual(len(delete_impact.blocking_runs), 1)
+        self.assertEqual(delete_impact.blocking_runs[0].processing_run_id, run_result.processing_run.processing_run_id)
+        self.assertEqual(delete_impact.blocking_runs[0].source_filename, "sample_report.pdf")
+        with self.assertRaises(ProfileAuthoringConflictError) as exc_info:
+            self.service.delete_trusted_profile(created_detail.trusted_profile_id)
+
+        self.assertEqual(exc_info.exception.error_code, "trusted_profile_delete_blocked")
+
+        self.service.delete_trusted_profile(
+            created_detail.trusted_profile_id,
+            discard_blocking_runs=True,
+        )
+
+        with self.assertRaises(KeyError):
+            self.repository.get_trusted_profile("org-default", created_detail.trusted_profile_id)
+        with self.assertRaises(KeyError):
+            self.lineage_store.get_processing_run(run_result.processing_run.processing_run_id)
+
+    def test_delete_trusted_profile_nulls_downstream_base_version_references_before_deleting_versions(self) -> None:
+        seed_profile_id = "trusted-profile:org-default:default"
+        parent_detail = self.service.create_trusted_profile(
+            profile_name="field-team",
+            display_name="Field Team",
+            description="Parent trusted profile",
+            seed_trusted_profile_id=seed_profile_id,
+        )
+        child_detail = self.service.create_trusted_profile(
+            profile_name="night-team",
+            display_name="Night Team",
+            description="Child trusted profile",
+            seed_trusted_profile_id=parent_detail.trusted_profile_id,
+        )
+        child_draft = self.service.create_or_open_draft(child_detail.trusted_profile_id)
+        self.lineage_store._connection.execute(
+            """
+            UPDATE trusted_profile_drafts
+            SET base_trusted_profile_version_id = ?
+            WHERE trusted_profile_draft_id = ?
+            """,
+            (
+                parent_detail.current_published_version_id,
+                child_draft.trusted_profile_draft_id,
+            ),
+        )
+        self.lineage_store._connection.commit()
+
+        self.service.delete_trusted_profile(parent_detail.trusted_profile_id)
+
+        child_version = self.trusted_profile_provisioning_service.get_current_published_version(
+            child_detail.trusted_profile_id
+        )
+        refreshed_child_draft = self.repository.get_draft("org-default", child_draft.trusted_profile_draft_id)
+
+        self.assertIsNone(child_version.base_trusted_profile_version_id)
+        self.assertIsNone(refreshed_child_draft.base_trusted_profile_version_id)
+        with self.assertRaises(KeyError):
+            self.repository.get_trusted_profile("org-default", parent_detail.trusted_profile_id)
+
     def test_update_classifications_propagates_mapping_rate_and_recap_targets(self) -> None:
         trusted_profile_id = "trusted-profile:org-default:default"
         draft_state = self.service.create_or_open_draft(trusted_profile_id)

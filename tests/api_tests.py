@@ -889,10 +889,18 @@ class Phase1ApiTests(unittest.TestCase):
         worksheet = workbook["Recap"]
 
         self.assertEqual(export_payload["session_revision"], 1)
-        self.assertTrue(export_payload["template_artifact_id"])
+        self.assertIn("expires_at", export_payload)
+        self.assertNotIn("processing_run_id", export_payload)
+        self.assertNotIn("review_session_id", export_payload)
         self.assertEqual(worksheet["G27"].value, "Vendor Rev 1")
         self.assertNotEqual(worksheet["G27"].value, "Vendor Rev 2")
         self.assertIn('filename="report-recap-rev-1.xlsx"', download_response.headers["content-disposition"])
+
+        run_detail_after_export = self.client.get(f"/api/runs/{processing_run_id}")
+        review_after_export = self.client.get(f"/api/runs/{processing_run_id}/review-session")
+
+        self.assertEqual(run_detail_after_export.status_code, 404)
+        self.assertEqual(review_after_export.status_code, 404)
 
     def test_export_artifact_download_fails_closed_for_cross_org_reads(self) -> None:
         processing_run_id = self._create_processing_run_via_api()
@@ -910,6 +918,65 @@ class Phase1ApiTests(unittest.TestCase):
 
         self.assertEqual(download_response.status_code, 404)
         self.assertIn(export_response.json()["export_artifact_id"], download_response.json()["detail"])
+
+    def test_profile_delete_impact_and_delete_endpoint_support_discarding_blocking_runs(self) -> None:
+        create_response = self.client.post(
+            "/api/profiles",
+            json={
+                "profile_name": "field-team",
+                "display_name": "Field Team",
+                "description": "Second trusted profile",
+                "seed_trusted_profile_id": "trusted-profile:org-default:default",
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+        trusted_profile_id = create_response.json()["trusted_profile_id"]
+
+        upload_response = self.client.post(
+            "/api/source-documents/uploads",
+            files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
+        )
+        self.assertEqual(upload_response.status_code, 201)
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[self._make_material_record(vendor_name_normalized="Vendor A")],
+        ):
+            run_response = self.client.post(
+                "/api/runs",
+                json={
+                    "upload_id": upload_response.json()["upload_id"],
+                    "trusted_profile_name": "field-team",
+                },
+            )
+        self.assertEqual(run_response.status_code, 201)
+
+        delete_impact_response = self.client.get(f"/api/profiles/{trusted_profile_id}/delete-impact")
+        blocked_delete_response = self.client.post(
+            f"/api/profiles/{trusted_profile_id}/delete",
+            json={"discard_blocking_runs": False},
+        )
+        delete_response = self.client.post(
+            f"/api/profiles/{trusted_profile_id}/delete",
+            json={"discard_blocking_runs": True},
+        )
+
+        self.assertEqual(delete_impact_response.status_code, 200)
+        self.assertFalse(delete_impact_response.json()["can_delete"])
+        self.assertEqual(len(delete_impact_response.json()["blocking_runs"]), 1)
+        self.assertEqual(blocked_delete_response.status_code, 409)
+        self.assertEqual(blocked_delete_response.json()["detail"]["error_code"], "trusted_profile_delete_blocked")
+        self.assertEqual(delete_response.status_code, 204)
+        self.assertEqual(self.client.get(f"/api/profiles/{trusted_profile_id}").status_code, 404)
+
+    def test_seeded_default_profile_has_no_delete_affordance_through_api(self) -> None:
+        delete_impact_response = self.client.get(
+            "/api/profiles/trusted-profile:org-default:default/delete-impact"
+        )
+
+        self.assertEqual(delete_impact_response.status_code, 200)
+        self.assertFalse(delete_impact_response.json()["can_delete"])
+        self.assertFalse(delete_impact_response.json()["discard_blocking_runs_available"])
 
     def test_legacy_runs_are_reported_non_reproducible_and_exact_export_fails_closed(self) -> None:
         processing_run_id = self._create_processing_run_via_api()

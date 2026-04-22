@@ -6,7 +6,7 @@ import json
 import shutil
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -347,15 +347,11 @@ class ReviewSessionServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(export_result.export_artifact.session_revision, 1)
-        self.assertEqual(
-            export_result.export_artifact.template_artifact_id,
-            processing_result.profile_snapshot.template_artifact_id,
-        )
         self.assertEqual(export_result.review_session_state.review_session.current_revision, 2)
         self.assertEqual(export_result.review_session_state.session_revision, 1)
         self.assertEqual(worksheet["G27"].value, "Vendor Rev 1")
         self.assertEqual(persisted_artifacts[0].session_revision, 1)
-        self.assertEqual(persisted_artifacts[0].processing_run_id, processing_run_id)
+        self.assertEqual(persisted_artifacts[0].storage_ref, str(revision_one_output.resolve()))
 
     def test_historical_export_uses_persisted_template_artifact_even_if_on_disk_workbook_changes(self) -> None:
         processing_result = self._create_processing_run()
@@ -384,10 +380,6 @@ class ReviewSessionServiceTests(unittest.TestCase):
         worksheet = load_workbook(output_path)["Recap"]
 
         self.assertEqual(original_template_artifact.original_filename, "recap_template.xlsx")
-        self.assertEqual(
-            export_result.export_artifact.template_artifact_id,
-            original_snapshot.template_artifact_id,
-        )
         self.assertEqual(worksheet["A1"].value, "Template V1")
         self.assertNotEqual(worksheet["A1"].value, "Template V2 Mutated")
 
@@ -414,6 +406,8 @@ class ReviewSessionServiceTests(unittest.TestCase):
         artifact_store = LocalRuntimeFileStore(
             upload_root=TEST_ROOT / "runtime" / "uploads",
             export_root=TEST_ROOT / "runtime" / "exports",
+            export_retention_hours=24,
+            now_provider=lambda: self.created_at,
         )
         service = ReviewSessionService(
             lineage_store=self.lineage_store,
@@ -435,6 +429,60 @@ class ReviewSessionServiceTests(unittest.TestCase):
         self.assertEqual(export_result.stored_artifact.original_filename, "sample_report-recap-rev-0.xlsx")
         self.assertEqual(resolved_payload.file_path, export_result.output_path)
         self.assertEqual(worksheet["G27"].value, "Vendor A")
+
+    def test_successful_export_purges_workflow_rows_and_retains_lightweight_download_metadata(self) -> None:
+        processing_result = self._create_processing_run_with_record(
+            self._make_unmapped_equipment_record(),
+        )
+        processing_run_id = processing_result.processing_run.processing_run_id
+        artifact_store = LocalRuntimeFileStore(
+            upload_root=TEST_ROOT / "runtime" / "uploads",
+            export_root=TEST_ROOT / "runtime" / "exports",
+            export_retention_hours=24,
+            now_provider=lambda: self.created_at,
+        )
+        service = ReviewSessionService(
+            lineage_store=self.lineage_store,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
+            artifact_store=artifact_store,
+            now_provider=lambda: self.created_at,
+        )
+
+        service.apply_review_edits(
+            processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"equipment_category": "Pick-up Truck"},
+                )
+            ],
+        )
+        export_result = service.export_session_revision(
+            processing_run_id,
+            session_revision=1,
+        )
+        observations = self.repository.list_observations(
+            "trusted-profile:org-default:default",
+            observation_domain="equipment_mapping",
+        )
+
+        self.assertEqual(export_result.export_artifact.session_revision, 1)
+        self.assertEqual(export_result.export_artifact.expires_at, self.created_at + timedelta(hours=24))
+        self.assertEqual(len(self.lineage_store.list_run_records(processing_run_id)), 0)
+        self.assertEqual(self.lineage_store.list_processing_runs(), [])
+        with self.assertRaises(KeyError):
+            self.lineage_store.get_processing_run(processing_run_id)
+        with self.assertRaises(KeyError):
+            self.lineage_store.get_review_session(export_result.review_session_state.review_session.review_session_id)
+
+        retained_artifact = self.lineage_store.get_export_artifact(export_result.export_artifact.export_artifact_id)
+        resolved_payload = service.resolve_export_artifact_payload(export_result.export_artifact.export_artifact_id)
+
+        self.assertEqual(retained_artifact.storage_ref, export_result.export_artifact.storage_ref)
+        self.assertEqual(resolved_payload.file_path, export_result.output_path)
+        self.assertEqual(len(observations), 1)
+        self.assertIsNone(observations[0].first_seen_processing_run_id)
+        self.assertIsNone(observations[0].last_seen_processing_run_id)
 
     def test_review_revision_advance_rolls_back_when_edit_insert_fails(self) -> None:
         processing_result = self._create_processing_run()
@@ -815,6 +863,9 @@ class TrackingArtifactStore:
             if stored_artifact.storage_ref == storage_ref:
                 shutil.rmtree(stored_artifact.file_path.parent, ignore_errors=True)
                 return
+
+    def cleanup_expired_export_artifacts(self) -> int:
+        return 0
 
 
 if __name__ == "__main__":

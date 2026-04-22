@@ -49,6 +49,7 @@ def build_runtime(
     upload_root: str | Path = "runtime/api/uploads",
     export_root: str | Path = "runtime/api/exports",
     upload_retention_hours: int = 24,
+    export_retention_hours: int = 24,
     engine_version: str = "dev-local",
     now_provider: Callable | None = None,
 ) -> tuple[ApiRuntime, bool]:
@@ -93,6 +94,7 @@ def build_runtime(
         upload_root=upload_root,
         export_root=export_root,
         upload_retention_hours=upload_retention_hours,
+        export_retention_hours=export_retention_hours,
         now_provider=now_provider,
     )
     profile_authoring_service = ProfileAuthoringService(
@@ -141,6 +143,7 @@ def _build_file_store(
     upload_root: str | Path,
     export_root: str | Path,
     upload_retention_hours: int,
+    export_retention_hours: int,
     now_provider: Callable | None,
 ) -> RuntimeStorage:
     resolved_provider = str(storage_provider).strip().lower() or "local"
@@ -149,12 +152,14 @@ def _build_file_store(
             read_write_token=blob_read_write_token,
             upload_root=upload_root,
             export_root=export_root,
+            export_retention_hours=export_retention_hours,
             upload_retention_hours=upload_retention_hours,
             now_provider=now_provider,
         )
     return LocalRuntimeFileStore(
         upload_root=upload_root,
         export_root=export_root,
+        export_retention_hours=export_retention_hours,
         upload_retention_hours=upload_retention_hours,
         now_provider=now_provider,
     )

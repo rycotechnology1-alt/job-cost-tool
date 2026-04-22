@@ -242,6 +242,20 @@ CREATE TABLE IF NOT EXISTS export_artifacts (
     FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
 );
 
+CREATE TABLE IF NOT EXISTS retained_export_artifacts (
+    export_artifact_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    session_revision INTEGER NOT NULL CHECK (session_revision >= 0),
+    artifact_kind TEXT NOT NULL,
+    storage_ref TEXT NOT NULL,
+    file_hash TEXT,
+    created_by_user_id TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT,
+    FOREIGN KEY (organization_id) REFERENCES organizations (organization_id),
+    FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
+);
+
 CREATE INDEX IF NOT EXISTS ix_trusted_profiles_org ON trusted_profiles (organization_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ix_users_auth_subject ON users (auth_subject) WHERE auth_subject IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_trusted_profile_versions_profile_version ON trusted_profile_versions (trusted_profile_id, version_number);
@@ -255,3 +269,4 @@ CREATE INDEX IF NOT EXISTS ix_processing_runs_org_created_at ON processing_runs 
 CREATE INDEX IF NOT EXISTS ix_run_records_run ON run_records (processing_run_id, record_index);
 CREATE INDEX IF NOT EXISTS ix_reviewed_record_edits_session_revision ON reviewed_record_edits (review_session_id, session_revision);
 CREATE INDEX IF NOT EXISTS ix_export_artifacts_session_revision ON export_artifacts (review_session_id, session_revision);
+CREATE INDEX IF NOT EXISTS ix_retained_export_artifacts_expires_at ON retained_export_artifacts (expires_at, created_at);

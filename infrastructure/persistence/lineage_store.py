@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from core.models.lineage import (
@@ -239,3 +240,29 @@ class LineageStore(Protocol):
         organization_id: str,
         export_artifact_id: str,
     ) -> ExportArtifact: ...
+
+    def get_export_artifact(self, export_artifact_id: str) -> ExportArtifact: ...
+
+    def list_export_artifacts(self, review_session_id: str) -> list[ExportArtifact]: ...
+
+    def delete_export_artifact(self, export_artifact_id: str) -> None: ...
+
+    def list_expired_export_artifacts(self, *, expires_before: datetime) -> list[ExportArtifact]: ...
+
+    def list_processing_runs(self) -> list[ProcessingRun]: ...
+
+    def purge_processing_run_workflow(self, *, processing_run_id: str) -> None: ...
+
+    def list_profile_delete_blocking_runs(
+        self,
+        *,
+        organization_id: str,
+        trusted_profile_id: str,
+    ) -> list[dict[str, object]]: ...
+
+    def null_downstream_base_trusted_profile_version_references(
+        self,
+        trusted_profile_version_ids: list[str],
+    ) -> None: ...
+
+    def delete_trusted_profile_cascade(self, *, trusted_profile_id: str) -> None: ...

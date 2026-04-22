@@ -43,6 +43,7 @@ def create_app(
     upload_root: str | Path | None = None,
     export_root: str | Path | None = None,
     upload_retention_hours: int | None = None,
+    export_retention_hours: int | None = None,
     engine_version: str | None = None,
     now_provider: Callable | None = None,
 ) -> FastAPI:
@@ -60,6 +61,7 @@ def create_app(
         upload_root=upload_root,
         export_root=export_root,
         upload_retention_hours=upload_retention_hours,
+        export_retention_hours=export_retention_hours,
         engine_version=engine_version,
     )
     runtime, owns_lineage_store = build_runtime(
@@ -76,6 +78,7 @@ def create_app(
         upload_root=resolved_settings.upload_root,
         export_root=resolved_settings.export_root,
         upload_retention_hours=resolved_settings.upload_retention_hours,
+        export_retention_hours=resolved_settings.export_retention_hours,
         engine_version=resolved_settings.engine_version,
         now_provider=now_provider,
     )
