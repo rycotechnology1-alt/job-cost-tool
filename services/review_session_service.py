@@ -54,6 +54,7 @@ class ReviewSessionState:
     equipment_classification_options: list[str]
     session_revision: int
     historical_export_status: HistoricalExportStatus
+    effective_source_mode: str = "latest_reviewed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,11 +105,47 @@ class ReviewSessionService:
             request_context=request_context,
         )
 
+    def reopen_review_session(
+        self,
+        processing_run_id: str,
+        *,
+        mode: str,
+        continue_from_original: bool = False,
+        expected_current_revision: int | None = None,
+        created_by_user_id: str | None = None,
+        request_context: RequestContext | None = None,
+    ) -> ReviewSessionState:
+        """Return a run in latest-reviewed mode or preview/reset its original processed baseline."""
+        resolved_mode = str(mode or "").strip().lower()
+        if resolved_mode == "latest_reviewed":
+            return self.open_review_session(
+                processing_run_id,
+                created_by_user_id=created_by_user_id,
+                request_context=request_context,
+            )
+        if resolved_mode != "original_processed":
+            raise ValueError("mode must be 'latest_reviewed' or 'original_processed'.")
+        if continue_from_original:
+            return self.reset_review_session_to_original(
+                processing_run_id,
+                expected_current_revision=expected_current_revision,
+                created_by_user_id=created_by_user_id,
+                request_context=request_context,
+            )
+        return self.get_review_session_state(
+            processing_run_id,
+            session_revision=0,
+            created_by_user_id=created_by_user_id,
+            request_context=request_context,
+            effective_source_mode="original_processed",
+        )
+
     def get_review_session_state(
         self,
         processing_run_id: str,
         *,
         session_revision: int | None = None,
+        effective_source_mode: str = "latest_reviewed",
         created_by_user_id: str | None = None,
         request_context: RequestContext | None = None,
     ) -> ReviewSessionState:
@@ -161,6 +198,7 @@ class ReviewSessionService:
             equipment_classification_options=equipment_options,
             session_revision=target_revision,
             historical_export_status=build_historical_export_status(context.profile_snapshot),
+            effective_source_mode=effective_source_mode,
         )
 
     def apply_review_edits(
@@ -223,6 +261,32 @@ class ReviewSessionService:
         return self.get_review_session_state(
             processing_run_id,
             session_revision=updated_session.current_revision,
+            request_context=request_context,
+        )
+
+    def reset_review_session_to_original(
+        self,
+        processing_run_id: str,
+        *,
+        expected_current_revision: int | None = None,
+        created_by_user_id: str | None = None,
+        request_context: RequestContext | None = None,
+    ) -> ReviewSessionState:
+        """Append a synthetic revision that restores the canonical processed baseline as latest state."""
+        context = self._load_run_context(
+            processing_run_id,
+            create_session=True,
+            created_by_user_id=created_by_user_id or self._request_user_id(request_context),
+            request_context=request_context,
+        )
+        reset_edits = self._build_reset_to_original_edits(context.run_records)
+        return self.apply_review_edits(
+            processing_run_id,
+            reset_edits,
+            expected_current_revision=expected_current_revision
+            if expected_current_revision is not None
+            else context.review_session.current_revision,
+            created_by_user_id=created_by_user_id,
             request_context=request_context,
         )
 
@@ -443,6 +507,33 @@ class ReviewSessionService:
                 },
             )
         return expected_current_revision
+
+    def _build_reset_to_original_edits(
+        self,
+        run_records: Sequence[RunRecord],
+    ) -> list[PendingRecordEdit]:
+        """Build one synthetic reset batch from immutable canonical run records."""
+        editable_field_names = (
+            "recap_labor_classification",
+            "equipment_category",
+            "vendor_name_normalized",
+            "is_omitted",
+        )
+        pending_edits: list[PendingRecordEdit] = []
+        for run_record in run_records:
+            canonical_record = dict(run_record.canonical_record)
+            pending_edits.append(
+                PendingRecordEdit(
+                    record_key=run_record.record_key,
+                    changed_fields={
+                        field_name: canonical_record.get(field_name)
+                        if field_name != "is_omitted"
+                        else bool(canonical_record.get(field_name))
+                        for field_name in editable_field_names
+                    },
+                )
+            )
+        return pending_edits
 
     def _cleanup_failed_export_artifact(self, stored_artifact: StoredArtifact) -> None:
         """Best-effort cleanup when artifact storage succeeds but lineage persistence fails."""

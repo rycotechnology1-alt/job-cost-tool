@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from openpyxl import Workbook
+
 from core.config import ConfigLoader, ProfileManager
 from core.models import Record
 from infrastructure.persistence.sqlite_lineage_store import SqliteLineageStore
@@ -17,6 +19,7 @@ from services.profile_execution_compatibility_adapter import ProfileExecutionCom
 from services.profile_authoring_service import ProfileAuthoringService
 from services.processing_run_service import ProcessingRunService
 from services.request_context import LOCAL_REQUEST_CONTEXT
+from services.review_session_service import ReviewSessionService
 from services.trusted_profile_authoring_repository import TrustedProfileAuthoringRepository
 from services.trusted_profile_provisioning_service import TrustedProfileProvisioningService
 
@@ -80,6 +83,11 @@ class ProcessingRunServiceTests(unittest.TestCase):
             now_provider=lambda: self.created_at,
         )
         self.provisioning_service = self.trusted_profile_provisioning_service
+        self.review_session_service = ReviewSessionService(
+            lineage_store=self.lineage_store,
+            profile_execution_compatibility_adapter=self.profile_execution_compatibility_adapter,
+            now_provider=lambda: self.created_at,
+        )
 
     def tearDown(self) -> None:
         self.lineage_store.close()
@@ -338,6 +346,37 @@ class ProcessingRunServiceTests(unittest.TestCase):
             result.processing_run.trusted_profile_version_id,
         )
 
+    def test_archiving_run_clears_live_profile_linkage_without_deleting_review_or_export_history(self) -> None:
+        service = self._build_service()
+        parsed_record = self._make_labor_record(raw_description="Archivable labor line")
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[parsed_record],
+        ):
+            result = service.create_processing_run(self.source_document_path)
+
+        self.review_session_service.open_review_session(result.processing_run.processing_run_id)
+        export_output = TEST_ROOT / "exports" / "archived-history.xlsx"
+        export_output.parent.mkdir(parents=True, exist_ok=True)
+        self.review_session_service.export_session_revision(
+            result.processing_run.processing_run_id,
+            session_revision=0,
+            output_path=export_output,
+        )
+
+        archived_state = service.archive_processing_run(result.processing_run.processing_run_id)
+        review_session = self.lineage_store.get_review_session_for_run(result.processing_run.processing_run_id)
+        export_artifacts = self.lineage_store.list_export_artifacts(review_session.review_session_id)
+
+        self.assertTrue(archived_state.processing_run.archived_at)
+        self.assertIsNone(archived_state.processing_run.trusted_profile_id)
+        self.assertIsNone(archived_state.processing_run.trusted_profile_version_id)
+        self.assertEqual(archived_state.profile_snapshot.profile_snapshot_id, result.profile_snapshot.profile_snapshot_id)
+        self.assertEqual(len(archived_state.run_records), 1)
+        self.assertEqual(review_session.processing_run_id, result.processing_run.processing_run_id)
+        self.assertEqual(len(export_artifacts), 1)
+
     def _build_service(self) -> ProcessingRunService:
         return ProcessingRunService(
             lineage_store=self.lineage_store,
@@ -414,8 +453,17 @@ class ProcessingRunServiceTests(unittest.TestCase):
             {
                 "worksheet_name": "Recap",
                 "header_fields": {},
-                "labor_rows": {"Labor 1": {"hours": "A1", "rate": "B1", "amount": "C1"}},
-                "equipment_rows": {"Equipment 1": {"hours": "D1", "rate": "E1", "amount": "F1"}},
+                "labor_rows": {
+                    labor_target: {
+                        "st_hours": "A2",
+                        "ot_hours": "B2",
+                        "dt_hours": "C2",
+                        "st_rate": "D2",
+                        "ot_rate": "E2",
+                        "dt_rate": "F2",
+                    }
+                },
+                "equipment_rows": {"Pick-up Truck": {"hours_qty": "A4", "rate": "B4"}},
                 "materials_section": {"start_row": 1, "end_row": 1, "columns": {"name": "A", "amount": "B"}},
                 "subcontractors_section": {
                     "start_row": 1,
@@ -426,7 +474,11 @@ class ProcessingRunServiceTests(unittest.TestCase):
                 "police_detail_section": {"start_row": 1, "end_row": 1, "columns": {"description": "A", "amount": "B"}},
             },
         )
-        (profile_dir / "recap_template.xlsx").write_bytes(b"template")
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Recap"
+        worksheet["A1"] = "Template"
+        workbook.save(profile_dir / "recap_template.xlsx")
 
     def _clone_profile(
         self,

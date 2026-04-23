@@ -30,7 +30,7 @@ from api.schemas.uploads import SourceUploadResponse
 from infrastructure.storage import StoredUpload
 from services.lineage_service import build_historical_export_status
 from services.profile_authoring_service import DraftEditorState, PublishedProfileDetail
-from services.processing_run_service import ProcessingRunResult, ProcessingRunState
+from services.processing_run_service import ProcessingRunResult, ProcessingRunState, ProcessingRunSummary
 from services.review_session_service import ReviewSessionExportResult, ReviewSessionState
 from services.trusted_profile_service import TrustedProfileSummary
 
@@ -60,6 +60,13 @@ def to_processing_run_response(result: ProcessingRunResult) -> ProcessingRunResp
         aggregate_blockers=list(result.processing_run.aggregate_blockers),
         record_count=len(result.run_records),
         created_at=result.processing_run.created_at,
+        is_archived=result.processing_run.archived_at is not None,
+        archived_at=result.processing_run.archived_at,
+        origin_profile_display_name=result.trusted_profile.display_name,
+        origin_profile_source_kind=result.trusted_profile.source_kind,
+        current_revision=0,
+        export_count=0,
+        last_exported_at=None,
         historical_export_status=HistoricalExportStatusResponse(
             status_code=historical_export_status.status_code,
             is_reproducible=historical_export_status.is_reproducible,
@@ -81,6 +88,13 @@ def to_processing_run_detail_response(state: ProcessingRunState) -> ProcessingRu
         aggregate_blockers=list(state.processing_run.aggregate_blockers),
         record_count=len(state.run_records),
         created_at=state.processing_run.created_at,
+        is_archived=state.processing_run.archived_at is not None,
+        archived_at=state.processing_run.archived_at,
+        origin_profile_display_name=state.trusted_profile.display_name if state.trusted_profile else None,
+        origin_profile_source_kind=state.trusted_profile.source_kind if state.trusted_profile else None,
+        current_revision=state.current_revision,
+        export_count=state.export_count,
+        last_exported_at=state.last_exported_at,
         historical_export_status=HistoricalExportStatusResponse(
             status_code=state.historical_export_status.status_code,
             is_reproducible=state.historical_export_status.is_reproducible,
@@ -101,6 +115,34 @@ def to_processing_run_detail_response(state: ProcessingRunState) -> ProcessingRu
     )
 
 
+def to_processing_run_summary_response(summary: ProcessingRunSummary) -> ProcessingRunResponse:
+    """Build the API response for one run-library summary row."""
+    return ProcessingRunResponse(
+        processing_run_id=summary.processing_run.processing_run_id,
+        source_document_id=summary.source_document.source_document_id,
+        source_document_filename=summary.source_document.original_filename,
+        profile_snapshot_id=summary.profile_snapshot.profile_snapshot_id,
+        trusted_profile_id=summary.trusted_profile.trusted_profile_id if summary.trusted_profile else None,
+        trusted_profile_name=summary.trusted_profile.profile_name if summary.trusted_profile else None,
+        status=summary.processing_run.status,
+        aggregate_blockers=list(summary.processing_run.aggregate_blockers),
+        record_count=summary.record_count,
+        created_at=summary.processing_run.created_at,
+        is_archived=summary.processing_run.archived_at is not None,
+        archived_at=summary.processing_run.archived_at,
+        origin_profile_display_name=summary.trusted_profile.display_name if summary.trusted_profile else None,
+        origin_profile_source_kind=summary.trusted_profile.source_kind if summary.trusted_profile else None,
+        current_revision=summary.current_revision,
+        export_count=summary.export_count,
+        last_exported_at=summary.last_exported_at,
+        historical_export_status=HistoricalExportStatusResponse(
+            status_code=summary.historical_export_status.status_code,
+            is_reproducible=summary.historical_export_status.is_reproducible,
+            detail=summary.historical_export_status.detail,
+        ),
+    )
+
+
 def to_review_session_response(state: ReviewSessionState) -> ReviewSessionResponse:
     """Build the API response for review-session open/fetch/edit operations."""
     return ReviewSessionResponse(
@@ -116,6 +158,7 @@ def to_review_session_response(state: ReviewSessionState) -> ReviewSessionRespon
             is_reproducible=state.historical_export_status.is_reproducible,
             detail=state.historical_export_status.detail,
         ),
+        effective_source_mode=state.effective_source_mode,
         records=[ReviewRecordResponse(**asdict(record)) for record in state.records],
     )
 

@@ -181,6 +181,8 @@ class ProcessingRun:
     trusted_profile_id: str | None = None
     trusted_profile_version_id: str | None = None
     created_by_user_id: str | None = None
+    archived_at: datetime | None = None
+    archived_by_user_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

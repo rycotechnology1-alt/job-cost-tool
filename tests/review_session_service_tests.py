@@ -183,6 +183,99 @@ class ReviewSessionServiceTests(unittest.TestCase):
         self.assertEqual(reopened_state.session_revision, 1)
         self.assertEqual(reopened_state.records[0].vendor_name_normalized, "Vendor B")
 
+    def test_reopen_original_processed_previews_revision_zero_without_mutating_latest_revision(self) -> None:
+        processing_result = self._create_processing_run()
+        processing_run_id = processing_result.processing_run.processing_run_id
+        self.review_session_service.apply_review_edits(
+            processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"vendor_name_normalized": "Vendor B"},
+                )
+            ],
+        )
+
+        preview_state = self.review_session_service.reopen_review_session(
+            processing_run_id,
+            mode="original_processed",
+        )
+        latest_state = self.review_session_service.open_review_session(processing_run_id)
+
+        self.assertEqual(preview_state.effective_source_mode, "original_processed")
+        self.assertEqual(preview_state.session_revision, 0)
+        self.assertEqual(preview_state.review_session.current_revision, 1)
+        self.assertEqual(preview_state.records[0].vendor_name_normalized, "Vendor A")
+        self.assertEqual(latest_state.review_session.current_revision, 1)
+        self.assertEqual(latest_state.records[0].vendor_name_normalized, "Vendor B")
+
+    def test_continue_from_original_appends_reset_overlay_and_makes_original_latest_working_state(self) -> None:
+        processing_result = self._create_processing_run()
+        processing_run_id = processing_result.processing_run.processing_run_id
+        self.review_session_service.apply_review_edits(
+            processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"vendor_name_normalized": "Vendor B"},
+                )
+            ],
+        )
+
+        reset_state = self.review_session_service.reopen_review_session(
+            processing_run_id,
+            mode="original_processed",
+            continue_from_original=True,
+        )
+        reopened_state = self.review_session_service.open_review_session(processing_run_id)
+        persisted_edits = self.lineage_store.list_reviewed_record_edits(reset_state.review_session.review_session_id)
+
+        self.assertEqual(reset_state.effective_source_mode, "latest_reviewed")
+        self.assertEqual(reset_state.review_session.current_revision, 2)
+        self.assertEqual(reset_state.session_revision, 2)
+        self.assertEqual(reset_state.records[0].vendor_name_normalized, "Vendor A")
+        self.assertEqual(reopened_state.review_session.current_revision, 2)
+        self.assertEqual(reopened_state.records[0].vendor_name_normalized, "Vendor A")
+        self.assertEqual([edit.session_revision for edit in persisted_edits], [1, 2])
+        self.assertEqual(persisted_edits[-1].changed_fields["vendor_name_normalized"], "Vendor A")
+
+    def test_exports_before_and_after_reset_remain_discoverable_in_history(self) -> None:
+        processing_result = self._create_processing_run()
+        processing_run_id = processing_result.processing_run.processing_run_id
+        review_session_id = self.review_session_service.open_review_session(processing_run_id).review_session.review_session_id
+
+        first_output = TEST_ROOT / "exports" / "before-reset.xlsx"
+        first_output.parent.mkdir(parents=True, exist_ok=True)
+        self.review_session_service.export_session_revision(
+            processing_run_id,
+            session_revision=0,
+            output_path=first_output,
+        )
+        self.review_session_service.apply_review_edits(
+            processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"vendor_name_normalized": "Vendor B"},
+                )
+            ],
+        )
+        self.review_session_service.reopen_review_session(
+            processing_run_id,
+            mode="original_processed",
+            continue_from_original=True,
+        )
+        second_output = TEST_ROOT / "exports" / "after-reset.xlsx"
+        self.review_session_service.export_session_revision(
+            processing_run_id,
+            session_revision=2,
+            output_path=second_output,
+        )
+
+        persisted_artifacts = self.lineage_store.list_export_artifacts(review_session_id)
+
+        self.assertEqual([artifact.session_revision for artifact in persisted_artifacts], [0, 2])
+
     def test_review_session_state_exposes_snapshot_classification_options(self) -> None:
         processing_result = self._create_processing_run()
 

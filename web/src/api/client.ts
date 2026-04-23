@@ -322,8 +322,27 @@ export async function fetchProcessingRun(processingRunId: string): Promise<Proce
   return apiJson<ProcessingRunDetailResponse>(`/api/runs/${processingRunId}`);
 }
 
+export async function listProcessingRuns(state: "open" | "archived" = "open"): Promise<ProcessingRunResponse[]> {
+  return apiJson<ProcessingRunResponse[]>(`/api/runs?state=${state}`);
+}
+
+export async function archiveProcessingRun(processingRunId: string): Promise<ProcessingRunResponse> {
+  return apiJson<ProcessingRunResponse>(`/api/runs/${processingRunId}/archive`, buildJsonRequest({}));
+}
+
 export async function openReviewSession(processingRunId: string): Promise<ReviewSessionResponse> {
   return apiJson<ReviewSessionResponse>(`/api/runs/${processingRunId}/review-session`);
+}
+
+export async function reopenProcessingRun(
+  processingRunId: string,
+  request: {
+    mode: "latest_reviewed" | "original_processed";
+    continue_from_original?: boolean;
+    expected_current_revision?: number;
+  },
+): Promise<ReviewSessionResponse> {
+  return apiJson<ReviewSessionResponse>(`/api/runs/${processingRunId}/reopen`, buildJsonRequest(request));
 }
 
 export async function appendReviewEdits(

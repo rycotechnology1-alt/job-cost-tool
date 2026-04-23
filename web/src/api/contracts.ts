@@ -44,6 +44,13 @@ export interface ProcessingRunResponse {
   aggregate_blockers: string[];
   record_count: number;
   created_at: string;
+  is_archived: boolean;
+  archived_at: string | null;
+  origin_profile_display_name: string | null;
+  origin_profile_source_kind: string | null;
+  current_revision: number;
+  export_count: number;
+  last_exported_at: string | null;
   historical_export_status: HistoricalExportStatusResponse;
 }
 
@@ -103,6 +110,7 @@ export interface ReviewSessionResponse {
   labor_classification_options: string[];
   equipment_classification_options: string[];
   historical_export_status: HistoricalExportStatusResponse;
+  effective_source_mode: "latest_reviewed" | "original_processed";
   records: ReviewRecordResponse[];
 }
 

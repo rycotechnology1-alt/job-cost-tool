@@ -1171,8 +1171,10 @@ class PostgresLineageStore:
                 engine_version,
                 aggregate_blockers_json,
                 created_by_user_id,
+                archived_by_user_id,
+                archived_at,
                 created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 processing_run.processing_run_id,
@@ -1185,6 +1187,8 @@ class PostgresLineageStore:
                 processing_run.engine_version,
                 json.dumps(list(processing_run.aggregate_blockers)),
                 processing_run.created_by_user_id,
+                processing_run.archived_by_user_id,
+                _dt(processing_run.archived_at) if processing_run.archived_at else None,
                 _dt(processing_run.created_at),
             ),
         )
@@ -1255,6 +1259,61 @@ class PostgresLineageStore:
         if row is None:
             raise KeyError(f"ProcessingRun '{processing_run_id}' was not found.")
         return _processing_run_from_row(row)
+
+    def list_processing_runs_for_organization(
+        self,
+        *,
+        organization_id: str,
+        archived: bool,
+    ) -> list[ProcessingRun]:
+        """List processing runs for one organization filtered by archive state."""
+        rows = self._connection.execute(
+            """
+            SELECT * FROM processing_runs
+            WHERE organization_id = %s
+              AND (
+                (%s AND archived_at IS NOT NULL)
+                OR
+                (NOT %s AND archived_at IS NULL)
+              )
+            ORDER BY created_at DESC, processing_run_id DESC
+            """,
+            (organization_id, archived, archived),
+        ).fetchall()
+        return [_processing_run_from_row(row) for row in rows]
+
+    def archive_processing_run(
+        self,
+        *,
+        organization_id: str,
+        processing_run_id: str,
+        archived_at: datetime,
+        archived_by_user_id: str | None = None,
+    ) -> ProcessingRun:
+        """Detach one run from live trusted-profile linkage while preserving history."""
+        cursor = self._connection.execute(
+            """
+            UPDATE processing_runs
+            SET trusted_profile_id = NULL,
+                trusted_profile_version_id = NULL,
+                archived_by_user_id = %s,
+                archived_at = %s
+            WHERE processing_run_id = %s AND organization_id = %s
+            """,
+            (
+                archived_by_user_id,
+                _dt(archived_at),
+                processing_run_id,
+                organization_id,
+            ),
+        )
+        self._connection.commit()
+        if cursor.rowcount != 1:
+            raise KeyError(f"ProcessingRun '{processing_run_id}' was not found.")
+        return self.get_processing_run_for_organization(
+            organization_id=organization_id,
+            processing_run_id=processing_run_id,
+        )
 
     def list_run_records(self, processing_run_id: str) -> list[RunRecord]:
         """Fetch persisted run records in immutable emitted order."""
@@ -1533,7 +1592,7 @@ class PostgresLineageStore:
             """
             SELECT * FROM export_artifacts
             WHERE review_session_id = %s
-            ORDER BY created_at ASC, export_artifact_id ASC
+            ORDER BY created_at ASC, session_revision ASC, export_artifact_id ASC
             """,
             (review_session_id,),
         ).fetchall()
@@ -1708,17 +1767,19 @@ def _source_document_from_row(row: dict[str, object]) -> SourceDocument:
 
 
 def _processing_run_from_row(row: dict[str, object]) -> ProcessingRun:
-        return ProcessingRun(
-            processing_run_id=row["processing_run_id"],
-            organization_id=row["organization_id"],
-            source_document_id=row["source_document_id"],
-            profile_snapshot_id=row["profile_snapshot_id"],
-            trusted_profile_id=row["trusted_profile_id"],
-            trusted_profile_version_id=row["trusted_profile_version_id"],
-            status=row["status"],
+    return ProcessingRun(
+        processing_run_id=row["processing_run_id"],
+        organization_id=row["organization_id"],
+        source_document_id=row["source_document_id"],
+        profile_snapshot_id=row["profile_snapshot_id"],
+        trusted_profile_id=row["trusted_profile_id"],
+        trusted_profile_version_id=row["trusted_profile_version_id"],
+        status=row["status"],
         engine_version=row["engine_version"],
         aggregate_blockers=tuple(json.loads(row["aggregate_blockers_json"])),
         created_by_user_id=row["created_by_user_id"],
+        archived_by_user_id=row["archived_by_user_id"],
+        archived_at=_parse_dt(row["archived_at"]) if row["archived_at"] else None,
         created_at=_parse_dt(row["created_at"]),
     )
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   ApiRequestError,
+  archiveProcessingRun,
   archiveTrustedProfile,
   appendReviewEdits,
   createTrustedProfile,
@@ -13,10 +14,12 @@ import {
   downloadExportArtifact,
   fetchProfileDetail,
   fetchProfileDraft,
+  listProcessingRuns,
   fetchTrustedProfiles,
   fetchProcessingRun,
   openReviewSession,
   publishProfileDraft,
+  reopenProcessingRun,
   unarchiveTrustedProfile,
   updateDraftState,
   uploadSourceDocument,
@@ -26,6 +29,7 @@ import type {
   DraftSaveRequest,
   DraftEditorStateResponse,
   ExportArtifactResponse,
+  ProcessingRunResponse,
   ProcessingRunDetailResponse,
   PublishedProfileDetailResponse,
   ReviewEditFields,
@@ -37,6 +41,7 @@ import {
   ProfileSettingsWorkspace,
   type ProfileSettingsLeaveGuard,
 } from "./components/ProfileSettingsWorkspace";
+import { RunLibraryWorkspace } from "./components/RunLibraryWorkspace";
 import { ReviewWorkspace, type WorkspaceRow } from "./components/ReviewWorkspace";
 import { UploadRunPanel } from "./components/UploadRunPanel";
 
@@ -58,7 +63,7 @@ interface DraftSyncToken {
 }
 
 interface LeaveSettingsPromptState {
-  destination: "review" | "profile";
+  destination: "review" | "profile" | "library";
   nextProfileName?: string;
   nextProfileDisplayName?: string;
   dirtySections: string[];
@@ -114,12 +119,14 @@ function isVendorBulkCompatibleRow(row: WorkspaceRow): boolean {
 }
 
 export default function App() {
-  const [activeWorkspace, setActiveWorkspace] = useState<"review" | "settings">("review");
+  const [activeWorkspace, setActiveWorkspace] = useState<"review" | "library" | "settings">("review");
   const [trustedProfiles, setTrustedProfiles] = useState<TrustedProfileResponse[]>([]);
   const [archivedTrustedProfiles, setArchivedTrustedProfiles] = useState<TrustedProfileResponse[]>([]);
   const [selectedTrustedProfileName, setSelectedTrustedProfileName] = useState("");
   const [stagedReports, setStagedReports] = useState<StagedReportItem[]>([]);
   const [activeStagedReportId, setActiveStagedReportId] = useState("");
+  const [openRuns, setOpenRuns] = useState<ProcessingRunResponse[]>([]);
+  const [archivedRuns, setArchivedRuns] = useState<ProcessingRunResponse[]>([]);
   const [runDetail, setRunDetail] = useState<ProcessingRunDetailResponse | null>(null);
   const [reviewSession, setReviewSession] = useState<ReviewSessionResponse | null>(null);
   const [profileDetail, setProfileDetail] = useState<PublishedProfileDetailResponse | null>(null);
@@ -135,6 +142,9 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState(
     "Choose a trusted profile and stage one or more PDFs to start reviewing.",
   );
+  const [runLibraryStatusMessage, setRunLibraryStatusMessage] = useState(
+    "Browse open and archived runs, then reopen one in the review workspace when you want to keep working.",
+  );
   const [settingsStatusMessage, setSettingsStatusMessage] = useState(
     "Inspect the live trusted profile and select Edit current profile when you are ready to make changes.",
   );
@@ -144,6 +154,7 @@ export default function App() {
   const settingsLeaveGuardRef = useRef<ProfileSettingsLeaveGuard | null>(null);
   const pageExitCleanupDraftIdRef = useRef<string | null>(null);
   const draftStateRef = useRef<DraftEditorStateResponse | null>(null);
+  const [loadedReviewOrigin, setLoadedReviewOrigin] = useState<"staged_upload" | "run_library" | null>(null);
 
   const selectedTrustedProfile =
     trustedProfiles.find((profile) => profile.profile_name === selectedTrustedProfileName) ?? null;
@@ -158,9 +169,11 @@ export default function App() {
     stagedReports.find((report) => report.stagedReportId === activeStagedReportId) ?? stagedReports[0] ?? null;
   const rows = buildWorkspaceRows(runDetail, reviewSession);
   const selectedRow = rows.find((row) => row.recordKey === selectedRecordKey) ?? null;
+  const originalProcessedPreview = reviewSession?.effective_source_mode === "original_processed";
   const activeReviewProfileMismatch = Boolean(
     runDetail &&
       reviewSession &&
+      !runDetail.is_archived &&
       selectedTrustedProfile &&
       (
         (runDetail.trusted_profile_id &&
@@ -171,7 +184,8 @@ export default function App() {
           runDetail.trusted_profile_name !== selectedTrustedProfile.profile_name)
       ),
   );
-  const reviewExportInvalidated = Boolean(reviewContextInvalidationMessage) || activeReviewProfileMismatch;
+  const reviewExportInvalidated =
+    originalProcessedPreview || Boolean(reviewContextInvalidationMessage) || activeReviewProfileMismatch;
   const activeReviewProfileLabel =
     runDetail?.trusted_profile_name ?? selectedTrustedProfile?.display_name ?? "the prior trusted profile";
   const reviewContextMessage =
@@ -236,22 +250,22 @@ export default function App() {
     );
   }
 
-  function completeLeaveSettingsToReview() {
+  function completeLeaveSettingsToWorkspace(nextWorkspace: "review" | "library") {
     resetSettingsWorkspaceState({ resetStatusMessage: true });
     setLeaveSettingsPrompt(null);
-    setActiveWorkspace("review");
+    setActiveWorkspace(nextWorkspace);
     setErrorMessage("");
   }
 
   function promptToLeaveSettings(
-    destination: "review" | "profile",
+    destination: "review" | "profile" | "library",
     options?: { nextProfileName?: string; nextProfileDisplayName?: string },
   ) {
     const guard = settingsLeaveGuardRef.current;
     if (!guard || !guard.hasUnpublishedChanges) {
       setLeaveSettingsPrompt(null);
-      if (destination === "review") {
-        completeLeaveSettingsToReview();
+      if (destination === "review" || destination === "library") {
+        completeLeaveSettingsToWorkspace(destination);
       } else if (options?.nextProfileName) {
         completeSettingsProfileSwitch(options.nextProfileName);
       }
@@ -367,7 +381,7 @@ export default function App() {
     const nextReport = stagedReports.find((report) => report.stagedReportId === stagedReportId) ?? null;
     setActiveStagedReportId(stagedReportId);
     setErrorMessage("");
-    if (!runDetail || !reviewSession || !nextReport) {
+    if (loadedReviewOrigin !== "staged_upload" || !runDetail || !reviewSession || !nextReport) {
       return;
     }
     setReviewContextInvalidationMessage(
@@ -391,7 +405,13 @@ export default function App() {
       setActiveStagedReportId(nextActiveReport?.stagedReportId ?? "");
     }
     setErrorMessage("");
-    if (!runDetail || !reviewSession || activeStagedReportId !== stagedReportId || !nextActiveReport) {
+    if (
+      loadedReviewOrigin !== "staged_upload" ||
+      !runDetail ||
+      !reviewSession ||
+      activeStagedReportId !== stagedReportId ||
+      !nextActiveReport
+    ) {
       return;
     }
     setReviewContextInvalidationMessage(
@@ -457,6 +477,15 @@ export default function App() {
     return profiles;
   }
 
+  async function refreshRunLibrary() {
+    const [nextOpenRuns, nextArchivedRuns] = await Promise.all([
+      listProcessingRuns("open"),
+      listProcessingRuns("archived"),
+    ]);
+    setOpenRuns(nextOpenRuns);
+    setArchivedRuns(nextArchivedRuns);
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -509,6 +538,43 @@ export default function App() {
     }
 
     void loadArchivedProfiles();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace]);
+
+  useEffect(() => {
+    if (activeWorkspace !== "library") {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadRunLibrary() {
+      try {
+        const [nextOpenRuns, nextArchivedRuns] = await Promise.all([
+          listProcessingRuns("open"),
+          listProcessingRuns("archived"),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        setOpenRuns(nextOpenRuns);
+        setArchivedRuns(nextArchivedRuns);
+        setRunLibraryStatusMessage(
+          nextOpenRuns.length + nextArchivedRuns.length > 0
+            ? "Run library loaded. Reopen a stored run in either latest reviewed or original processed mode."
+            : "Run library loaded. Process a PDF to seed your first stored run.",
+        );
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setErrorMessage(error instanceof Error ? error.message : "Failed to load the run library.");
+      }
+    }
+
+    void loadRunLibrary();
     return () => {
       cancelled = true;
     };
@@ -642,10 +708,12 @@ export default function App() {
     nextRunDetail: ProcessingRunDetailResponse,
     nextReviewSession: ReviewSessionResponse,
     nextStatusMessage: string,
+    options?: { reviewOrigin?: "staged_upload" | "run_library" },
   ) {
     const nextRows = buildWorkspaceRows(nextRunDetail, nextReviewSession);
     setRunDetail(nextRunDetail);
     setReviewSession(nextReviewSession);
+    setLoadedReviewOrigin(options?.reviewOrigin ?? "staged_upload");
     setExportArtifact(null);
     setLastDownloadedFilename("");
     setReviewContextInvalidationMessage("");
@@ -677,6 +745,7 @@ export default function App() {
           nextRunDetail,
           nextReviewSession,
           `Loaded ${nextReviewSession.records.length} review records from ${nextRunDetail.source_document_filename}.`,
+          { reviewOrigin: "staged_upload" },
         );
       } catch (error) {
         if (!(error instanceof ApiRequestError) || error.status !== 410) {
@@ -692,8 +761,82 @@ export default function App() {
           nextRunDetail,
           nextReviewSession,
           `The cached upload for ${stagedReport.filename} expired from temporary storage, so the queued PDF was uploaded again and reopened in review.`,
+          { reviewOrigin: "staged_upload" },
         );
       }
+    });
+  }
+
+  async function handleRefreshRunLibrary() {
+    await runAction("Refreshing run library...", async () => {
+      await refreshRunLibrary();
+      setRunLibraryStatusMessage("Run library refreshed.");
+    });
+  }
+
+  async function handleOpenLatestReviewedRun(run: ProcessingRunResponse) {
+    await runAction("Reopening latest reviewed state...", async () => {
+      const [nextRunDetail, nextReviewSession] = await Promise.all([
+        fetchProcessingRun(run.processing_run_id),
+        reopenProcessingRun(run.processing_run_id, {
+          mode: "latest_reviewed",
+        }),
+      ]);
+      setActiveWorkspace("review");
+      applyLoadedReviewWorkspace(
+        nextRunDetail,
+        nextReviewSession,
+        `Reopened the latest reviewed state for ${run.source_document_filename}.`,
+        { reviewOrigin: "run_library" },
+      );
+    });
+  }
+
+  async function handleOpenOriginalProcessedRun(run: ProcessingRunResponse) {
+    await runAction("Opening original processed state...", async () => {
+      const [nextRunDetail, nextReviewSession] = await Promise.all([
+        fetchProcessingRun(run.processing_run_id),
+        reopenProcessingRun(run.processing_run_id, {
+          mode: "original_processed",
+        }),
+      ]);
+      setActiveWorkspace("review");
+      applyLoadedReviewWorkspace(
+        nextRunDetail,
+        nextReviewSession,
+        `Previewing the original processed state for ${run.source_document_filename}. Continue from it to make it the latest working review state.`,
+        { reviewOrigin: "run_library" },
+      );
+    });
+  }
+
+  async function handleContinueFromOriginalProcessedState() {
+    await runAction("Restoring original processed state...", async () => {
+      if (!runDetail || !reviewSession) {
+        throw new Error("Open a stored run before restoring its original processed state.");
+      }
+      const nextReviewSession = await reopenProcessingRun(runDetail.processing_run_id, {
+        mode: "original_processed",
+        continue_from_original: true,
+        expected_current_revision: reviewSession.current_revision,
+      });
+      const nextRunDetail = await fetchProcessingRun(runDetail.processing_run_id);
+      applyLoadedReviewWorkspace(
+        nextRunDetail,
+        nextReviewSession,
+        "Restored the original processed state as the latest working review revision.",
+        { reviewOrigin: "run_library" },
+      );
+    });
+  }
+
+  async function handleArchiveRun(run: ProcessingRunResponse) {
+    await runAction("Archiving run...", async () => {
+      await archiveProcessingRun(run.processing_run_id);
+      await refreshRunLibrary();
+      setRunLibraryStatusMessage(
+        `Archived ${run.source_document_filename}. Archived runs stay reopenable but stop participating in live profile drift warnings.`,
+      );
     });
   }
 
@@ -713,7 +856,7 @@ export default function App() {
     setSettingsProfileDetailLoading(false);
     advanceDraftSync("profileSwitch");
 
-    if (!hasActiveReview) {
+    if (!hasActiveReview || runDetail?.is_archived) {
       return;
     }
 
@@ -1076,7 +1219,7 @@ export default function App() {
           has_open_draft: false,
         });
       }
-      if (runDetail && reviewSession) {
+      if (runDetail && reviewSession && !runDetail.is_archived) {
         setReviewContextInvalidationMessage(
           "Profile settings were saved after this review was processed. Reprocess before export is allowed.",
         );
@@ -1173,8 +1316,8 @@ export default function App() {
       setErrorMessage((current) => current || "Could not save profile settings. The live profile was not updated.");
       return;
     }
-    if (prompt.destination === "review") {
-      completeLeaveSettingsToReview();
+    if (prompt.destination === "review" || prompt.destination === "library") {
+      completeLeaveSettingsToWorkspace(prompt.destination);
       return;
     }
     setLeaveSettingsPrompt(null);
@@ -1196,8 +1339,8 @@ export default function App() {
       setErrorMessage((current) => current || "Could not discard the unpublished profile changes. Try again from profile settings.");
       return;
     }
-    if (prompt.destination === "review") {
-      completeLeaveSettingsToReview();
+    if (prompt.destination === "review" || prompt.destination === "library") {
+      completeLeaveSettingsToWorkspace(prompt.destination);
       return;
     }
     setLeaveSettingsPrompt(null);
@@ -1207,19 +1350,42 @@ export default function App() {
   }
 
   const busy = busyAction !== null;
-  const currentWorkspaceStatusMessage = activeWorkspace === "settings" ? settingsStatusMessage : statusMessage;
-  const currentWorkspaceTitle = activeWorkspace === "settings" ? "Profile Settings Workspace" : "Job Cost Review Workspace";
-  const currentWorkspaceEyebrow = activeWorkspace === "settings" ? "Phase 2A Settings" : "Phase 1 Pilot Review";
+  const currentWorkspaceStatusMessage =
+    activeWorkspace === "settings"
+      ? settingsStatusMessage
+      : activeWorkspace === "library"
+        ? runLibraryStatusMessage
+        : statusMessage;
+  const currentWorkspaceTitle =
+    activeWorkspace === "settings"
+      ? "Profile Settings Workspace"
+      : activeWorkspace === "library"
+        ? "Run Library"
+        : "Job Cost Review Workspace";
+  const currentWorkspaceEyebrow =
+    activeWorkspace === "settings"
+      ? "Phase 2A Settings"
+      : activeWorkspace === "library"
+        ? "Stored Run History"
+        : "Phase 1 Pilot Review";
   const currentWorkspaceCopy =
     activeWorkspace === "settings"
       ? "The browser remains a thin client. Live profile versions and save rules still come from the backend authoring services."
-      : "The browser stays thin. Processing, review lineage, and exact-revision export still come from the accepted backend services.";
+      : activeWorkspace === "library"
+        ? "Stored processing runs, review revisions, and export history stay durable so operators can reopen prior work without the original PDF."
+        : "The browser stays thin. Processing, review lineage, and exact-revision export still come from the accepted backend services.";
   const workspaceStatusCard = (
     <div className="status-card" aria-live="polite">
       <strong>{busyAction ?? "Workflow status"}</strong>
       <p>{busy ? busyAction : currentWorkspaceStatusMessage}</p>
       {activeWorkspace === "review" && runDetail ? (
         <p className="muted">Reviewing {runDetail.source_document_filename}</p>
+      ) : null}
+      {activeWorkspace === "library" ? (
+        <p className="muted">
+          Browsing {openRuns.length} open run{openRuns.length === 1 ? "" : "s"} and {archivedRuns.length} archived
+          run{archivedRuns.length === 1 ? "" : "s"}.
+        </p>
       ) : null}
       {activeWorkspace === "settings" && selectedTrustedProfile ? (
         <p className="muted">Editing profile {selectedTrustedProfile.display_name}</p>
@@ -1254,6 +1420,21 @@ export default function App() {
       </button>
       <button
         type="button"
+        className={activeWorkspace === "library" ? "toggle-button active" : "toggle-button"}
+        onClick={() => {
+          if (activeWorkspace === "settings") {
+            promptToLeaveSettings("library");
+            return;
+          }
+          setActiveWorkspace("library");
+          setErrorMessage("");
+        }}
+        aria-pressed={activeWorkspace === "library"}
+      >
+        Run library
+      </button>
+      <button
+        type="button"
         className={activeWorkspace === "settings" ? "toggle-button active" : "toggle-button"}
         onClick={() => {
           enterSettingsWorkspace();
@@ -1270,6 +1451,8 @@ export default function App() {
       className={
         activeWorkspace === "review"
           ? "app-shell app-shell-review"
+          : activeWorkspace === "library"
+            ? "app-shell app-shell-library"
           : activeWorkspace === "settings"
             ? "app-shell app-shell-settings"
             : "app-shell"
@@ -1279,6 +1462,8 @@ export default function App() {
         className={
           activeWorkspace === "review"
             ? "hero compact-hero review-hero"
+            : activeWorkspace === "library"
+              ? "hero compact-hero library-hero"
             : activeWorkspace === "settings"
               ? "hero compact-hero settings-hero"
               : "hero compact-hero"
@@ -1359,21 +1544,21 @@ export default function App() {
       {activeWorkspace === "review" ? (
         <section className="review-console">
           <div className="review-console-rail">
-          <UploadRunPanel
-            trustedProfiles={trustedProfiles}
-            selectedTrustedProfileName={selectedTrustedProfileName}
-            stagedReports={stagedReports}
-            activeStagedReportId={activeStagedReport?.stagedReportId ?? ""}
-            busy={busy}
-            exportDisabled={!reviewSession || reviewExportInvalidated}
-            onTrustedProfileNameChange={handleReviewTrustedProfileNameChange}
-            onStageFiles={handleStageFiles}
-            onSelectStagedReport={handleSelectStagedReport}
-            onRemoveStagedReport={handleRemoveStagedReport}
-            onLaunchReviewWorkspace={() => void handleLaunchReviewWorkspace()}
-            onExportAndDownload={() => void handleExportAndDownload()}
-          />
-        </div>
+            <UploadRunPanel
+              trustedProfiles={trustedProfiles}
+              selectedTrustedProfileName={selectedTrustedProfileName}
+              stagedReports={stagedReports}
+              activeStagedReportId={activeStagedReport?.stagedReportId ?? ""}
+              busy={busy}
+              exportDisabled={!reviewSession || reviewExportInvalidated}
+              onTrustedProfileNameChange={handleReviewTrustedProfileNameChange}
+              onStageFiles={handleStageFiles}
+              onSelectStagedReport={handleSelectStagedReport}
+              onRemoveStagedReport={handleRemoveStagedReport}
+              onLaunchReviewWorkspace={() => void handleLaunchReviewWorkspace()}
+              onExportAndDownload={() => void handleExportAndDownload()}
+            />
+          </div>
 
           <div className="review-console-main">
             <ReviewWorkspace
@@ -1384,6 +1569,8 @@ export default function App() {
               selectedReviewRecordKeys={selectedReviewRecordKeys}
               exportArtifact={exportArtifact}
               exportDisabledMessage={reviewContextMessage}
+              originalProcessedPreview={originalProcessedPreview}
+              onContinueFromOriginalProcessedState={handleContinueFromOriginalProcessedState}
               busy={busy}
               onToggleReviewRowSelection={handleReviewRowSelectionChange}
               onSelectRow={handleActivateReviewRow}
@@ -1394,6 +1581,16 @@ export default function App() {
             />
           </div>
         </section>
+      ) : activeWorkspace === "library" ? (
+        <RunLibraryWorkspace
+          openRuns={openRuns}
+          archivedRuns={archivedRuns}
+          busy={busy}
+          onRefresh={handleRefreshRunLibrary}
+          onOpenLatestReviewed={handleOpenLatestReviewedRun}
+          onOpenOriginalProcessed={handleOpenOriginalProcessedRun}
+          onArchiveRun={handleArchiveRun}
+        />
       ) : (
         <ProfileSettingsWorkspace
           key={`settings-session-${settingsWorkspaceSession}`}

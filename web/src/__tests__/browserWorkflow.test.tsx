@@ -165,6 +165,7 @@ function buildProfileDraftState() {
 
 interface MockOptions {
   expireCachedUploadOnSecondRun?: boolean;
+  initialReviewRecords?: ReturnType<typeof buildBaseReviewRecords>;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -188,6 +189,13 @@ function buildRunPayload(profileName: "default" | "alternate", sourceFilename = 
     aggregate_blockers: [],
     record_count: recordCount,
     created_at: "2026-04-05T12:00:00Z",
+    is_archived: false,
+    archived_at: null,
+    origin_profile_display_name: trustedProfile.display_name,
+    origin_profile_source_kind: trustedProfile.source_kind,
+    current_revision: 0,
+    export_count: 0,
+    last_exported_at: null,
     historical_export_status: {
       status_code: "reproducible",
       is_reproducible: true,
@@ -403,13 +411,15 @@ function buildReviewSessionPayload(
   profileName: "default" | "alternate",
   revision: number,
   records: ReturnType<typeof buildBaseReviewRecords>,
+  effectiveSourceMode: "latest_reviewed" | "original_processed" = "latest_reviewed",
+  sessionRevision = revision,
 ) {
   const optionSet = reviewOptionSets[profileName];
   return {
     review_session_id: "review-session-1",
     processing_run_id: "processing-run-1",
     current_revision: revision,
-    session_revision: revision,
+    session_revision: sessionRevision,
     blocking_issues: [],
     labor_classification_options: [...optionSet.labor],
     equipment_classification_options: [...optionSet.equipment],
@@ -418,6 +428,7 @@ function buildReviewSessionPayload(
       is_reproducible: true,
       detail: "Historical exports are reproducible from captured template artifact lineage.",
     },
+    effective_source_mode: effectiveSourceMode,
     records,
   };
 }
@@ -460,7 +471,11 @@ function installFetchMock(
     currentRunProfileName: "default" as "default" | "alternate",
     currentRunSourceFilename: "report.pdf",
     currentReviewRevision: 0,
+    currentRunArchived: false,
     currentReviewRecords: JSON.parse(
+      JSON.stringify(options.initialReviewRecords ?? buildBaseReviewRecords("default")),
+    ) as ReturnType<typeof buildBaseReviewRecords>,
+    originalReviewRecords: JSON.parse(
       JSON.stringify(options.initialReviewRecords ?? buildBaseReviewRecords("default")),
     ) as ReturnType<typeof buildBaseReviewRecords>,
     uploadCounter: 0,
@@ -623,22 +638,57 @@ function installFetchMock(
       state.currentRunProfileName = payload.trusted_profile_name === "alternate" ? "alternate" : "default";
       state.currentRunSourceFilename = state.uploadFilenamesById.get(uploadId) ?? "report.pdf";
       state.currentReviewRevision = 0;
+      state.currentRunArchived = false;
       state.currentReviewRecords = JSON.parse(
         JSON.stringify(options.initialReviewRecords ?? buildBaseReviewRecords(state.currentRunProfileName)),
       ) as ReturnType<typeof buildBaseReviewRecords>;
+      state.originalReviewRecords = JSON.parse(JSON.stringify(state.currentReviewRecords)) as ReturnType<
+        typeof buildBaseReviewRecords
+      >;
       return jsonResponse(
         buildRunPayload(state.currentRunProfileName, state.currentRunSourceFilename, state.currentReviewRecords.length),
         201,
       );
     }
 
+    if (url === "/api/runs?state=open" && (!init || !init.method || init.method === "GET")) {
+      if (state.currentRunArchived) {
+        return jsonResponse([]);
+      }
+      return jsonResponse([
+        {
+          ...buildRunPayload(state.currentRunProfileName, state.currentRunSourceFilename, state.currentReviewRecords.length),
+          current_revision: state.currentReviewRevision,
+        },
+      ]);
+    }
+
+    if (url === "/api/runs?state=archived" && (!init || !init.method || init.method === "GET")) {
+      if (!state.currentRunArchived) {
+        return jsonResponse([]);
+      }
+      return jsonResponse([
+        {
+          ...buildRunPayload(state.currentRunProfileName, state.currentRunSourceFilename, state.currentReviewRecords.length),
+          is_archived: true,
+          archived_at: "2026-04-06T12:00:00Z",
+          current_revision: state.currentReviewRevision,
+        },
+      ]);
+    }
+
     if (url === "/api/runs/processing-run-1" && (!init || !init.method || init.method === "GET")) {
       return jsonResponse(
-        buildRunDetailPayload(
-          state.currentRunProfileName,
-          state.currentRunSourceFilename,
-          state.currentReviewRecords,
-        ),
+        {
+          ...buildRunDetailPayload(
+            state.currentRunProfileName,
+            state.currentRunSourceFilename,
+            state.currentReviewRecords,
+          ),
+          is_archived: state.currentRunArchived,
+          archived_at: state.currentRunArchived ? "2026-04-06T12:00:00Z" : null,
+          current_revision: state.currentReviewRevision,
+        },
       );
     }
 
@@ -648,6 +698,56 @@ function installFetchMock(
           state.currentRunProfileName,
           state.currentReviewRevision,
           state.currentReviewRecords,
+        ),
+      );
+    }
+
+    if (url === "/api/runs/processing-run-1/archive" && init?.method === "POST") {
+      state.currentRunArchived = true;
+      return jsonResponse({
+        ...buildRunPayload(state.currentRunProfileName, state.currentRunSourceFilename, state.currentReviewRecords.length),
+        is_archived: true,
+        archived_at: "2026-04-06T12:00:00Z",
+        current_revision: state.currentReviewRevision,
+      });
+    }
+
+    if (url === "/api/runs/processing-run-1/reopen" && init?.method === "POST") {
+      const payload = JSON.parse(String(init.body ?? "{}")) as {
+        mode?: "latest_reviewed" | "original_processed";
+        continue_from_original?: boolean;
+      };
+      if (payload.mode === "original_processed" && payload.continue_from_original) {
+        state.currentReviewRevision += 1;
+        state.currentReviewRecords = JSON.parse(JSON.stringify(state.originalReviewRecords)) as ReturnType<
+          typeof buildBaseReviewRecords
+        >;
+        return jsonResponse(
+          buildReviewSessionPayload(
+            state.currentRunProfileName,
+            state.currentReviewRevision,
+            state.currentReviewRecords,
+            "latest_reviewed",
+          ),
+        );
+      }
+      if (payload.mode === "original_processed") {
+        return jsonResponse(
+          buildReviewSessionPayload(
+            state.currentRunProfileName,
+            state.currentReviewRevision,
+            state.originalReviewRecords,
+            "original_processed",
+            0,
+          ),
+        );
+      }
+      return jsonResponse(
+        buildReviewSessionPayload(
+          state.currentRunProfileName,
+          state.currentReviewRevision,
+          state.currentReviewRecords,
+          "latest_reviewed",
         ),
       );
     }
@@ -956,6 +1056,65 @@ describe("App", () => {
     const runRequests = fetchCalls.filter(([url]) => url === "/api/runs");
     expect(runRequests).toHaveLength(2);
     expect(JSON.parse(String(runRequests[1]?.[1]?.body)).upload_id).toBe("upload-2");
+  });
+
+  it("shows open and archived runs in the run library and archives runs on demand", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await user.click(screen.getByRole("button", { name: /run library/i }));
+    expect(await screen.findByText("Run History")).toBeInTheDocument();
+    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /archive run/i }));
+    await user.click(screen.getByRole("button", { name: /archived runs/i }));
+
+    expect(await screen.findByText("report.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /archived runs/i })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("reopens latest reviewed state or previews original processed state from the run library", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await expandFamily(user, "Show Material");
+    await user.click(screen.getByRole("checkbox", { name: /select material line/i }));
+    await user.type(screen.getByRole("textbox", { name: /bulk vendor name/i }), "Vendor Edited");
+    await user.click(screen.getByRole("button", { name: /apply vendor/i }));
+    expect(await screen.findByText(/applied vendor name vendor edited/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /run library/i }));
+    await screen.findByText("Run History");
+
+    await user.click(screen.getByRole("button", { name: /open latest reviewed state/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+    await expandFamily(user, "Show Material");
+    expect(screen.getAllByText("Vendor Edited").length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: /run library/i }));
+    await user.click(screen.getByRole("button", { name: /open original processed state/i }));
+    expect(await screen.findByText(/you are viewing the original processed state/i)).toBeInTheDocument();
+    await expandFamily(user, "Show Material");
+    expect(screen.queryByText("Vendor Edited")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Vendor A").length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: /continue from original processed state/i }));
+    expect(await screen.findByText(/restored the original processed state as the latest working review revision/i)).toBeInTheDocument();
+    expect(screen.queryByText(/you are viewing the original processed state/i)).not.toBeInTheDocument();
+    await expandFamily(user, "Show Material");
+    expect(screen.getAllByText("Vendor A").length).toBeGreaterThan(0);
   });
 
   it("uses run-bound classification dropdowns in the top action bar instead of sidebar review inputs", async () => {

@@ -317,6 +317,54 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertEqual(review_response.status_code, 404)
         self.assertIn(processing_run_id, run_response.json()["detail"])
 
+    def test_run_library_lists_open_and_archived_runs_and_reopen_modes_work(self) -> None:
+        processing_run_id = self._create_processing_run_via_api()
+        self.client.post(
+            f"/api/runs/{processing_run_id}/review-session/edits",
+            json={
+                "edits": [
+                    {
+                        "record_key": "record-0",
+                        "changed_fields": {"vendor_name_normalized": "Vendor B"},
+                    }
+                ]
+            },
+        )
+        archive_response = self.client.post(f"/api/runs/{processing_run_id}/archive")
+        open_listing = self.client.get("/api/runs?state=open")
+        archived_listing = self.client.get("/api/runs?state=archived")
+        original_preview = self.client.post(
+            f"/api/runs/{processing_run_id}/reopen",
+            json={"mode": "original_processed"},
+        )
+        reset_response = self.client.post(
+            f"/api/runs/{processing_run_id}/reopen",
+            json={"mode": "original_processed", "continue_from_original": True},
+        )
+        latest_response = self.client.post(
+            f"/api/runs/{processing_run_id}/reopen",
+            json={"mode": "latest_reviewed"},
+        )
+
+        self.assertEqual(archive_response.status_code, 200)
+        self.assertEqual(open_listing.status_code, 200)
+        self.assertEqual(archived_listing.status_code, 200)
+        self.assertEqual(original_preview.status_code, 200)
+        self.assertEqual(reset_response.status_code, 200)
+        self.assertEqual(latest_response.status_code, 200)
+        self.assertEqual(open_listing.json(), [])
+        self.assertEqual(len(archived_listing.json()), 1)
+        self.assertTrue(archived_listing.json()[0]["is_archived"])
+        self.assertEqual(archived_listing.json()[0]["trusted_profile_id"], "trusted-profile:org-default:default")
+        self.assertEqual(original_preview.json()["effective_source_mode"], "original_processed")
+        self.assertEqual(original_preview.json()["session_revision"], 0)
+        self.assertEqual(original_preview.json()["records"][0]["vendor_name_normalized"], "Vendor A")
+        self.assertEqual(reset_response.json()["current_revision"], 2)
+        self.assertEqual(reset_response.json()["effective_source_mode"], "latest_reviewed")
+        self.assertEqual(reset_response.json()["records"][0]["vendor_name_normalized"], "Vendor A")
+        self.assertEqual(latest_response.json()["session_revision"], 2)
+        self.assertEqual(latest_response.json()["records"][0]["vendor_name_normalized"], "Vendor A")
+
     def test_hosted_processing_run_with_local_sentinel_values_still_persists_authenticated_user_id(self) -> None:
         hosted_client = self._create_hosted_client()
         headers = self._auth_headers(

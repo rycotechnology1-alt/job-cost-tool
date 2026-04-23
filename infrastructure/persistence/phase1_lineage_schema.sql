@@ -166,13 +166,16 @@ CREATE TABLE IF NOT EXISTS processing_runs (
     engine_version TEXT NOT NULL,
     aggregate_blockers_json TEXT NOT NULL DEFAULT '[]',
     created_by_user_id TEXT,
+    archived_by_user_id TEXT,
+    archived_at TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (organization_id) REFERENCES organizations (organization_id),
     FOREIGN KEY (source_document_id) REFERENCES source_documents (source_document_id),
     FOREIGN KEY (profile_snapshot_id) REFERENCES profile_snapshots (profile_snapshot_id),
     FOREIGN KEY (trusted_profile_id) REFERENCES trusted_profiles (trusted_profile_id),
     FOREIGN KEY (trusted_profile_version_id) REFERENCES trusted_profile_versions (trusted_profile_version_id),
-    FOREIGN KEY (created_by_user_id) REFERENCES users (user_id)
+    FOREIGN KEY (created_by_user_id) REFERENCES users (user_id),
+    FOREIGN KEY (archived_by_user_id) REFERENCES users (user_id)
 );
 
 CREATE TABLE IF NOT EXISTS run_records (

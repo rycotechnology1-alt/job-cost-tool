@@ -23,6 +23,8 @@ interface ReviewWorkspaceProps {
   selectedReviewRecordKeys: string[];
   exportArtifact: ExportArtifactResponse | null;
   exportDisabledMessage: string;
+  originalProcessedPreview: boolean;
+  onContinueFromOriginalProcessedState: () => Promise<void> | void;
   busy: boolean;
   onToggleReviewRowSelection: (recordKey: string, isSelected: boolean) => void;
   onSelectRow: (recordKey: string) => void;
@@ -150,6 +152,8 @@ export function ReviewWorkspace({
   selectedReviewRecordKeys,
   exportArtifact,
   exportDisabledMessage,
+  originalProcessedPreview,
+  onContinueFromOriginalProcessedState,
   busy,
   onToggleReviewRowSelection,
   onSelectRow,
@@ -161,6 +165,7 @@ export function ReviewWorkspace({
   const currentBlockers = reviewSession?.blocking_issues ?? [];
   const aggregateBlockers = runDetail?.aggregate_blockers ?? [];
   const blockerCount = currentBlockers.length;
+  const editingDisabled = busy || originalProcessedPreview;
   const selectedReviewRecordKeySet = new Set(selectedReviewRecordKeys);
   const reviewTotals = rows.reduce(
     (totals, row) => {
@@ -272,6 +277,20 @@ export function ReviewWorkspace({
                 <p>{exportDisabledMessage}</p>
               </div>
             ) : null}
+            {originalProcessedPreview ? (
+              <div className="banner warning" role="status">
+                <strong>You are viewing the original processed state.</strong>
+                <p>
+                  Continuing from here will replace the latest working review state with a new reset-to-original
+                  revision before any further edits or exports.
+                </p>
+                <div className="actions">
+                  <button type="button" onClick={() => void onContinueFromOriginalProcessedState()} disabled={busy}>
+                    Continue from original processed state
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {currentBlockers.length > 0 ? (
               <div className="banner warning">
                 <strong>Current blockers</strong>
@@ -299,7 +318,7 @@ export function ReviewWorkspace({
                     type="button"
                     className="secondary-button"
                     onClick={() => onApplyBulkOmission(true)}
-                    disabled={busy || selectedReviewRecordKeys.length === 0 || !canBulkOmit}
+                    disabled={editingDisabled || selectedReviewRecordKeys.length === 0 || !canBulkOmit}
                   >
                     Bulk Omit
                   </button>
@@ -307,7 +326,7 @@ export function ReviewWorkspace({
                     type="button"
                     className="secondary-button"
                     onClick={() => onApplyBulkOmission(false)}
-                    disabled={busy || selectedReviewRecordKeys.length === 0 || !canBulkInclude}
+                    disabled={editingDisabled || selectedReviewRecordKeys.length === 0 || !canBulkInclude}
                   >
                     Bulk Include
                   </button>
@@ -320,14 +339,14 @@ export function ReviewWorkspace({
                       value={bulkVendorName}
                       onChange={(event) => setBulkVendorName(event.target.value)}
                       placeholder="Enter Vendor Name"
-                      disabled={busy || selectedReviewRecordKeys.length === 0}
+                      disabled={editingDisabled || selectedReviewRecordKeys.length === 0}
                     />
                   </div>
                   <button
                     type="button"
                     className="secondary-button"
                     onClick={() => onApplyBulkVendorName(bulkVendorName)}
-                    disabled={busy || !canBulkApplyVendorName}
+                    disabled={editingDisabled || !canBulkApplyVendorName}
                   >
                     Apply Vendor
                   </button>
@@ -339,7 +358,7 @@ export function ReviewWorkspace({
                       aria-label="Bulk equipment category"
                       value={bulkEquipmentCategory}
                       onChange={(event) => setBulkEquipmentCategory(event.target.value)}
-                      disabled={busy || selectedReviewRecordKeys.length === 0}
+                      disabled={editingDisabled || selectedReviewRecordKeys.length === 0}
                     >
                       <option value="">Choose Equipment Class</option>
                       {reviewSession.equipment_classification_options.map((option) => (
@@ -353,7 +372,7 @@ export function ReviewWorkspace({
                     type="button"
                     className="secondary-button"
                     onClick={() => onApplyBulkEquipmentCategory(bulkEquipmentCategory)}
-                    disabled={busy || !canBulkApplyEquipmentCategory}
+                    disabled={editingDisabled || !canBulkApplyEquipmentCategory}
                   >
                     Apply Equipment
                   </button>
@@ -365,7 +384,7 @@ export function ReviewWorkspace({
                       aria-label="Bulk labor classification"
                       value={bulkLaborClassification}
                       onChange={(event) => setBulkLaborClassification(event.target.value)}
-                      disabled={busy || selectedReviewRecordKeys.length === 0}
+                      disabled={editingDisabled || selectedReviewRecordKeys.length === 0}
                     >
                       <option value="">Choose Labor Class</option>
                       {reviewSession.labor_classification_options.map((option) => (
@@ -379,7 +398,7 @@ export function ReviewWorkspace({
                     type="button"
                     className="secondary-button"
                     onClick={() => onApplyBulkLaborClassification(bulkLaborClassification)}
-                    disabled={busy || !canBulkApplyLaborClassification}
+                    disabled={editingDisabled || !canBulkApplyLaborClassification}
                   >
                     Apply Labor
                   </button>

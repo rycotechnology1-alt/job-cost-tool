@@ -55,6 +55,24 @@ class ProcessingRunState:
     processing_run: ProcessingRun
     run_records: list[RunRecord]
     historical_export_status: HistoricalExportStatus
+    current_revision: int
+    export_count: int
+    last_exported_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessingRunSummary:
+    """Summary view for one stored run in the run-library workspace."""
+
+    trusted_profile: TrustedProfile | None
+    source_document: SourceDocument
+    profile_snapshot: ProfileSnapshot
+    processing_run: ProcessingRun
+    record_count: int
+    historical_export_status: HistoricalExportStatus
+    current_revision: int
+    export_count: int
+    last_exported_at: datetime | None
 
 
 class ProcessingRunService:
@@ -195,6 +213,82 @@ class ProcessingRunService:
         )
         return self._build_processing_run_state(processing_run, profile_snapshot)
 
+    def list_processing_runs(
+        self,
+        *,
+        archived: bool = False,
+        request_context: RequestContext | None = None,
+    ) -> list[ProcessingRunSummary]:
+        """List persisted processing runs for one organization and archive state."""
+        organization_id = self._request_organization_id(request_context)
+        processing_runs = self._lineage_store.list_processing_runs_for_organization(
+            organization_id=organization_id,
+            archived=archived,
+        )
+        summaries: list[ProcessingRunSummary] = []
+        for processing_run in processing_runs:
+            profile_snapshot = self._lineage_store.get_profile_snapshot_for_organization(
+                organization_id=organization_id,
+                profile_snapshot_id=processing_run.profile_snapshot_id,
+            )
+            source_document = self._lineage_store.get_source_document_for_organization(
+                organization_id=organization_id,
+                source_document_id=processing_run.source_document_id,
+            )
+            review_session = self._get_review_session_for_run(
+                organization_id=organization_id,
+                processing_run_id=processing_run.processing_run_id,
+            )
+            export_count = 0
+            last_exported_at = None
+            current_revision = 0
+            if review_session is not None:
+                current_revision = review_session.current_revision
+                export_artifacts = self._lineage_store.list_export_artifacts(review_session.review_session_id)
+                export_count = len(export_artifacts)
+                if export_artifacts:
+                    last_exported_at = export_artifacts[-1].created_at
+            run_records = self._lineage_store.list_run_records_for_processing_run(
+                organization_id=organization_id,
+                processing_run_id=processing_run.processing_run_id,
+            )
+            summaries.append(
+                ProcessingRunSummary(
+                    trusted_profile=self._resolve_origin_trusted_profile(processing_run, profile_snapshot),
+                    source_document=source_document,
+                    profile_snapshot=profile_snapshot,
+                    processing_run=processing_run,
+                    record_count=len(run_records),
+                    historical_export_status=build_historical_export_status(profile_snapshot),
+                    current_revision=current_revision,
+                    export_count=export_count,
+                    last_exported_at=last_exported_at,
+                )
+            )
+        return summaries
+
+    def archive_processing_run(
+        self,
+        processing_run_id: str,
+        *,
+        archived_by_user_id: str | None = None,
+        request_context: RequestContext | None = None,
+    ) -> ProcessingRunState:
+        """Detach one run from live trusted-profile drift rules without deleting its history."""
+        organization_id = self._request_organization_id(request_context)
+        persisted_archived_by_user_id = archived_by_user_id or self._request_user_id(request_context)
+        processing_run = self._lineage_store.archive_processing_run(
+            organization_id=organization_id,
+            processing_run_id=processing_run_id,
+            archived_at=self._now_provider(),
+            archived_by_user_id=persisted_archived_by_user_id,
+        )
+        profile_snapshot = self._lineage_store.get_profile_snapshot_for_organization(
+            organization_id=organization_id,
+            profile_snapshot_id=processing_run.profile_snapshot_id,
+        )
+        return self._build_processing_run_state(processing_run, profile_snapshot)
+
     def _resolve_profile_context(
         self,
         profile_name: str | None,
@@ -218,18 +312,24 @@ class ProcessingRunService:
             organization_id=processing_run.organization_id,
             source_document_id=processing_run.source_document_id,
         )
-        trusted_profile = (
-            self._lineage_store.get_trusted_profile_for_organization(
-                organization_id=processing_run.organization_id,
-                trusted_profile_id=processing_run.trusted_profile_id,
-            )
-            if processing_run.trusted_profile_id
-            else None
-        )
+        trusted_profile = self._resolve_origin_trusted_profile(processing_run, profile_snapshot)
         run_records = self._lineage_store.list_run_records_for_processing_run(
             organization_id=processing_run.organization_id,
             processing_run_id=processing_run.processing_run_id,
         )
+        review_session = self._get_review_session_for_run(
+            organization_id=processing_run.organization_id,
+            processing_run_id=processing_run.processing_run_id,
+        )
+        export_count = 0
+        last_exported_at = None
+        current_revision = 0
+        if review_session is not None:
+            current_revision = review_session.current_revision
+            export_artifacts = self._lineage_store.list_export_artifacts(review_session.review_session_id)
+            export_count = len(export_artifacts)
+            if export_artifacts:
+                last_exported_at = export_artifacts[-1].created_at
         return ProcessingRunState(
             organization=organization,
             trusted_profile=trusted_profile,
@@ -238,7 +338,47 @@ class ProcessingRunService:
             processing_run=processing_run,
             run_records=run_records,
             historical_export_status=build_historical_export_status(profile_snapshot),
+            current_revision=current_revision,
+            export_count=export_count,
+            last_exported_at=last_exported_at,
         )
+
+    def _resolve_origin_trusted_profile(
+        self,
+        processing_run: ProcessingRun,
+        profile_snapshot: ProfileSnapshot,
+    ) -> TrustedProfile | None:
+        """Resolve one run's origin profile even after live linkage has been archived away."""
+        if profile_snapshot.trusted_profile_version_id:
+            trusted_profile_version = self._lineage_store.get_trusted_profile_version_for_organization(
+                organization_id=processing_run.organization_id,
+                trusted_profile_version_id=profile_snapshot.trusted_profile_version_id,
+            )
+            return self._lineage_store.get_trusted_profile_for_organization(
+                organization_id=processing_run.organization_id,
+                trusted_profile_id=trusted_profile_version.trusted_profile_id,
+            )
+        if processing_run.trusted_profile_id:
+            return self._lineage_store.get_trusted_profile_for_organization(
+                organization_id=processing_run.organization_id,
+                trusted_profile_id=processing_run.trusted_profile_id,
+            )
+        return None
+
+    def _get_review_session_for_run(
+        self,
+        *,
+        organization_id: str,
+        processing_run_id: str,
+    ):
+        """Return one existing review session for a run when present."""
+        try:
+            return self._lineage_store.get_review_session_for_run_for_organization(
+                organization_id=organization_id,
+                processing_run_id=processing_run_id,
+            )
+        except KeyError:
+            return None
 
     def _create_or_reuse_profile_snapshot(
         self,

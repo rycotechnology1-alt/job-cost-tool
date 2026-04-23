@@ -199,6 +199,22 @@ class LineageStore(Protocol):
         processing_run_id: str,
     ) -> ProcessingRun: ...
 
+    def list_processing_runs_for_organization(
+        self,
+        *,
+        organization_id: str,
+        archived: bool,
+    ) -> list[ProcessingRun]: ...
+
+    def archive_processing_run(
+        self,
+        *,
+        organization_id: str,
+        processing_run_id: str,
+        archived_at,
+        archived_by_user_id: str | None = None,
+    ) -> ProcessingRun: ...
+
     def list_run_records_for_processing_run(
         self,
         *,

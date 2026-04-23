@@ -41,4 +41,5 @@ class ReviewSessionResponse(ApiModel):
     labor_classification_options: list[str]
     equipment_classification_options: list[str]
     historical_export_status: HistoricalExportStatusResponse
+    effective_source_mode: str
     records: list[ReviewRecordResponse]
