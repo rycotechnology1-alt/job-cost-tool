@@ -80,15 +80,15 @@ def _prepare_review_record_for_validation(base_record: Record, record: Record) -
     ]
     removed_resolved_warning = False
 
-    if _has_manual_equipment_override(base_record, record):
+    if _has_manual_equipment_override(base_record, record) or _is_effectively_equipment_resolved(record):
         warnings, removed = _remove_matching_warnings(warnings, _is_equipment_resolution_warning)
         removed_resolved_warning = removed_resolved_warning or removed
 
-    if _has_manual_labor_override(base_record, record):
+    if _has_manual_labor_override(base_record, record) or _is_effectively_labor_resolved(record):
         warnings, removed = _remove_matching_warnings(warnings, _is_labor_resolution_warning)
         removed_resolved_warning = removed_resolved_warning or removed
 
-    if _has_manual_vendor_override(base_record, record):
+    if _has_manual_vendor_override(base_record, record) or _is_effectively_vendor_resolved(record):
         warnings, removed = _remove_matching_warnings(warnings, _is_vendor_resolution_warning)
         removed_resolved_warning = removed_resolved_warning or removed
 
@@ -138,6 +138,23 @@ def _has_manual_vendor_override(base_record: Record, record: Record) -> bool:
     )
 
 
+def _is_effectively_equipment_resolved(record: Record) -> bool:
+    """Return True when the effective record already has a resolved equipment outcome."""
+    return bool(record.equipment_category and str(record.equipment_category).strip())
+
+
+def _is_effectively_labor_resolved(record: Record) -> bool:
+    """Return True when the effective record already has a resolved labor outcome."""
+    return bool(record.recap_labor_classification and str(record.recap_labor_classification).strip())
+
+
+def _is_effectively_vendor_resolved(record: Record) -> bool:
+    """Return True when the effective record already has a resolved vendor outcome."""
+    normalized_vendor_name = str(record.vendor_name_normalized or "").strip()
+    raw_vendor_name = str(record.vendor_name or "").strip()
+    return bool(normalized_vendor_name and normalized_vendor_name.casefold() != raw_vendor_name.casefold())
+
+
 def _remove_matching_warnings(
     warnings: List[str],
     predicate: Callable[[str], bool],
@@ -151,6 +168,8 @@ def _is_equipment_resolution_warning(warning: str) -> bool:
     """Return True when a warning is superseded by a manual equipment-category edit."""
     normalized_warning = warning.casefold()
     return (
+        "pr equipment detail line was recognized but equipment description was not parsed cleanly." in normalized_warning
+        or
         "equipment record is missing a raw equipment description for recap mapping." in normalized_warning
         or "equipment description did not match a configured target equipment category." in normalized_warning
         or "equipment record mapped to a category that is not active for the current profile." in normalized_warning
@@ -163,6 +182,8 @@ def _is_labor_resolution_warning(warning: str) -> bool:
     """Return True when a warning is superseded by a manual labor-classification edit."""
     normalized_warning = warning.casefold()
     return (
+        "pr labor detail line was recognized but labor class was not parsed cleanly." in normalized_warning
+        or
         "labor record is missing a raw labor class for recap mapping." in normalized_warning
         or (
             "labor raw value" in normalized_warning

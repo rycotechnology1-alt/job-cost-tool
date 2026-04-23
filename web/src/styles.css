@@ -1366,7 +1366,10 @@ th {
 
 .app-shell-review .workspace-table-wrap {
   margin: 1rem 1rem 0;
-  min-height: 56rem;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior: auto;
   border-radius: 0;
   border-color: #312a28;
   background: rgba(15, 14, 14, 0.98);
@@ -1434,8 +1437,10 @@ th {
 }
 
 .app-shell-review .workspace-sidebar-inner {
-  top: 1rem;
-  max-height: var(--review-panel-height);
+  position: static;
+  top: auto;
+  max-height: none;
+  overflow: visible;
   border-radius: 0.5rem;
   background: rgba(24, 21, 20, 0.98);
 }

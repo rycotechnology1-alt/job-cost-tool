@@ -291,7 +291,9 @@ class ReviewSessionServiceTests(unittest.TestCase):
 
     def test_manual_equipment_category_fix_clears_review_warnings_without_mutating_run_record(self) -> None:
         processing_result = self._create_processing_run_with_record(
-            self._make_unmapped_equipment_record(),
+            self._make_unmapped_equipment_record(
+                warnings=["PR equipment detail line was recognized but equipment description was not parsed cleanly."],
+            ),
         )
         processing_run_id = processing_result.processing_run.processing_run_id
 
@@ -317,10 +319,16 @@ class ReviewSessionServiceTests(unittest.TestCase):
             "Equipment description did not match a configured target equipment category.",
             persisted_run_records[0].canonical_record["warnings"],
         )
+        self.assertIn(
+            "PR equipment detail line was recognized but equipment description was not parsed cleanly.",
+            persisted_run_records[0].canonical_record["warnings"],
+        )
 
     def test_manual_labor_fix_clears_mapping_warning_and_medium_confidence_review_flag(self) -> None:
         processing_result = self._create_processing_run_with_record(
-            self._make_unmapped_labor_record(),
+            self._make_unmapped_labor_record(
+                warnings=["PR labor detail line was recognized but labor class was not parsed cleanly."],
+            ),
         )
 
         updated_state = self.review_session_service.apply_review_edits(
@@ -336,6 +344,51 @@ class ReviewSessionServiceTests(unittest.TestCase):
         self.assertEqual(updated_state.records[0].recap_labor_classification, "103 Journeyman")
         self.assertEqual(updated_state.records[0].warnings, [])
         self.assertEqual(updated_state.blocking_issues, [])
+
+    def test_reprocessed_labor_mapping_resolution_hides_parser_warning_in_effective_review_state(self) -> None:
+        parsed_record = self._make_unmapped_labor_record(
+            warnings=["PR labor detail line was recognized but labor class was not parsed cleanly."],
+        )
+        first_result = self._create_processing_run_with_record(parsed_record)
+        first_state = self.review_session_service.open_review_session(first_result.processing_run.processing_run_id)
+
+        trusted_profile = self.trusted_profile_provisioning_service.resolve_current_published_profile()
+        draft_state = self.profile_authoring_service.create_or_open_draft(trusted_profile.trusted_profile.trusted_profile_id)
+        updated_draft = self.profile_authoring_service.update_labor_mappings(
+            draft_state.trusted_profile_draft_id,
+            [
+                {
+                    "raw_value": "103/ZZ",
+                    "target_classification": "103 Journeyman",
+                    "notes": "Mapped after observation",
+                }
+            ],
+            expected_draft_revision=draft_state.draft_revision,
+        )
+        self.profile_authoring_service.publish_draft(
+            updated_draft.trusted_profile_draft_id,
+            expected_draft_revision=updated_draft.draft_revision,
+        )
+
+        second_result = self._create_processing_run_with_record(parsed_record)
+        second_state = self.review_session_service.open_review_session(second_result.processing_run.processing_run_id)
+        persisted_run_records = self.lineage_store.list_run_records(second_result.processing_run.processing_run_id)
+
+        self.assertIn(
+            "PR labor detail line was recognized but labor class was not parsed cleanly.",
+            first_state.records[0].warnings,
+        )
+        self.assertIn(
+            "Labor raw value '103/ZZ' is not mapped to a target recap labor classification.",
+            first_state.records[0].warnings,
+        )
+        self.assertEqual(second_state.records[0].recap_labor_classification, "103 Journeyman")
+        self.assertEqual(second_state.records[0].warnings, [])
+        self.assertEqual(second_state.blocking_issues, [])
+        self.assertIn(
+            "PR labor detail line was recognized but labor class was not parsed cleanly.",
+            persisted_run_records[0].canonical_record["warnings"],
+        )
 
     def test_manual_vendor_fix_clears_vendor_resolution_warning(self) -> None:
         processing_result = self._create_processing_run_with_record(
@@ -838,7 +891,7 @@ class ReviewSessionServiceTests(unittest.TestCase):
             record_type_normalized=None,
         )
 
-    def _make_unmapped_labor_record(self) -> Record:
+    def _make_unmapped_labor_record(self, *, warnings: list[str] | None = None) -> Record:
         return Record(
             record_type=LABOR,
             phase_code="20",
@@ -853,7 +906,7 @@ class ReviewSessionServiceTests(unittest.TestCase):
             equipment_description=None,
             equipment_category=None,
             confidence=0.9,
-            warnings=[],
+            warnings=list(warnings or []),
             source_page=1,
             source_line_text="Labor source",
             record_type_normalized=None,

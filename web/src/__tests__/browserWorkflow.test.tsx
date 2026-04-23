@@ -166,6 +166,7 @@ function buildProfileDraftState() {
 interface MockOptions {
   expireCachedUploadOnSecondRun?: boolean;
   initialReviewRecords?: ReturnType<typeof buildBaseReviewRecords>;
+  resolveMappedLaborWarningAfterPublish?: boolean;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -463,6 +464,25 @@ function applyReviewEdits(
   });
 }
 
+function resolvePublishedLaborWarnings(records: ReturnType<typeof buildBaseReviewRecords>) {
+  return records.map((record) => {
+    if (
+      record.record_type_normalized !== "labor" ||
+      !record.warnings.includes("PR labor detail line was recognized but labor class was not parsed cleanly.")
+    ) {
+      return { ...record };
+    }
+
+    return {
+      ...record,
+      confidence: 0.9,
+      recap_labor_slot_id: "labor_1",
+      recap_labor_classification: "103 Journeyman",
+      warnings: [],
+    };
+  });
+}
+
 function installFetchMock(
   options: MockOptions & { initialReviewRecords?: ReturnType<typeof buildBaseReviewRecords> } = {},
 ) {
@@ -639,9 +659,13 @@ function installFetchMock(
       state.currentRunSourceFilename = state.uploadFilenamesById.get(uploadId) ?? "report.pdf";
       state.currentReviewRevision = 0;
       state.currentRunArchived = false;
-      state.currentReviewRecords = JSON.parse(
+      const baseReviewRecords = JSON.parse(
         JSON.stringify(options.initialReviewRecords ?? buildBaseReviewRecords(state.currentRunProfileName)),
       ) as ReturnType<typeof buildBaseReviewRecords>;
+      state.currentReviewRecords =
+        options.resolveMappedLaborWarningAfterPublish && state.publishedProfileDetail.current_published_version.version_number > 1
+          ? resolvePublishedLaborWarnings(baseReviewRecords)
+          : baseReviewRecords;
       state.originalReviewRecords = JSON.parse(JSON.stringify(state.currentReviewRecords)) as ReturnType<
         typeof buildBaseReviewRecords
       >;
@@ -1020,6 +1044,61 @@ describe("App", () => {
     await screen.findByText("No current blockers.");
     expect(screen.queryByText(/review context is stale for export/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /export and download/i })).toBeEnabled();
+  });
+
+  it("hides resolved labor parse warnings after profile publish and rerun", async () => {
+    const initialRecords = buildBaseReviewRecords("default");
+    initialRecords[2] = {
+      ...initialRecords[2],
+      confidence: 0.6,
+      labor_class_raw: null,
+      labor_class_normalized: null,
+      recap_labor_slot_id: null,
+      recap_labor_classification: null,
+      warnings: [
+        "PR labor detail line was recognized but labor class was not parsed cleanly.",
+        "Medium-confidence record should be reviewed before export.",
+      ],
+    };
+
+    installFetchMock({
+      initialReviewRecords: initialRecords,
+      resolveMappedLaborWarningAfterPublish: true,
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await expandFamily(user, "Show Labor");
+    await clickRowByText(user, "Labor line");
+    expect(screen.getByText("Current row warnings")).toBeInTheDocument();
+    expect(screen.getByText(/labor class was not parsed cleanly/i)).toBeInTheDocument();
+    expect(screen.getByText(/medium-confidence record should be reviewed before export/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    await screen.findByText(/live version v1 remains the web-processing source/i);
+    await user.click(screen.getByRole("button", { name: /edit current profile/i }));
+    await screen.findByText("Labor Mappings");
+    await user.clear(screen.getByLabelText(/labor raw value 2/i));
+    await user.type(screen.getByLabelText(/labor raw value 2/i), "SAVED-LABOR");
+    await user.click(screen.getByRole("button", { name: /save profile settings/i }));
+    await screen.findByText(/saved profile settings and published live version v2 for default profile/i);
+
+    await user.click(screen.getByRole("button", { name: /review workspace/i }));
+    expect(await screen.findByText(/review context is stale for export/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByText("No current blockers.");
+    await expandFamily(user, "Show Labor");
+    await clickRowByText(user, "Labor line");
+
+    expect(screen.getByText("No row warnings.")).toBeInTheDocument();
+    expect(screen.queryByText(/labor class was not parsed cleanly/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/medium-confidence record should be reviewed before export/i)).not.toBeInTheDocument();
   });
 
   it("forces a reprocess before export when the selected staged source PDF changes after a run", async () => {
