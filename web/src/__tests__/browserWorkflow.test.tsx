@@ -1149,13 +1149,53 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: /run library/i }));
     expect(await screen.findByText("Run History")).toBeInTheDocument();
-    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+    expect(screen.getAllByText("report.pdf").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("button", { name: /review workspace/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /profile settings/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /select run report\.pdf/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Selected Run")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /archive run/i }));
     await user.click(screen.getByRole("button", { name: /archived runs/i }));
 
-    expect(await screen.findByText("report.pdf")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByText("report.pdf").length).toBeGreaterThanOrEqual(1);
+    });
     expect(screen.getByRole("button", { name: /archived runs/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /select run report\.pdf/i })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("navigates from the run library to review and profile settings without reopening a stored run", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await user.click(screen.getByRole("button", { name: /run library/i }));
+    await screen.findByText("Run History");
+    const runCreatesBeforeNavigation = vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/runs").length;
+    const reopenCallsBeforeNavigation = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.filter(([url]) => url === "/api/runs/processing-run-1/reopen").length;
+
+    await user.click(screen.getByRole("button", { name: /review workspace/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    expect(vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/runs")).toHaveLength(
+      runCreatesBeforeNavigation,
+    );
+    expect(vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/runs/processing-run-1/reopen")).toHaveLength(
+      reopenCallsBeforeNavigation,
+    );
+
+    await user.click(screen.getByRole("button", { name: /run library/i }));
+    await screen.findByText("Run History");
+    await user.click(screen.getByRole("button", { name: /profile settings/i }));
+    expect(await screen.findByRole("heading", { name: "Default Profile" })).toBeInTheDocument();
   });
 
   it("reopens latest reviewed state or previews original processed state from the run library", async () => {

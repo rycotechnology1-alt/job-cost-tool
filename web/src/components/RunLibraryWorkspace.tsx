@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { ProcessingRunResponse } from "../api/contracts";
 
@@ -33,90 +33,134 @@ function formatBlockerLabel(count: number): string {
   return `${count} blocker${count === 1 ? "" : "s"}`;
 }
 
-function RunCard({
+function RunListItem({
+  run,
+  selected,
+  onSelect,
+}: {
+  run: ProcessingRunResponse;
+  selected: boolean;
+  onSelect: (run: ProcessingRunResponse) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={selected ? "library-run-list-item active" : "library-run-list-item"}
+      aria-label={`Select run ${run.source_document_filename}`}
+      aria-pressed={selected}
+      onClick={() => onSelect(run)}
+    >
+      <div className="library-run-list-main">
+        <span className="library-run-title">{run.source_document_filename}</span>
+        <span className="library-run-meta">
+          {run.origin_profile_display_name ?? run.trusted_profile_name ?? "Unknown profile"} |{" "}
+          {formatDateTime(run.created_at)}
+        </span>
+      </div>
+      <div className="library-run-list-badges">
+        <span className="status-pill neutral">{run.status}</span>
+        <span className={run.aggregate_blockers.length > 0 ? "status-pill warning" : "status-pill success"}>
+          {formatBlockerLabel(run.aggregate_blockers.length)}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+function SelectedRunPanel({
   run,
   busy,
-  allowArchive,
   onOpenLatestReviewed,
   onOpenOriginalProcessed,
   onArchiveRun,
 }: {
-  run: ProcessingRunResponse;
+  run: ProcessingRunResponse | null;
   busy: boolean;
-  allowArchive: boolean;
   onOpenLatestReviewed: (run: ProcessingRunResponse) => Promise<void> | void;
   onOpenOriginalProcessed: (run: ProcessingRunResponse) => Promise<void> | void;
   onArchiveRun: (run: ProcessingRunResponse) => Promise<void> | void;
 }) {
+  if (!run) {
+    return (
+      <aside className="workspace-sidebar">
+        <div className="workspace-sidebar-inner panel library-selected-panel">
+          <p className="empty-state">Select a stored run to inspect lineage details and choose how to reopen it.</p>
+        </div>
+      </aside>
+    );
+  }
+
   return (
-    <article className="panel">
-      <div className="panel-heading">
-        <div>
-          <p className="eyebrow">{run.is_archived ? "Archived" : "Open"} Run</p>
+    <aside className="workspace-sidebar">
+      <div className="workspace-sidebar-inner panel library-selected-panel">
+        <div className="sidebar-section">
+          <p className="eyebrow">Selected Run</p>
           <h3>{run.source_document_filename}</h3>
-          <p>
-            {run.origin_profile_display_name ?? run.trusted_profile_name ?? "Unknown profile"} · Created{" "}
-            {formatDateTime(run.created_at)}
+          <p className="workspace-copy">
+            {run.is_archived ? "Archived" : "Open"} run created {formatDateTime(run.created_at)}
           </p>
         </div>
-        <div className="status-pill neutral">{run.status}</div>
-      </div>
 
-      <dl className="summary-list compact">
-        <div>
-          <dt>Origin profile</dt>
-          <dd>{run.origin_profile_display_name ?? run.trusted_profile_name ?? "-"}</dd>
-        </div>
-        <div>
-          <dt>Profile kind</dt>
-          <dd>{run.origin_profile_source_kind ?? "-"}</dd>
-        </div>
-        <div>
-          <dt>Records</dt>
-          <dd>{run.record_count}</dd>
-        </div>
-        <div>
-          <dt>Current revision</dt>
-          <dd>{run.current_revision}</dd>
-        </div>
-        <div>
-          <dt>Exports</dt>
-          <dd>{run.export_count}</dd>
-        </div>
-        <div>
-          <dt>Last export</dt>
-          <dd>{formatDateTime(run.last_exported_at)}</dd>
-        </div>
-        <div>
-          <dt>Blockers</dt>
-          <dd>{formatBlockerLabel(run.aggregate_blockers.length)}</dd>
-        </div>
-      </dl>
+        <dl className="summary-list library-selected-summary">
+          <div>
+            <dt>Origin profile</dt>
+            <dd>{run.origin_profile_display_name ?? run.trusted_profile_name ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>Profile kind</dt>
+            <dd>{run.origin_profile_source_kind ?? "-"}</dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd>{run.status}</dd>
+          </div>
+          <div>
+            <dt>Records</dt>
+            <dd>{run.record_count}</dd>
+          </div>
+          <div>
+            <dt>Current revision</dt>
+            <dd>{run.current_revision}</dd>
+          </div>
+          <div>
+            <dt>Exports</dt>
+            <dd>{run.export_count}</dd>
+          </div>
+          <div>
+            <dt>Last export</dt>
+            <dd>{formatDateTime(run.last_exported_at)}</dd>
+          </div>
+          <div>
+            <dt>Blockers</dt>
+            <dd>{formatBlockerLabel(run.aggregate_blockers.length)}</dd>
+          </div>
+        </dl>
 
-      <div className="actions">
-        <button type="button" onClick={() => void onOpenLatestReviewed(run)} disabled={busy}>
-          Open latest reviewed state
-        </button>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => void onOpenOriginalProcessed(run)}
-          disabled={busy}
-        >
-          Open original processed state
-        </button>
-        {allowArchive ? (
+        <div className="actions library-selected-actions">
+          <button type="button" onClick={() => void onOpenLatestReviewed(run)} disabled={busy}>
+            Open latest reviewed state
+          </button>
           <button
             type="button"
             className="secondary-button"
-            onClick={() => void onArchiveRun(run)}
+            onClick={() => void onOpenOriginalProcessed(run)}
             disabled={busy}
           >
-            Archive run
+            Open original processed state
           </button>
-        ) : null}
+          {!run.is_archived ? (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void onArchiveRun(run)}
+              disabled={busy}
+            >
+              Archive run
+            </button>
+          ) : null}
+        </div>
       </div>
-    </article>
+    </aside>
   );
 }
 
@@ -130,13 +174,21 @@ export function RunLibraryWorkspace({
   onArchiveRun,
 }: RunLibraryWorkspaceProps) {
   const [activeTab, setActiveTab] = useState<"open" | "archived">("open");
+  const [selectedRunId, setSelectedRunId] = useState("");
   const runs = useMemo(
     () => (activeTab === "open" ? openRuns : archivedRuns),
     [activeTab, archivedRuns, openRuns],
   );
+  const selectedRun = runs.find((run) => run.processing_run_id === selectedRunId) ?? runs[0] ?? null;
+
+  useEffect(() => {
+    setSelectedRunId((current) =>
+      runs.some((run) => run.processing_run_id === current) ? current : runs[0]?.processing_run_id ?? "",
+    );
+  }, [runs]);
 
   return (
-    <section className="workspace-shell">
+    <section className="workspace-shell library-shell">
       <div className="workspace-header">
         <div className="metric-card review-title-card">
           <p className="eyebrow">Run History</p>
@@ -152,7 +204,7 @@ export function RunLibraryWorkspace({
         </div>
       </div>
 
-      <div className="workspace-toolbar review-workspace-toolbar">
+      <div className="workspace-toolbar review-workspace-toolbar library-tabs-toolbar">
         <div className="workspace-toggle" aria-label="Run library tabs">
           <button
             type="button"
@@ -182,20 +234,32 @@ export function RunLibraryWorkspace({
           </p>
         </div>
       ) : (
-        <div className="workspace-grid">
-          <div className="workspace-main">
-            {runs.map((run) => (
-              <RunCard
-                key={run.processing_run_id}
-                run={run}
-                busy={busy}
-                allowArchive={!run.is_archived}
-                onOpenLatestReviewed={onOpenLatestReviewed}
-                onOpenOriginalProcessed={onOpenOriginalProcessed}
-                onArchiveRun={onArchiveRun}
-              />
-            ))}
+        <div className="workspace-grid library-dashboard">
+          <div className="workspace-main panel library-run-list-panel">
+            <div className="panel-heading library-list-heading">
+              <div>
+                <p className="eyebrow">{activeTab === "open" ? "Open Runs" : "Archived Runs"}</p>
+                <h3>{runs.length} stored run{runs.length === 1 ? "" : "s"}</h3>
+              </div>
+            </div>
+            <div className="library-run-list">
+              {runs.map((run) => (
+                <RunListItem
+                  key={run.processing_run_id}
+                  run={run}
+                  selected={selectedRun?.processing_run_id === run.processing_run_id}
+                  onSelect={(nextRun) => setSelectedRunId(nextRun.processing_run_id)}
+                />
+              ))}
+            </div>
           </div>
+          <SelectedRunPanel
+            run={selectedRun}
+            busy={busy}
+            onOpenLatestReviewed={onOpenLatestReviewed}
+            onOpenOriginalProcessed={onOpenOriginalProcessed}
+            onArchiveRun={onArchiveRun}
+          />
         </div>
       )}
     </section>

@@ -1484,7 +1484,7 @@ export default function App() {
         )}
       </header>
 
-      {activeWorkspace === "review" ? (
+      {activeWorkspace === "review" || activeWorkspace === "library" ? (
         <section className="workspace-toolbar review-workspace-toolbar">
           {workspaceModeToggle}
         </section>
