@@ -170,6 +170,7 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             storage_ref=storage_ref,
             file_path=file_path,
             created_at=created_at,
+            expires_at=self._metadata_expires_at(metadata),
         )
 
     def get_upload(self, upload_id: str) -> StoredUpload:
@@ -200,6 +201,7 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             storage_ref=str(metadata["storage_ref"]),
             file_path=file_path,
             created_at=created_at,
+            expires_at=self._metadata_expires_at(metadata),
         )
 
     def register_blob_upload(
@@ -254,6 +256,7 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             storage_ref=normalized_storage_ref,
             file_path=self._upload_root / Path(normalized_storage_ref),
             created_at=created_at,
+            expires_at=self._metadata_expires_at(metadata),
         )
 
     def cleanup_expired_uploads(self) -> int:
@@ -456,14 +459,20 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
     def _expires_at(self, created_at: datetime) -> datetime:
         return created_at + timedelta(hours=self._upload_retention_hours)
 
+    def _metadata_expires_at(self, metadata: dict[str, object]) -> datetime | None:
+        if self._upload_retention_hours <= 0:
+            return None
+        raw_expires_at = str(metadata.get("expires_at") or "").strip()
+        if raw_expires_at:
+            return self._normalize_timestamp(datetime.fromisoformat(raw_expires_at))
+        return self._expires_at(self._metadata_timestamp(metadata, "created_at"))
+
     def _is_upload_expired(self, metadata: dict[str, object]) -> bool:
         if self._upload_retention_hours <= 0:
             return False
-        raw_expires_at = str(metadata.get("expires_at") or "").strip()
-        if raw_expires_at:
-            expires_at = self._normalize_timestamp(datetime.fromisoformat(raw_expires_at))
-        else:
-            expires_at = self._expires_at(self._metadata_timestamp(metadata, "created_at"))
+        expires_at = self._metadata_expires_at(metadata)
+        if expires_at is None:
+            return False
         return self._normalize_timestamp(self._now_provider()) >= expires_at
 
     def _normalize_timestamp(self, value: datetime) -> datetime:

@@ -4,6 +4,7 @@ export interface SourceUploadResponse {
   content_type: string;
   file_size_bytes: number;
   storage_ref: string;
+  expires_at: string | null;
 }
 
 export interface BlobUploadRegistrationRequest {

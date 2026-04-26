@@ -44,6 +44,14 @@ import {
 import { RunLibraryWorkspace } from "./components/RunLibraryWorkspace";
 import { ReviewWorkspace, type WorkspaceRow } from "./components/ReviewWorkspace";
 import { UploadRunPanel } from "./components/UploadRunPanel";
+import {
+  readPersistedStagedReportQueue,
+  writePersistedStagedReportQueue,
+} from "./stagedReportQueueStorage";
+import {
+  readPersistedWorkspaceRecovery,
+  writePersistedWorkspaceRecovery,
+} from "./workspaceRecoveryStorage";
 
 type DraftSyncReason =
   | "reset"
@@ -72,15 +80,21 @@ interface LeaveSettingsPromptState {
 
 interface StagedReportItem {
   stagedReportId: string;
-  file: File;
+  file: File | null;
   filename: string;
   upload: SourceUploadResponse | null;
+  uploadStatus: "uploading" | "ready" | "failed" | "expired";
+  uploadError: string;
 }
 
 const maxStagedReports = 10;
 
 function buildStagedReportId(): string {
   return `staged-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeErrorMessage(error: unknown, fallbackMessage: string): string {
+  return error instanceof Error ? error.message : fallbackMessage;
 }
 
 function buildWorkspaceRows(
@@ -119,12 +133,29 @@ function isVendorBulkCompatibleRow(row: WorkspaceRow): boolean {
 }
 
 export default function App() {
-  const [activeWorkspace, setActiveWorkspace] = useState<"review" | "library" | "settings">("review");
+  const [initialWorkspaceRecovery] = useState(() => readPersistedWorkspaceRecovery());
+  const [initialStagedReportQueue] = useState(() => readPersistedStagedReportQueue());
+  const [activeWorkspace, setActiveWorkspace] = useState<"review" | "library" | "settings">(
+    initialWorkspaceRecovery.activeWorkspace,
+  );
   const [trustedProfiles, setTrustedProfiles] = useState<TrustedProfileResponse[]>([]);
   const [archivedTrustedProfiles, setArchivedTrustedProfiles] = useState<TrustedProfileResponse[]>([]);
-  const [selectedTrustedProfileName, setSelectedTrustedProfileName] = useState("");
-  const [stagedReports, setStagedReports] = useState<StagedReportItem[]>([]);
-  const [activeStagedReportId, setActiveStagedReportId] = useState("");
+  const [selectedTrustedProfileName, setSelectedTrustedProfileName] = useState(
+    initialWorkspaceRecovery.selectedTrustedProfileName,
+  );
+  const [stagedReports, setStagedReports] = useState<StagedReportItem[]>(() =>
+    initialStagedReportQueue.reports.map((report) => ({
+      stagedReportId: report.stagedReportId,
+      file: null,
+      filename: report.filename,
+      upload: report.upload,
+      uploadStatus: "ready",
+      uploadError: "",
+    })),
+  );
+  const [activeStagedReportId, setActiveStagedReportId] = useState(
+    initialStagedReportQueue.activeStagedReportId || initialWorkspaceRecovery.activeStagedReportId,
+  );
   const [openRuns, setOpenRuns] = useState<ProcessingRunResponse[]>([]);
   const [archivedRuns, setArchivedRuns] = useState<ProcessingRunResponse[]>([]);
   const [runDetail, setRunDetail] = useState<ProcessingRunDetailResponse | null>(null);
@@ -139,9 +170,17 @@ export default function App() {
   const [reviewContextInvalidationMessage, setReviewContextInvalidationMessage] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
-  const [statusMessage, setStatusMessage] = useState(
-    "Choose a trusted profile and stage one or more PDFs to start reviewing.",
-  );
+  const [statusMessage, setStatusMessage] = useState(() => {
+    if (initialStagedReportQueue.reports.length > 0) {
+      const restoredCount = initialStagedReportQueue.reports.length;
+      return `Restored ${restoredCount} staged report${restoredCount === 1 ? "" : "s"} from temporary browser recovery.`;
+    }
+    if (initialStagedReportQueue.expiredCount > 0) {
+      const expiredCount = initialStagedReportQueue.expiredCount;
+      return `Removed ${expiredCount} expired staged report${expiredCount === 1 ? "" : "s"} from temporary browser recovery.`;
+    }
+    return "Choose a trusted profile and stage one or more PDFs to start reviewing.";
+  });
   const [runLibraryStatusMessage, setRunLibraryStatusMessage] = useState(
     "Browse open and archived runs, then reopen one in the review workspace when you want to keep working.",
   );
@@ -154,6 +193,8 @@ export default function App() {
   const settingsLeaveGuardRef = useRef<ProfileSettingsLeaveGuard | null>(null);
   const pageExitCleanupDraftIdRef = useRef<string | null>(null);
   const draftStateRef = useRef<DraftEditorStateResponse | null>(null);
+  const workspaceRestoreAttemptedRef = useRef(false);
+  const recoveredProcessingRunIdRef = useRef(initialWorkspaceRecovery.activeProcessingRunId);
   const [loadedReviewOrigin, setLoadedReviewOrigin] = useState<"staged_upload" | "run_library" | null>(null);
 
   const selectedTrustedProfile =
@@ -205,6 +246,30 @@ export default function App() {
   useEffect(() => {
     draftStateRef.current = draftState;
   }, [draftState]);
+
+  useEffect(() => {
+    writePersistedStagedReportQueue(
+      stagedReports
+        .filter((report) => report.uploadStatus === "ready" && report.upload)
+        .map((report) => ({
+          stagedReportId: report.stagedReportId,
+          filename: report.filename,
+          upload: report.upload as SourceUploadResponse,
+        })),
+      activeStagedReportId,
+    );
+  }, [activeStagedReportId, stagedReports]);
+
+  useEffect(() => {
+    const activeProcessingRunId = runDetail?.processing_run_id ?? recoveredProcessingRunIdRef.current;
+    writePersistedWorkspaceRecovery({
+      activeWorkspace,
+      selectedTrustedProfileName,
+      activeProcessingRunId,
+      loadedReviewOrigin,
+      activeStagedReportId,
+    });
+  }, [activeStagedReportId, activeWorkspace, loadedReviewOrigin, runDetail, selectedTrustedProfileName]);
 
   function registerSettingsLeaveGuard(guard: ProfileSettingsLeaveGuard | null) {
     settingsLeaveGuardRef.current = guard;
@@ -323,17 +388,45 @@ export default function App() {
     }
   }
 
-  function updateStagedReportUpload(stagedReportId: string, upload: SourceUploadResponse | null) {
+  function patchStagedReport(
+    stagedReportId: string,
+    patch: Partial<Pick<StagedReportItem, "upload" | "uploadStatus" | "uploadError">>,
+  ) {
     setStagedReports((current) =>
       current.map((report) =>
         report.stagedReportId === stagedReportId
           ? {
               ...report,
-              upload,
+              ...patch,
             }
           : report,
       ),
     );
+  }
+
+  async function uploadStagedReportFile(stagedReportId: string, file: File): Promise<SourceUploadResponse> {
+    patchStagedReport(stagedReportId, {
+      upload: null,
+      uploadStatus: "uploading",
+      uploadError: "",
+    });
+    try {
+      const upload = await uploadSourceDocument(file);
+      patchStagedReport(stagedReportId, {
+        upload,
+        uploadStatus: "ready",
+        uploadError: "",
+      });
+      return upload;
+    } catch (error) {
+      const message = normalizeErrorMessage(error, `Failed to upload ${file.name}.`);
+      patchStagedReport(stagedReportId, {
+        upload: null,
+        uploadStatus: "failed",
+        uploadError: message,
+      });
+      throw new Error(message);
+    }
   }
 
   function handleStageFiles(files: File[]) {
@@ -352,6 +445,8 @@ export default function App() {
       file,
       filename: file.name,
       upload: null,
+      uploadStatus: "uploading" as const,
+      uploadError: "",
     }));
     const acceptedCount = nextReports.length;
     const ignoredCount = pdfFiles.length - acceptedCount;
@@ -370,8 +465,19 @@ export default function App() {
     setStatusMessage(
       ignoredCount > 0
         ? `Staged ${acceptedCount} report${acceptedCount === 1 ? "" : "s"}. The queue holds up to 10 PDFs, so ${ignoredCount} additional file${ignoredCount === 1 ? " was" : "s were"} ignored.`
-        : `Staged ${acceptedCount} report${acceptedCount === 1 ? "" : "s"} for review. Select one queued PDF and open the review workspace when ready.`,
+        : `Staged ${acceptedCount} report${acceptedCount === 1 ? "" : "s"} for review and started temporary upload for browser recovery.`,
     );
+
+    nextReports.forEach((report) => {
+      if (!report.file) {
+        return;
+      }
+      void uploadStagedReportFile(report.stagedReportId, report.file).catch((error) => {
+        setErrorMessage(
+          `Upload failed for ${report.filename}: ${normalizeErrorMessage(error, "Unexpected upload error.")}`,
+        );
+      });
+    });
   }
 
   function handleSelectStagedReport(stagedReportId: string) {
@@ -497,7 +603,11 @@ export default function App() {
         }
         applyTrustedProfiles(profiles);
         if (profiles.length > 0) {
-          setStatusMessage("Trusted profiles loaded.");
+          setStatusMessage((current) =>
+            initialStagedReportQueue.reports.length > 0 || initialStagedReportQueue.expiredCount > 0
+              ? current
+              : "Trusted profiles loaded.",
+          );
         } else {
           setErrorMessage("No trusted profiles are available for phase-1 web processing.");
         }
@@ -633,6 +743,54 @@ export default function App() {
     };
   }, [activeWorkspace, selectedTrustedProfileId]);
 
+  useEffect(() => {
+    if (workspaceRestoreAttemptedRef.current || trustedProfiles.length === 0) {
+      return;
+    }
+    const processingRunId = initialWorkspaceRecovery.activeProcessingRunId;
+    if (!processingRunId) {
+      return;
+    }
+
+    workspaceRestoreAttemptedRef.current = true;
+    let cancelled = false;
+
+    async function restoreReviewWorkspace() {
+      const recoveredProfileName = initialWorkspaceRecovery.selectedTrustedProfileName;
+      if (recoveredProfileName && trustedProfiles.some((profile) => profile.profile_name === recoveredProfileName)) {
+        setSelectedTrustedProfileName(recoveredProfileName);
+      }
+
+      try {
+        const [nextRunDetail, nextReviewSession] = await Promise.all([
+          fetchProcessingRun(processingRunId),
+          openReviewSession(processingRunId),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        recoveredProcessingRunIdRef.current = processingRunId;
+        setActiveWorkspace(initialWorkspaceRecovery.activeWorkspace);
+        applyLoadedReviewWorkspace(
+          nextRunDetail,
+          nextReviewSession,
+          `Restored ${nextRunDetail.source_document_filename} from the saved review workspace.`,
+          { reviewOrigin: initialWorkspaceRecovery.loadedReviewOrigin ?? "run_library" },
+        );
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setErrorMessage(error instanceof Error ? error.message : "Failed to restore the saved review workspace.");
+      }
+    }
+
+    void restoreReviewWorkspace();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialWorkspaceRecovery, trustedProfiles]);
+
   async function runAction(
     actionLabel: string,
     action: () => Promise<void>,
@@ -711,6 +869,7 @@ export default function App() {
     options?: { reviewOrigin?: "staged_upload" | "run_library" },
   ) {
     const nextRows = buildWorkspaceRows(nextRunDetail, nextReviewSession);
+    recoveredProcessingRunIdRef.current = nextRunDetail.processing_run_id;
     setRunDetail(nextRunDetail);
     setReviewSession(nextReviewSession);
     setLoadedReviewOrigin(options?.reviewOrigin ?? "staged_upload");
@@ -734,9 +893,14 @@ export default function App() {
       }
 
       let uploadToUse = stagedReport.upload;
+      if (stagedReport.uploadStatus === "uploading") {
+        throw new Error(`Wait for ${stagedReport.filename} to finish uploading before processing it.`);
+      }
       if (!uploadToUse) {
-        uploadToUse = await uploadSourceDocument(stagedReport.file);
-        updateStagedReportUpload(stagedReport.stagedReportId, uploadToUse);
+        if (!stagedReport.file) {
+          throw new Error(`Reselect ${stagedReport.filename} to stage it again before processing.`);
+        }
+        uploadToUse = await uploadStagedReportFile(stagedReport.stagedReportId, stagedReport.file);
       }
 
       try {
@@ -748,13 +912,23 @@ export default function App() {
           { reviewOrigin: "staged_upload" },
         );
       } catch (error) {
-        if (!(error instanceof ApiRequestError) || error.status !== 410) {
+        const temporaryUploadUnavailable =
+          error instanceof ApiRequestError && (error.status === 410 || (!stagedReport.file && error.status === 404));
+        if (!temporaryUploadUnavailable) {
           throw error;
         }
 
-        updateStagedReportUpload(stagedReport.stagedReportId, null);
-        const refreshedUpload = await uploadSourceDocument(stagedReport.file);
-        updateStagedReportUpload(stagedReport.stagedReportId, refreshedUpload);
+        if (!stagedReport.file) {
+          const message = `The temporary upload for ${stagedReport.filename} expired. Reselect ${stagedReport.filename} to stage it again before processing.`;
+          patchStagedReport(stagedReport.stagedReportId, {
+            upload: null,
+            uploadStatus: "expired",
+            uploadError: message,
+          });
+          throw new Error(message);
+        }
+
+        const refreshedUpload = await uploadStagedReportFile(stagedReport.stagedReportId, stagedReport.file);
 
         const { nextRunDetail, nextReviewSession } = await loadReviewWorkspaceFromUpload(refreshedUpload);
         applyLoadedReviewWorkspace(
@@ -1396,10 +1570,10 @@ export default function App() {
     <div
       className={
         activeWorkspace === "review"
-          ? "workspace-toggle review-workspace-toggle"
+          ? "workspace-toggle workspace-mode-toggle review-workspace-toggle"
           : activeWorkspace === "settings"
-            ? "workspace-toggle settings-header-toggle"
-            : "workspace-toggle"
+            ? "workspace-toggle workspace-mode-toggle settings-header-toggle"
+            : "workspace-toggle workspace-mode-toggle"
       }
       aria-label="Workspace mode"
     >
@@ -1474,21 +1648,11 @@ export default function App() {
           <h1>{currentWorkspaceTitle}</h1>
           <p className="hero-copy">{currentWorkspaceCopy}</p>
         </div>
-        {activeWorkspace === "settings" ? (
-          <div className="settings-hero-side">
-            {workspaceModeToggle}
-            {workspaceStatusCard}
-          </div>
-        ) : (
-          workspaceStatusCard
-        )}
-      </header>
-
-      {activeWorkspace === "review" || activeWorkspace === "library" ? (
-        <section className="workspace-toolbar review-workspace-toolbar">
+        <div className="settings-hero-side">
           {workspaceModeToggle}
-        </section>
-      ) : null}
+          {workspaceStatusCard}
+        </div>
+      </header>
 
       {errorMessage ? (
         <div className="banner error" role="alert">

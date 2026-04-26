@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewSessionResponse } from "../api/contracts";
 import App from "../App";
+import { STAGED_REPORTS_STORAGE_KEY } from "../stagedReportQueueStorage";
 
 const { uploadMock } = vi.hoisted(() => ({
   uploadMock: vi.fn(),
@@ -165,6 +166,8 @@ function buildProfileDraftState() {
 
 interface MockOptions {
   expireCachedUploadOnSecondRun?: boolean;
+  expiredUploadIds?: string[];
+  failNextReviewEditWith500?: boolean;
   initialReviewRecords?: ReturnType<typeof buildBaseReviewRecords>;
   resolveMappedLaborWarningAfterPublish?: boolean;
 }
@@ -501,6 +504,7 @@ function installFetchMock(
     uploadCounter: 0,
     uploadFilenamesById: new Map<string, string>(),
     runAttemptsByUploadId: new Map<string, number>(),
+    failedReviewEditOnce: false,
     publishedProfileDetail: buildPublishedProfileDetail(),
     draftState: buildProfileDraftState(),
   };
@@ -612,6 +616,7 @@ function installFetchMock(
           content_type: "application/pdf",
           file_size_bytes: 1024,
           storage_ref: `runtime/uploads/${filename}`,
+          expires_at: "2099-01-01T00:00:00Z",
         },
         201,
       );
@@ -634,6 +639,7 @@ function installFetchMock(
           content_type: payload.content_type ?? "application/pdf",
           file_size_bytes: payload.file_size_bytes ?? 1024,
           storage_ref: payload.storage_ref ?? `uploads/${uploadId}/report.pdf`,
+          expires_at: "2099-01-01T00:00:00Z",
         },
         201,
       );
@@ -647,6 +653,15 @@ function installFetchMock(
       state.runAttemptsByUploadId.set(uploadId, nextAttemptCount);
 
       if (options.expireCachedUploadOnSecondRun && nextAttemptCount === 2) {
+        return jsonResponse(
+          {
+            detail: "The uploaded PDF expired from temporary storage. Reselect and upload the PDF again before processing.",
+          },
+          410,
+        );
+      }
+
+      if (options.expiredUploadIds?.includes(uploadId)) {
         return jsonResponse(
           {
             detail: "The uploaded PDF expired from temporary storage. Reselect and upload the PDF again before processing.",
@@ -777,6 +792,10 @@ function installFetchMock(
     }
 
     if (url === "/api/runs/processing-run-1/review-session/edits" && init?.method === "POST") {
+      if (options.failNextReviewEditWith500 && !state.failedReviewEditOnce) {
+        state.failedReviewEditOnce = true;
+        return jsonResponse({ detail: "An unexpected server error occurred." }, 500);
+      }
       const payload = JSON.parse(String(init.body ?? "{}")) as {
         edits: Array<{ record_key: string; changed_fields: Record<string, unknown> }>;
       };
@@ -827,6 +846,9 @@ async function stageReports(user: ReturnType<typeof userEvent.setup>, filenames:
     screen.getByLabelText(/^source report pdf$/i),
     filenames.map((filename) => new File(["sample"], filename, { type: "application/pdf" })),
   );
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: /process source pdf/i })).toBeEnabled();
+  });
 }
 
 async function expandFamily(user: ReturnType<typeof userEvent.setup>, familyLabel: string) {
@@ -863,8 +885,124 @@ describe("App", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    localStorage.clear();
     URL.createObjectURL = originalCreateObjectUrl;
     URL.revokeObjectURL = originalRevokeObjectUrl;
+  });
+
+  it("uploads staged PDFs immediately and restores the temporary queue after refresh", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    const { unmount } = render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+
+    await waitFor(() => {
+      expect(localStorage.getItem(STAGED_REPORTS_STORAGE_KEY)).toContain("upload-1");
+    });
+
+    unmount();
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: /report\.pdf/i })).toBeInTheDocument();
+    expect(await screen.findByText(/restored 1 staged report/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    const uploadRequests = fetchCalls.filter(([url]) => url === "/api/source-documents/uploads");
+    const runRequests = fetchCalls.filter(([url]) => url === "/api/runs");
+    expect(uploadRequests).toHaveLength(1);
+    expect(JSON.parse(String(runRequests[0]?.[1]?.body)).upload_id).toBe("upload-1");
+  });
+
+  it("restores the selected profile, active staged report, and active review run after refresh", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    const { unmount } = render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "alternate");
+    await stageReports(user, ["report-a.pdf", "report-b.pdf"]);
+    await user.click(screen.getByRole("button", { name: /report-b\.pdf/i }));
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report-b.pdf" });
+
+    const runCreatesBeforeRefresh = vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/runs").length;
+
+    unmount();
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "report-b.pdf" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /trusted profile/i })).toHaveValue("alternate");
+    expect(screen.getByRole("button", { name: /report-b\.pdf/i })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText(/restored report-b\.pdf from the saved review workspace/i)).toBeInTheDocument();
+    expect(vi.mocked(globalThis.fetch).mock.calls.filter(([url]) => url === "/api/runs")).toHaveLength(
+      runCreatesBeforeRefresh,
+    );
+  });
+
+  it("keeps the active review workspace intact when a post-idle API action returns 500", async () => {
+    installFetchMock({ failNextReviewEditWith500: true });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await expandFamily(user, "Show Material");
+    await user.click(screen.getByRole("checkbox", { name: /select material line/i }));
+    await user.type(screen.getByRole("textbox", { name: /bulk vendor name/i }), "Vendor Retained");
+    await user.click(screen.getByRole("button", { name: /apply vendor/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/unexpected server error/i);
+    expect(screen.getByRole("heading", { name: "report.pdf" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /report\.pdf/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("combobox", { name: /trusted profile/i })).toHaveValue("default");
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /apply vendor/i }));
+
+    expect(await screen.findByText(/applied vendor name vendor retained/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "report.pdf" })).toBeInTheDocument();
+  });
+
+  it("asks the user to reselect a restored staged PDF when its temporary upload expired", async () => {
+    localStorage.setItem(
+      STAGED_REPORTS_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        activeStagedReportId: "staged-restored",
+        reports: [
+          {
+            stagedReportId: "staged-restored",
+            filename: "expired-report.pdf",
+            upload: {
+              upload_id: "expired-upload",
+              original_filename: "expired-report.pdf",
+              content_type: "application/pdf",
+              file_size_bytes: 1024,
+              storage_ref: "uploads/expired-upload/expired-report.pdf",
+              expires_at: "2099-01-01T00:00:00Z",
+            },
+          },
+        ],
+      }),
+    );
+    installFetchMock({ expiredUploadIds: ["expired-upload"] });
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: /expired-report\.pdf/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/reselect expired-report\.pdf/i);
+    expect(screen.getByText(/needs reselect/i)).toBeInTheDocument();
   });
 
   it("stages multiple PDFs, keeps review grouped by family, and lets row selection drive the review sidebar", async () => {
@@ -1413,6 +1551,9 @@ describe("App", () => {
       screen.getByLabelText(/source report pdf/i),
       new File(["pdf-bytes"], "report.pdf", { type: "application/pdf" }),
     );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /process source pdf/i })).toBeEnabled();
+    });
 
     await user.click(screen.getByRole("button", { name: /process source pdf/i }));
 

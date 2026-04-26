@@ -87,6 +87,18 @@ class RuntimeStorageTests(unittest.TestCase):
         self.assertEqual(deleted_count, 0)
         self.assertTrue((TEST_ROOT / "uploads" / stored_upload.upload_id).exists())
 
+    def test_stored_upload_reports_expiration_timestamp(self) -> None:
+        stored_upload = self.store.save_upload(
+            original_filename="report.pdf",
+            content_bytes=b"pdf-bytes",
+            content_type="application/pdf",
+        )
+
+        resolved_upload = self.store.get_upload(stored_upload.upload_id)
+
+        self.assertEqual(stored_upload.expires_at, self.current_time + timedelta(hours=24))
+        self.assertEqual(resolved_upload.expires_at, self.current_time + timedelta(hours=24))
+
     def test_cleanup_uses_legacy_directory_mtime_when_created_at_is_missing(self) -> None:
         stored_upload = self.store.save_upload(
             original_filename="report.pdf",
@@ -170,6 +182,7 @@ class VercelBlobRuntimeStorageTests(unittest.TestCase):
 
         self.assertEqual(resolved_upload.upload_id, stored_upload.upload_id)
         self.assertEqual(resolved_upload.storage_ref, stored_upload.storage_ref)
+        self.assertEqual(resolved_upload.expires_at, self.current_time + timedelta(hours=24))
         self.assertEqual(resolved_upload.file_path.read_bytes(), b"pdf-bytes")
         self.assertTrue(str(resolved_upload.file_path).startswith(str((TEST_ROOT / "instance-b").resolve())))
 

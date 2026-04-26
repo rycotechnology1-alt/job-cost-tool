@@ -11,10 +11,12 @@ from pathlib import Path
 from uuid import uuid4
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
 import psycopg
 from psycopg import sql
 from openpyxl import Workbook, load_workbook
 
+from api import create_app
 from api.dependencies import build_runtime
 from core.config import ConfigLoader, ProfileManager
 from core.models import MATERIAL, PendingRecordEdit, Record
@@ -137,6 +139,61 @@ class PostgresLineageStoreTests(unittest.TestCase):
         self.assertEqual(export_result.export_artifact.session_revision, 1)
         self.assertEqual(persisted_artifacts[0].session_revision, 1)
         self.assertEqual(worksheet["G27"].value, "Vendor B")
+
+    def test_postgres_store_reconnects_after_idle_closed_connection_for_reads_and_writes(self) -> None:
+        self.lineage_store.ensure_organization(
+            organization_id="org-idle",
+            slug="idle",
+            display_name="Idle Org",
+            created_at=self.created_at,
+        )
+
+        self.lineage_store._connection.close()
+
+        restored_organization = self.lineage_store.get_organization("org-idle")
+        self.assertEqual(restored_organization.display_name, "Idle Org")
+
+        self.lineage_store._connection.close()
+
+        restored_user = self.lineage_store.ensure_user(
+            User(
+                user_id="user-idle",
+                organization_id="org-idle",
+                email="idle@example.com",
+                display_name="Idle User",
+                auth_subject="auth-idle",
+                is_active=True,
+                created_at=self.created_at,
+            )
+        )
+        self.assertEqual(restored_user.organization_id, "org-idle")
+
+    def test_api_route_recovers_postgres_connection_after_idle_close(self) -> None:
+        schema_name = self._new_schema_name("api_idle")
+        runtime_root = TEST_ROOT / "runtime" / "api-idle"
+        app = create_app(
+            database_provider="postgres",
+            postgres_admin_url=self.postgres_admin_url,
+            postgres_pooled_url=self.postgres_pooled_url,
+            postgres_schema=schema_name,
+            profile_manager=self.profile_manager,
+            storage_provider="local",
+            upload_root=runtime_root / "uploads",
+            export_root=runtime_root / "exports",
+            engine_version="engine-1",
+            now_provider=lambda: self.created_at,
+        )
+        client = TestClient(app)
+        try:
+            app.state.runtime.lineage_store._connection.close()
+
+            response = client.get("/api/trusted-profiles")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()[0]["profile_name"], "default")
+        finally:
+            client.close()
+            app.state.runtime.lineage_store.close()
 
     def test_postgres_store_rejects_stale_review_revision_at_persistence_layer(self) -> None:
         processing_result = self._create_processing_run()

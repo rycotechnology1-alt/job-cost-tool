@@ -50,6 +50,7 @@ class LocalRuntimeFileStore(RuntimeStorage):
         file_path = (upload_dir / filename).resolve()
         file_path.write_bytes(content_bytes)
         created_at = self._normalize_timestamp(self._now_provider())
+        expires_at = self._expires_at(created_at)
 
         metadata = {
             "upload_id": upload_id,
@@ -59,6 +60,7 @@ class LocalRuntimeFileStore(RuntimeStorage):
             "storage_ref": f"uploads/{upload_id}/{filename}",
             "filename": filename,
             "created_at": created_at.isoformat(),
+            "expires_at": expires_at.isoformat() if expires_at else None,
         }
         (upload_dir / "metadata.json").write_text(
             json.dumps(metadata, indent=2, sort_keys=True),
@@ -72,6 +74,7 @@ class LocalRuntimeFileStore(RuntimeStorage):
             storage_ref=metadata["storage_ref"],
             file_path=file_path,
             created_at=created_at,
+            expires_at=expires_at,
         )
 
     def get_upload(self, upload_id: str) -> StoredUpload:
@@ -87,6 +90,7 @@ class LocalRuntimeFileStore(RuntimeStorage):
 
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         upload_created_at = self._resolve_upload_created_at(upload_dir, metadata)
+        expires_at = self._resolve_upload_expires_at(upload_created_at, metadata)
         if self._is_expired(upload_created_at):
             self._delete_upload_dir(upload_dir)
             raise ExpiredUploadError(
@@ -105,6 +109,7 @@ class LocalRuntimeFileStore(RuntimeStorage):
             storage_ref=str(metadata["storage_ref"]),
             file_path=file_path,
             created_at=upload_created_at,
+            expires_at=expires_at,
         )
 
     def register_blob_upload(
@@ -274,10 +279,33 @@ class LocalRuntimeFileStore(RuntimeStorage):
 
     def _is_expired(self, created_at: datetime) -> bool:
         """Return True when one upload is older than the configured retention window."""
-        if self._upload_retention_hours <= 0:
+        expires_at = self._expires_at(created_at)
+        if expires_at is None:
             return False
-        expires_at = created_at + timedelta(hours=self._upload_retention_hours)
         return self._normalize_timestamp(self._now_provider()) >= expires_at
+
+    def _expires_at(self, created_at: datetime) -> datetime | None:
+        """Return the expiration timestamp for one upload, or None when retention is disabled."""
+        if self._upload_retention_hours <= 0:
+            return None
+        return self._normalize_timestamp(created_at) + timedelta(hours=self._upload_retention_hours)
+
+    def _resolve_upload_expires_at(
+        self,
+        created_at: datetime,
+        metadata: dict | None = None,
+    ) -> datetime | None:
+        """Return the metadata expiration timestamp with a fallback for older local uploads."""
+        if self._upload_retention_hours <= 0:
+            return None
+        raw_metadata = metadata or {}
+        expires_at_value = str(raw_metadata.get("expires_at") or "").strip()
+        if expires_at_value:
+            try:
+                return self._normalize_timestamp(datetime.fromisoformat(expires_at_value))
+            except ValueError:
+                pass
+        return self._expires_at(created_at)
 
     def _delete_upload_dir(self, upload_dir: Path) -> None:
         """Delete one cached upload directory safely inside the configured upload root."""

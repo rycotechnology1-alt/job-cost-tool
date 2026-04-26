@@ -916,6 +916,7 @@ function installCreateConflictFetchMock() {
 describe("Profile settings workspace", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    localStorage.clear();
   });
 
   it("inspects the live profile, edits the five Phase 2A domains, and saves profile settings in one action", async () => {
@@ -1831,8 +1832,6 @@ describe("Profile settings workspace", () => {
     view.unmount();
     render(<App />);
 
-    await screen.findByText("Trusted profiles loaded.");
-    await user.click(screen.getByRole("button", { name: /profile settings/i }));
     expect(await screen.findByText(/live version v1 remains the web-processing source/i)).toBeInTheDocument();
     expect(screen.queryByText("Unpublished changes")).not.toBeInTheDocument();
   });

@@ -231,6 +231,17 @@ th {
   box-shadow: 0 10px 28px rgba(20, 46, 54, 0.08);
 }
 
+.workspace-mode-toggle {
+  align-content: start;
+  grid-auto-rows: max-content;
+}
+
+.workspace-mode-toggle .toggle-button {
+  min-height: 2.35rem;
+  padding: 0.72rem 1.2rem;
+  line-height: 1;
+}
+
 .setup-grid {
   display: grid;
   gap: 1rem;
@@ -359,6 +370,18 @@ th {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.staged-report-select .status-pill {
+  margin-top: 0.35rem;
+  font-size: 0.66rem;
+}
+
+.staged-report-select small {
+  display: block;
+  margin-top: 0.35rem;
+  color: inherit;
+  opacity: 0.82;
 }
 
 .staged-report-remove {
@@ -986,7 +1009,7 @@ th {
 .app-shell-review .hero {
   margin-bottom: 0;
   padding: 1rem 1.1rem 0.85rem;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 560px);
   align-items: center;
   background: rgba(16, 15, 15, 0.98);
   border-bottom: 1px solid #272222;
@@ -1041,6 +1064,23 @@ th {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.app-shell-review .workspace-mode-toggle {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+  align-self: start;
+  width: min(220px, 100%);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell-review .workspace-mode-toggle .toggle-button {
+  width: 100%;
 }
 
 .app-shell-review button {
@@ -1564,7 +1604,7 @@ th {
   padding: 0;
   display: grid;
   gap: 0.55rem;
-  align-self: stretch;
+  align-self: start;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1852,7 +1892,7 @@ th {
 .app-shell-library .hero {
   margin-bottom: 0;
   padding: 1rem 1.1rem 0.85rem;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 560px);
   align-items: center;
   background: rgba(16, 15, 15, 0.98);
   border-bottom: 1px solid #272222;
@@ -1910,6 +1950,23 @@ th {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.app-shell-library .workspace-mode-toggle {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+  align-self: start;
+  width: min(220px, 100%);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell-library .workspace-mode-toggle .toggle-button {
+  width: 100%;
 }
 
 .app-shell-library button {

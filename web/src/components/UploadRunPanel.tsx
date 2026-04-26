@@ -6,6 +6,8 @@ export interface StagedReportSummary {
   stagedReportId: string;
   filename: string;
   upload: SourceUploadResponse | null;
+  uploadStatus: "uploading" | "ready" | "failed" | "expired";
+  uploadError: string;
 }
 
 interface UploadRunPanelProps {
@@ -39,6 +41,30 @@ export function UploadRunPanel({
 }: UploadRunPanelProps) {
   const activeStagedReport =
     stagedReports.find((report) => report.stagedReportId === activeStagedReportId) ?? stagedReports[0] ?? null;
+  const activeReportReady = Boolean(activeStagedReport?.upload && activeStagedReport.uploadStatus === "ready");
+
+  function statusLabel(report: StagedReportSummary): string {
+    if (report.uploadStatus === "uploading") {
+      return "Uploading";
+    }
+    if (report.uploadStatus === "ready") {
+      return "Ready";
+    }
+    if (report.uploadStatus === "expired") {
+      return "Needs reselect";
+    }
+    return "Upload failed";
+  }
+
+  function statusClassName(report: StagedReportSummary): string {
+    if (report.uploadStatus === "ready") {
+      return "status-pill success";
+    }
+    if (report.uploadStatus === "uploading") {
+      return "status-pill warning";
+    }
+    return "status-pill error";
+  }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     onStageFiles(Array.from(event.target.files ?? []));
@@ -83,7 +109,9 @@ export function UploadRunPanel({
             <span className="dropzone-label">Source report PDF</span>
             <strong>{activeStagedReport?.filename ?? "Drop one or more PDFs here or browse"}</strong>
             <small>
-              {stagedReports.length > 0
+              {activeStagedReport?.uploadStatus === "uploading"
+                ? "Uploading a temporary copy so this staged PDF can survive refresh."
+                : stagedReports.length > 0
                 ? "Queued PDFs stay staged here so you can open the next report without reselecting it."
                 : "Add one or more job-cost PDFs to build a small staged review queue."}
             </small>
@@ -100,7 +128,7 @@ export function UploadRunPanel({
             type="button"
             className="review-launch-button"
             onClick={onLaunchReviewWorkspace}
-            disabled={busy || !selectedTrustedProfileName.trim() || !activeStagedReport}
+            disabled={busy || !selectedTrustedProfileName.trim() || !activeStagedReport || !activeReportReady}
           >
             Process source PDF
           </button>
@@ -141,6 +169,8 @@ export function UploadRunPanel({
                       disabled={busy}
                     >
                       <strong>{report.filename}</strong>
+                      <span className={statusClassName(report)}>{statusLabel(report)}</span>
+                      {report.uploadError ? <small>{report.uploadError}</small> : null}
                     </button>
                     <button
                       type="button"

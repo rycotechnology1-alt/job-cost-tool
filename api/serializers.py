@@ -43,6 +43,7 @@ def to_upload_response(upload: StoredUpload) -> SourceUploadResponse:
         content_type=upload.content_type,
         file_size_bytes=upload.file_size_bytes,
         storage_ref=upload.storage_ref,
+        expires_at=upload.expires_at,
     )
 
 

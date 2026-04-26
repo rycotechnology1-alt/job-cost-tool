@@ -95,6 +95,7 @@ class Phase1ApiTests(unittest.TestCase):
         )
         self.assertEqual(upload_response.status_code, 201)
         upload_payload = upload_response.json()
+        self.assertEqual(upload_payload["expires_at"], "2026-04-06T12:00:00Z")
 
         with patch(
             "services.review_workflow_service.parse_pdf",

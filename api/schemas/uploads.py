@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from api.schemas.common import ApiModel
 
 
@@ -13,6 +15,7 @@ class SourceUploadResponse(ApiModel):
     content_type: str
     file_size_bytes: int
     storage_ref: str
+    expires_at: datetime | None
 
 
 class BlobUploadRegistrationRequest(ApiModel):

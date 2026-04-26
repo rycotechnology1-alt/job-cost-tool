@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from datetime import datetime
+from time import monotonic
 
 import psycopg
 from psycopg import sql
+from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
 
 from core.models.lineage import (
@@ -33,6 +36,8 @@ from services.profile_authoring_errors import ProfileAuthoringPersistenceConflic
 class PostgresLineageStore:
     """Persist lineage entities into the compatibility Postgres schema contract."""
 
+    _HEALTH_CHECK_INTERVAL_SECONDS = 30.0
+
     def __init__(
         self,
         connection_string: str,
@@ -49,15 +54,56 @@ class PostgresLineageStore:
                 connection_string=self._migration_connection_string,
                 schema_name=self._schema_name,
             )
-        self._connection = psycopg.connect(self._connection_string, row_factory=dict_row)
-        self._connection.execute(
-            sql.SQL("SET search_path TO {}, public").format(sql.Identifier(self._schema_name))
-        )
-        self._connection.commit()
+        self._connection_handle = None
+        self._last_connection_check_monotonic = 0.0
+        self._reconnect()
+
+    @property
+    def _connection(self):
+        """Return a live Postgres connection, recreating stale idle handles before use."""
+        self._ensure_connection()
+        return self._connection_handle
+
+    @_connection.setter
+    def _connection(self, connection) -> None:
+        self._connection_handle = connection
+        self._last_connection_check_monotonic = monotonic()
 
     def close(self) -> None:
         """Close the underlying Postgres connection."""
-        self._connection.close()
+        connection = self._connection_handle
+        if connection is not None:
+            connection.close()
+
+    def _ensure_connection(self) -> None:
+        connection = self._connection_handle
+        if connection is None or connection.closed:
+            self._reconnect()
+            return
+
+        if monotonic() - self._last_connection_check_monotonic < self._HEALTH_CHECK_INTERVAL_SECONDS:
+            return
+        if connection.info.transaction_status != TransactionStatus.IDLE:
+            return
+
+        try:
+            connection.execute("SELECT 1")
+            connection.commit()
+            self._last_connection_check_monotonic = monotonic()
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            self._reconnect()
+
+    def _reconnect(self) -> None:
+        old_connection = self._connection_handle
+        if old_connection is not None and not old_connection.closed:
+            with suppress(psycopg.Error):
+                old_connection.close()
+        connection = psycopg.connect(self._connection_string, row_factory=dict_row)
+        connection.execute(
+            sql.SQL("SET search_path TO {}, public").format(sql.Identifier(self._schema_name))
+        )
+        connection.commit()
+        self._connection = connection
 
     def ensure_organization(
         self,

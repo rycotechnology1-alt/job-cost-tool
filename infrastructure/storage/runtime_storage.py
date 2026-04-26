@@ -19,6 +19,7 @@ class StoredUpload:
     storage_ref: str
     file_path: Path
     created_at: datetime
+    expires_at: datetime | None
 
 
 @dataclass(frozen=True, slots=True)
