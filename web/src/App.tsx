@@ -79,6 +79,44 @@ interface LeaveSettingsPromptState {
   profileDisplayName: string;
 }
 
+function resolveRunOriginProfileName(
+  run: ProcessingRunResponse,
+  trustedProfiles: TrustedProfileResponse[],
+): string {
+  if (run.trusted_profile_id) {
+    const profileById = trustedProfiles.find(
+      (profile) => profile.trusted_profile_id === run.trusted_profile_id,
+    );
+    if (profileById) {
+      return profileById.profile_name;
+    }
+  }
+
+  if (run.trusted_profile_name) {
+    const profileByName = trustedProfiles.find(
+      (profile) => profile.profile_name === run.trusted_profile_name,
+    );
+    return profileByName?.profile_name ?? "";
+  }
+
+  return "";
+}
+
+function runMatchesTrustedProfileName(
+  run: ProcessingRunResponse,
+  trustedProfileName: string,
+  trustedProfiles: TrustedProfileResponse[],
+): boolean {
+  const selectedProfile = trustedProfiles.find((profile) => profile.profile_name === trustedProfileName) ?? null;
+  if (!selectedProfile) {
+    return false;
+  }
+  if (run.trusted_profile_id && selectedProfile.trusted_profile_id) {
+    return run.trusted_profile_id === selectedProfile.trusted_profile_id;
+  }
+  return Boolean(run.trusted_profile_name && run.trusted_profile_name === selectedProfile.profile_name);
+}
+
 interface StagedReportItem {
   stagedReportId: string;
   file: File | null;
@@ -869,9 +907,12 @@ export default function App() {
     nextRunDetail: ProcessingRunDetailResponse,
     nextReviewSession: ReviewSessionResponse,
     nextStatusMessage: string,
-    options?: { reviewOrigin?: "staged_upload" | "run_library" },
+    options?: { reviewOrigin?: "staged_upload" | "run_library"; syncTrustedProfileToRunOrigin?: boolean },
   ) {
     const nextRows = buildWorkspaceRows(nextRunDetail, nextReviewSession);
+    const originProfileName = options?.syncTrustedProfileToRunOrigin
+      ? resolveRunOriginProfileName(nextRunDetail, trustedProfiles)
+      : "";
     recoveredProcessingRunIdRef.current = nextRunDetail.processing_run_id;
     setRunDetail(nextRunDetail);
     setReviewSession(nextReviewSession);
@@ -882,6 +923,14 @@ export default function App() {
     setSelectedReviewRecordKeys([]);
     selectRow(nextRows, null);
     setStatusMessage(nextStatusMessage);
+    if (originProfileName && originProfileName !== selectedTrustedProfileName) {
+      setSelectedTrustedProfileName(originProfileName);
+      setProfileDetail(null);
+      setDraftState(null);
+      draftStateRef.current = null;
+      setSettingsProfileDetailLoading(false);
+      advanceDraftSync("profileSwitch");
+    }
   }
 
   async function handleLaunchReviewWorkspace() {
@@ -964,7 +1013,7 @@ export default function App() {
         nextRunDetail,
         nextReviewSession,
         `Reopened the latest reviewed state for ${run.source_document_filename}.`,
-        { reviewOrigin: "run_library" },
+        { reviewOrigin: "run_library", syncTrustedProfileToRunOrigin: true },
       );
     });
   }
@@ -1066,6 +1115,22 @@ export default function App() {
     advanceDraftSync("profileSwitch");
 
     if (!hasActiveReview || runDetail?.is_archived) {
+      return;
+    }
+
+    if (
+      loadedReviewOrigin === "run_library" &&
+      runDetail &&
+      runMatchesTrustedProfileName(runDetail, nextProfileName, trustedProfiles)
+    ) {
+      setReviewContextInvalidationMessage("");
+      setExportArtifact(null);
+      setLastDownloadedFilename("");
+      setStatusMessage(
+        originalProcessedPreview
+          ? `Profile selection changed back to ${nextProfile?.display_name ?? nextProfileName}. Continue from the original processed state before export.`
+          : `Profile selection changed back to ${nextProfile?.display_name ?? nextProfileName}. The loaded review matches this trusted profile.`,
+      );
       return;
     }
 

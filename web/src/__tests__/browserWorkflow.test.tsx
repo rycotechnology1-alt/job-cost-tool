@@ -1457,6 +1457,59 @@ describe("App", () => {
     expect(JSON.parse(String(reprocessRequest?.[1]?.body)).trusted_profile_name).toBe("alternate");
   });
 
+  it("selects the run origin profile when opening latest reviewed state from the run library", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "alternate");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "default");
+    expect(await screen.findByText(/review context is stale for export/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /run library/i }));
+    await screen.findByText("Run History");
+    await user.click(screen.getByRole("button", { name: /open latest reviewed state/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    expect(screen.getByRole("combobox", { name: /trusted profile/i })).toHaveValue("alternate");
+    expect(screen.queryByText(/review context is stale for export/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeEnabled();
+  });
+
+  it("clears stale export state when the user switches back to a latest reviewed run origin profile", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await user.click(screen.getByRole("button", { name: /run library/i }));
+    await screen.findByText("Run History");
+    await user.click(screen.getByRole("button", { name: /open latest reviewed state/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "alternate");
+
+    expect(await screen.findByText(/review context is stale for export/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /reprocess with selected trusted profile/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeDisabled();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "default");
+
+    expect(screen.queryByText(/review context is stale for export/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /reprocess with selected trusted profile/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/profile selection changed to default profile/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeEnabled();
+  });
+
   it("reprocesses a latest reviewed library run with a newly selected profile", async () => {
     installFetchMock();
     const user = userEvent.setup();
