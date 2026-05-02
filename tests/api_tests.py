@@ -366,6 +366,218 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertEqual(latest_response.json()["session_revision"], 2)
         self.assertEqual(latest_response.json()["records"][0]["vendor_name_normalized"], "Vendor A")
 
+    def test_reprocess_saved_run_uses_parsed_snapshot_with_selected_profile(self) -> None:
+        processing_run_id = self._create_processing_run_via_api(trusted_profile_name="default")
+        edit_response = self.client.post(
+            f"/api/runs/{processing_run_id}/review-session/edits",
+            json={
+                "edits": [
+                    {
+                        "record_key": "record-0",
+                        "changed_fields": {"vendor_name_normalized": "Vendor Edited"},
+                    }
+                ]
+            },
+        )
+        self.assertEqual(edit_response.status_code, 200)
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[self._make_material_record(vendor_name_normalized="Vendor Alternate")],
+        ) as parse_mock:
+            reprocess_response = self.client.post(
+                f"/api/runs/{processing_run_id}/reprocess",
+                json={"trusted_profile_name": "alternate"},
+            )
+
+        self.assertEqual(reprocess_response.status_code, 201)
+        reprocessed_payload = reprocess_response.json()
+        self.assertNotEqual(reprocessed_payload["processing_run_id"], processing_run_id)
+        self.assertEqual(reprocessed_payload["trusted_profile_name"], "alternate")
+        self.assertEqual(reprocessed_payload["source_document_filename"], "report.pdf")
+        self.assertEqual(parse_mock.call_count, 0)
+
+        original_latest = self.client.post(
+            f"/api/runs/{processing_run_id}/reopen",
+            json={"mode": "latest_reviewed"},
+        )
+        reprocessed_session = self.client.get(
+            f"/api/runs/{reprocessed_payload['processing_run_id']}/review-session",
+        )
+
+        self.assertEqual(original_latest.status_code, 200)
+        self.assertEqual(original_latest.json()["current_revision"], 1)
+        self.assertEqual(original_latest.json()["records"][0]["vendor_name_normalized"], "Vendor Edited")
+        self.assertEqual(reprocessed_session.status_code, 200)
+        self.assertEqual(reprocessed_session.json()["current_revision"], 0)
+        self.assertEqual(len(reprocessed_session.json()["records"]), 1)
+        self.assertEqual(reprocessed_session.json()["records"][0]["vendor_name_normalized"], "Vendor A")
+
+    def test_reprocess_saved_run_fails_closed_for_cross_org_run(self) -> None:
+        hosted_client = self._create_hosted_client()
+        try:
+            acme_headers = self._auth_headers(
+                organization_id="org-acme",
+                organization_slug="acme",
+                organization_name="Acme Organization",
+                user_id="user-acme-1",
+                email="acme.user@example.com",
+                display_name="Acme User",
+                role="member",
+            )
+            beta_headers = self._auth_headers(
+                organization_id="org-beta",
+                organization_slug="beta",
+                organization_name="Beta Organization",
+                user_id="user-beta-1",
+                email="beta.user@example.com",
+                display_name="Beta User",
+                role="member",
+            )
+            processing_run_id = self._create_processing_run_via_api(
+                client=hosted_client,
+                headers=acme_headers,
+            )
+
+            response = hosted_client.post(
+                f"/api/runs/{processing_run_id}/reprocess",
+                json={"trusted_profile_name": "default"},
+                headers=beta_headers,
+            )
+
+            self.assertEqual(response.status_code, 404)
+        finally:
+            hosted_client.close()
+
+    def test_reprocess_run_does_not_require_legacy_upload_source_payload(self) -> None:
+        processing_run_id = self._create_processing_run_via_api()
+        processing_run = self.lineage_store.get_processing_run(processing_run_id)
+        self.lineage_store._connection.execute(
+            "UPDATE source_documents SET storage_ref = ? WHERE source_document_id = ?",
+            ("uploads/missing-upload/report.pdf", processing_run.source_document_id),
+        )
+        self.lineage_store._connection.commit()
+
+        response = self.client.post(
+            f"/api/runs/{processing_run_id}/reprocess",
+            json={"trusted_profile_name": "alternate"},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertNotEqual(response.json()["processing_run_id"], processing_run_id)
+        self.assertEqual(response.json()["trusted_profile_name"], "alternate")
+
+    def test_reprocess_missing_blob_source_payload_uses_parsed_snapshot(self) -> None:
+        class MissingSourcePayloadBlobClient(FakeBlobObjectClient):
+            fail_source_payload_reads = False
+
+            def get_bytes(self, pathname: str) -> bytes:
+                if (
+                    self.fail_source_payload_reads
+                    and pathname.startswith("sources/")
+                    and not pathname.endswith("/metadata.json")
+                ):
+                    raise RuntimeError("Blob not found")
+                return super().get_bytes(pathname)
+
+        shared_blob_client = MissingSourcePayloadBlobClient()
+        hosted_client = self._create_multi_instance_client(
+            runtime_root=TEST_ROOT / "blob-missing-source",
+            blob_client=shared_blob_client,
+        )
+        try:
+            processing_run_id = self._create_processing_run_via_api(client=hosted_client)
+            shared_blob_client.fail_source_payload_reads = True
+
+            response = hosted_client.post(
+                f"/api/runs/{processing_run_id}/reprocess",
+                json={"trusted_profile_name": "alternate"},
+            )
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertNotEqual(response.json()["processing_run_id"], processing_run_id)
+        self.assertEqual(response.json()["trusted_profile_name"], "alternate")
+
+    def test_reprocess_legacy_blob_upload_payload_missing_uses_parsed_snapshot(self) -> None:
+        class MissingLegacyUploadPayloadBlobClient(FakeBlobObjectClient):
+            fail_upload_payload_reads = False
+
+            def get_bytes(self, pathname: str) -> bytes:
+                if (
+                    self.fail_upload_payload_reads
+                    and pathname.startswith("uploads/")
+                    and not pathname.endswith("/metadata.json")
+                ):
+                    raise RuntimeError("BlobNotFoundError: Vercel Blob: The requested blob does not exist")
+                return super().get_bytes(pathname)
+
+        shared_blob_client = MissingLegacyUploadPayloadBlobClient()
+        hosted_client = self._create_multi_instance_client(
+            runtime_root=TEST_ROOT / "blob-missing-legacy-upload-source",
+            blob_client=shared_blob_client,
+        )
+        try:
+            upload_response = hosted_client.post(
+                "/api/source-documents/uploads",
+                files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
+            )
+            self.assertEqual(upload_response.status_code, 201)
+            upload_payload = upload_response.json()
+
+            with patch(
+                "services.review_workflow_service.parse_pdf",
+                return_value=[self._make_material_record(vendor_name_normalized="Vendor A")],
+            ):
+                run_response = hosted_client.post(
+                    "/api/runs",
+                    json={
+                        "upload_id": upload_payload["upload_id"],
+                        "trusted_profile_name": "default",
+                    },
+                )
+            self.assertEqual(run_response.status_code, 201)
+            processing_run_id = run_response.json()["processing_run_id"]
+            processing_run = self.lineage_store.get_processing_run(processing_run_id)
+            self.lineage_store._connection.execute(
+                "UPDATE source_documents SET storage_ref = ? WHERE source_document_id = ?",
+                (upload_payload["storage_ref"], processing_run.source_document_id),
+            )
+            self.lineage_store._connection.commit()
+
+            shared_blob_client.fail_upload_payload_reads = True
+            response = hosted_client.post(
+                f"/api/runs/{processing_run_id}/reprocess",
+                json={"trusted_profile_name": "alternate"},
+            )
+        finally:
+            hosted_client.close()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertNotEqual(response.json()["processing_run_id"], processing_run_id)
+        self.assertEqual(response.json()["trusted_profile_name"], "alternate")
+
+    def test_reprocess_corrupt_parsed_snapshot_returns_clear_non_500_response(self) -> None:
+        processing_run_id = self._create_processing_run_via_api()
+        self.lineage_store._connection.execute(
+            """
+            UPDATE processing_run_input_snapshots
+            SET schema_version = ?
+            WHERE processing_run_id = ?
+            """,
+            (999, processing_run_id),
+        )
+        self.lineage_store._connection.commit()
+
+        response = self.client.post(
+            f"/api/runs/{processing_run_id}/reprocess",
+            json={"trusted_profile_name": "alternate"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("schema version", response.json()["detail"])
+
     def test_hosted_processing_run_with_local_sentinel_values_still_persists_authenticated_user_id(self) -> None:
         hosted_client = self._create_hosted_client()
         headers = self._auth_headers(

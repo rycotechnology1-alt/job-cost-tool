@@ -1,7 +1,7 @@
 """Runtime storage contracts and local implementations for phase-1 delivery."""
 
 from .local_runtime_file_store import LocalRuntimeFileStore
-from .runtime_storage import ExpiredUploadError, RuntimeStorage, StoredArtifact, StoredUpload
+from .runtime_storage import ExpiredUploadError, RuntimeStorage, StoredArtifact, StoredSourceDocument, StoredUpload
 from .vercel_blob_runtime_storage import VercelBlobRuntimeStorage
 
 __all__ = [
@@ -9,6 +9,7 @@ __all__ = [
     "LocalRuntimeFileStore",
     "RuntimeStorage",
     "StoredArtifact",
+    "StoredSourceDocument",
     "StoredUpload",
     "VercelBlobRuntimeStorage",
 ]

@@ -186,6 +186,20 @@ class ProcessingRun:
 
 
 @dataclass(frozen=True, slots=True)
+class ProcessingRunInputSnapshot:
+    """Compressed parser-output snapshot used to reprocess one run without its PDF."""
+
+    input_snapshot_id: str
+    organization_id: str
+    processing_run_id: str
+    record_count: int
+    payload_json_gzip: bytes
+    payload_hash: str
+    schema_version: int
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class RunRecord:
     """Immutable canonical emitted review row captured inside one processing run."""
 

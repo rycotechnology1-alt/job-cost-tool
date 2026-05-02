@@ -33,6 +33,17 @@ class StoredArtifact:
     file_path: Path
 
 
+@dataclass(frozen=True, slots=True)
+class StoredSourceDocument:
+    """Durable source document resolved through the runtime storage seam."""
+
+    storage_ref: str
+    original_filename: str
+    content_type: str
+    file_size_bytes: int
+    file_path: Path
+
+
 class ExpiredUploadError(FileNotFoundError):
     """Raised when a cached upload expired and must be uploaded again."""
 
@@ -51,6 +62,18 @@ class RuntimeStorage(Protocol):
 
     def get_upload(self, upload_id: str) -> StoredUpload:
         """Resolve one uploaded source document by upload id."""
+
+    def save_source_document(
+        self,
+        *,
+        original_filename: str,
+        content_bytes: bytes,
+        content_type: str | None = None,
+    ) -> StoredSourceDocument:
+        """Persist one durable source document and return its runtime reference."""
+
+    def get_source_document(self, storage_ref: str) -> StoredSourceDocument:
+        """Resolve one durable source document by storage reference."""
 
     def register_blob_upload(
         self,

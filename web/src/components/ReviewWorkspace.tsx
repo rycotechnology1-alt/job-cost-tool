@@ -24,7 +24,10 @@ interface ReviewWorkspaceProps {
   exportArtifact: ExportArtifactResponse | null;
   exportDisabledMessage: string;
   originalProcessedPreview: boolean;
+  originalProcessedActionLabel: string;
   onContinueFromOriginalProcessedState: () => Promise<void> | void;
+  showRunLibraryReprocessAction: boolean;
+  onReprocessLoadedRunWithSelectedProfile: () => Promise<void> | void;
   busy: boolean;
   onToggleReviewRowSelection: (recordKey: string, isSelected: boolean) => void;
   onSelectRow: (recordKey: string) => void;
@@ -153,7 +156,10 @@ export function ReviewWorkspace({
   exportArtifact,
   exportDisabledMessage,
   originalProcessedPreview,
+  originalProcessedActionLabel,
   onContinueFromOriginalProcessedState,
+  showRunLibraryReprocessAction,
+  onReprocessLoadedRunWithSelectedProfile,
   busy,
   onToggleReviewRowSelection,
   onSelectRow,
@@ -275,6 +281,17 @@ export function ReviewWorkspace({
               <div className="banner warning" role="status">
                 <strong>Review context is stale for export.</strong>
                 <p>{exportDisabledMessage}</p>
+                {showRunLibraryReprocessAction ? (
+                  <div className="actions">
+                    <button
+                      type="button"
+                      onClick={() => void onReprocessLoadedRunWithSelectedProfile()}
+                      disabled={busy}
+                    >
+                      Reprocess with selected trusted profile
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {originalProcessedPreview ? (
@@ -286,7 +303,7 @@ export function ReviewWorkspace({
                 </p>
                 <div className="actions">
                   <button type="button" onClick={() => void onContinueFromOriginalProcessedState()} disabled={busy}>
-                    Continue from original processed state
+                    {originalProcessedActionLabel}
                   </button>
                 </div>
               </div>

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 from uuid import uuid4
 
-from .runtime_storage import ExpiredUploadError, RuntimeStorage, StoredArtifact, StoredUpload
+from .runtime_storage import ExpiredUploadError, RuntimeStorage, StoredArtifact, StoredSourceDocument, StoredUpload
 
 
 class BlobObjectClient(Protocol):
@@ -117,10 +117,12 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         )
         self._upload_root = Path(upload_root).expanduser().resolve()
         self._export_root = Path(export_root).expanduser().resolve()
+        self._source_root = (self._upload_root.parent / "sources").resolve()
         self._upload_retention_hours = float(upload_retention_hours)
         self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         self._upload_root.mkdir(parents=True, exist_ok=True)
         self._export_root.mkdir(parents=True, exist_ok=True)
+        self._source_root.mkdir(parents=True, exist_ok=True)
 
     def save_upload(
         self,
@@ -186,7 +188,11 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             raise ExpiredUploadError(
                 "The uploaded PDF expired from temporary storage. Reselect and upload the PDF again before processing."
             )
-        content_bytes = self._blob_client.get_bytes(str(metadata["storage_ref"]))
+        try:
+            content_bytes = self._blob_client.get_bytes(str(metadata["storage_ref"]))
+        except Exception as exc:
+            self._raise_if_missing_blob_error(exc, str(metadata["storage_ref"]))
+            raise
         file_path = self._materialize_cache_file(
             root=self._upload_root,
             pathname=str(metadata["storage_ref"]),
@@ -228,7 +234,11 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         if storage_ref_parts[-1] != filename:
             raise ValueError("Blob upload registration filename must match the storage reference.")
 
-        content_bytes = self._blob_client.get_bytes(normalized_storage_ref)
+        try:
+            content_bytes = self._blob_client.get_bytes(normalized_storage_ref)
+        except Exception as exc:
+            self._raise_if_missing_blob_error(exc, normalized_storage_ref)
+            raise
         if not self._is_pdf_bytes(content_bytes):
             raise ValueError("Blob upload registration requires a real PDF payload.")
 
@@ -257,6 +267,65 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
             file_path=self._upload_root / Path(normalized_storage_ref),
             created_at=created_at,
             expires_at=self._metadata_expires_at(metadata),
+        )
+
+    def save_source_document(
+        self,
+        *,
+        original_filename: str,
+        content_bytes: bytes,
+        content_type: str | None = None,
+    ) -> StoredSourceDocument:
+        """Persist one durable source document in shared blob storage."""
+        filename = self._normalize_filename(original_filename)
+        if not content_bytes:
+            raise ValueError("Source document content_bytes must not be empty.")
+
+        source_id = uuid4().hex
+        storage_ref = f"sources/{source_id}/{filename}"
+        metadata = {
+            "original_filename": filename,
+            "content_type": str(content_type or "application/octet-stream"),
+            "file_size_bytes": len(content_bytes),
+            "storage_ref": storage_ref,
+            "filename": filename,
+        }
+        self._blob_client.put_bytes(
+            pathname=storage_ref,
+            content_bytes=content_bytes,
+            content_type=metadata["content_type"],
+        )
+        self._write_metadata_blob(
+            pathname=self._metadata_path_for_storage_ref(storage_ref),
+            metadata=metadata,
+        )
+        file_path = self._materialize_cache_file(
+            root=self._source_root,
+            pathname=storage_ref,
+            content_bytes=content_bytes,
+            metadata=metadata,
+        )
+        return StoredSourceDocument(
+            storage_ref=storage_ref,
+            original_filename=filename,
+            content_type=str(metadata["content_type"]),
+            file_size_bytes=len(content_bytes),
+            file_path=file_path,
+        )
+
+    def get_source_document(self, storage_ref: str) -> StoredSourceDocument:
+        """Resolve one durable source document from shared blob storage."""
+        resolved_source = self._get_artifact(
+            storage_ref=storage_ref,
+            expected_prefix="sources/",
+            root=self._source_root,
+        )
+        return StoredSourceDocument(
+            storage_ref=resolved_source.storage_ref,
+            original_filename=resolved_source.original_filename,
+            content_type=resolved_source.content_type,
+            file_size_bytes=resolved_source.file_size_bytes,
+            file_path=resolved_source.file_path,
         )
 
     def cleanup_expired_uploads(self) -> int:
@@ -335,6 +404,7 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         return self._get_artifact(
             storage_ref=storage_ref,
             expected_prefix="exports/",
+            root=self._export_root,
         )
 
     def delete_export_artifact(self, storage_ref: str) -> None:
@@ -349,12 +419,17 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         *,
         storage_ref: str,
         expected_prefix: str,
+        root: Path,
     ) -> StoredArtifact:
         normalized_storage_ref = self._normalize_storage_ref(storage_ref, expected_prefix=expected_prefix)
         metadata = self._read_metadata_blob(self._metadata_path_for_storage_ref(normalized_storage_ref))
-        content_bytes = self._blob_client.get_bytes(normalized_storage_ref)
+        try:
+            content_bytes = self._blob_client.get_bytes(normalized_storage_ref)
+        except Exception as exc:
+            self._raise_if_missing_blob_error(exc, normalized_storage_ref)
+            raise
         file_path = self._materialize_cache_file(
-            root=self._export_root,
+            root=root,
             pathname=normalized_storage_ref,
             content_bytes=content_bytes,
             metadata=metadata,
@@ -380,11 +455,28 @@ class VercelBlobRuntimeStorage(RuntimeStorage):
         )
 
     def _read_metadata_blob(self, pathname: str) -> dict[str, object]:
-        payload = self._blob_client.get_bytes(pathname)
+        try:
+            payload = self._blob_client.get_bytes(pathname)
+        except Exception as exc:
+            self._raise_if_missing_blob_error(exc, pathname)
+            raise
         metadata = json.loads(payload.decode("utf-8"))
         if not isinstance(metadata, dict):
             raise FileNotFoundError(pathname)
         return metadata
+
+    def _raise_if_missing_blob_error(self, exc: Exception, pathname: str) -> None:
+        if isinstance(exc, FileNotFoundError):
+            raise FileNotFoundError(pathname) from exc
+        message = str(exc).lower()
+        if (
+            "not found" in message
+            or "404" in message
+            or "no such" in message
+            or "does not exist" in message
+            or "blobnotfound" in message
+        ):
+            raise FileNotFoundError(pathname) from exc
 
     def _materialize_cache_file(
         self,

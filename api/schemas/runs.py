@@ -58,3 +58,9 @@ class ProcessingRunReopenRequest(ApiModel):
     mode: Literal["latest_reviewed", "original_processed"]
     continue_from_original: bool = False
     expected_current_revision: int | None = Field(default=None, ge=0)
+
+
+class ProcessingRunReprocessRequest(ApiModel):
+    """Request body for reprocessing a saved run source with a selected trusted profile."""
+
+    trusted_profile_name: str = Field(min_length=1)

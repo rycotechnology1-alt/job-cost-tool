@@ -13,6 +13,7 @@ from api.schemas.runs import (
     ProcessingRunCreateRequest,
     ProcessingRunDetailResponse,
     ProcessingRunReopenRequest,
+    ProcessingRunReprocessRequest,
     ProcessingRunResponse,
 )
 from api.schemas.review_sessions import ReviewSessionResponse
@@ -54,10 +55,15 @@ def create_processing_run(
     """Start one immutable processing run from a previously uploaded source document."""
     try:
         upload = runtime.file_store.get_upload(request.upload_id)
+        durable_source = runtime.file_store.save_source_document(
+            original_filename=upload.original_filename,
+            content_bytes=upload.file_path.read_bytes(),
+            content_type=upload.content_type,
+        )
         result = runtime.processing_run_service.create_processing_run(
-            upload.file_path,
+            durable_source.file_path,
             profile_name=request.trusted_profile_name,
-            storage_ref=upload.storage_ref,
+            storage_ref=durable_source.storage_ref,
             request_context=request_context,
         )
         return to_processing_run_response(result)
@@ -116,5 +122,28 @@ def reopen_processing_run(
             request_context=request_context,
         )
         return to_review_session_response(state)
+    except Exception as exc:  # pragma: no cover - exercised through API tests
+        raise to_http_exception(exc) from exc
+
+
+@router.post(
+    "/{processing_run_id}/reprocess",
+    response_model=ProcessingRunResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def reprocess_processing_run(
+    processing_run_id: str,
+    request: ProcessingRunReprocessRequest,
+    runtime: ApiRuntime = Depends(get_runtime),
+    request_context: RequestContext = Depends(get_request_context),
+) -> ProcessingRunResponse:
+    """Create a new immutable run from stored parsed input under the selected profile."""
+    try:
+        result = runtime.processing_run_service.reprocess_processing_run_from_saved_run(
+            processing_run_id,
+            profile_name=request.trusted_profile_name,
+            request_context=request_context,
+        )
+        return to_processing_run_response(result)
     except Exception as exc:  # pragma: no cover - exercised through API tests
         raise to_http_exception(exc) from exc

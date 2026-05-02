@@ -25,6 +25,7 @@ EDITABLE_FIELDS = {
 class ReviewLoadResult:
     """Review workflow state produced when a source document is loaded."""
 
+    parsed_records: list[Record]
     review_records: list[Record]
     records: list[Record]
     blocking_issues: list[str]
@@ -50,6 +51,23 @@ def load_review_data(
     """Run the parse-normalize-default-omit-validate workflow for one file."""
     with _config_context(config_dir=config_dir, legacy_config_dir=legacy_config_dir):
         parsed_records = parse_pdf(file_path)
+        return process_parsed_records(
+            parsed_records,
+            source_label=file_path,
+            config_dir=config_dir,
+            legacy_config_dir=legacy_config_dir,
+        )
+
+
+def process_parsed_records(
+    parsed_records: list[Record],
+    *,
+    source_label: str,
+    config_dir: str | Path | None = None,
+    legacy_config_dir: str | Path | None = None,
+) -> ReviewLoadResult:
+    """Run profile-dependent normalization, default omit rules, and validation on parsed records."""
+    with _config_context(config_dir=config_dir, legacy_config_dir=legacy_config_dir):
         normalized_records = normalize_records(parsed_records)
         review_rules = _build_loader(
             config_dir=config_dir,
@@ -58,10 +76,11 @@ def load_review_data(
         review_records = list(apply_default_omit_rules(normalized_records, review_rules))
         records, blocking_issues = validate_records(review_records)
         return ReviewLoadResult(
+            parsed_records=list(parsed_records),
             review_records=review_records,
             records=list(records),
             blocking_issues=list(blocking_issues),
-            status_text=build_status_text(file_path, list(records), list(blocking_issues)),
+            status_text=build_status_text(source_label, list(records), list(blocking_issues)),
         )
 
 

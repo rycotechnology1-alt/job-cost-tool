@@ -14,6 +14,7 @@ import type {
   LaborMappingRow,
   LaborRateRow,
   ProcessingRunDetailResponse,
+  ProcessingRunReprocessRequest,
   ProcessingRunResponse,
   PublishedProfileDetailResponse,
   ReviewEditDelta,
@@ -343,6 +344,13 @@ export async function reopenProcessingRun(
   },
 ): Promise<ReviewSessionResponse> {
   return apiJson<ReviewSessionResponse>(`/api/runs/${processingRunId}/reopen`, buildJsonRequest(request));
+}
+
+export async function reprocessProcessingRun(
+  processingRunId: string,
+  request: ProcessingRunReprocessRequest,
+): Promise<ProcessingRunResponse> {
+  return apiJson<ProcessingRunResponse>(`/api/runs/${processingRunId}/reprocess`, buildJsonRequest(request));
 }
 
 export async function appendReviewEdits(

@@ -179,11 +179,16 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function buildRunPayload(profileName: "default" | "alternate", sourceFilename = "report.pdf", recordCount = 3) {
+function buildRunPayload(
+  profileName: "default" | "alternate",
+  sourceFilename = "report.pdf",
+  recordCount = 3,
+  processingRunId = "processing-run-1",
+) {
   const trustedProfile =
     trustedProfilesPayload.find((profile) => profile.profile_name === profileName) ?? trustedProfilesPayload[0];
   return {
-    processing_run_id: "processing-run-1",
+    processing_run_id: processingRunId,
     source_document_id: "source-1",
     source_document_filename: sourceFilename,
     profile_snapshot_id: "profile-snapshot-1",
@@ -501,6 +506,9 @@ function installFetchMock(
     originalReviewRecords: JSON.parse(
       JSON.stringify(options.initialReviewRecords ?? buildBaseReviewRecords("default")),
     ) as ReturnType<typeof buildBaseReviewRecords>,
+    reprocessedRunProfileName: null as "default" | "alternate" | null,
+    reprocessedRunSourceFilename: "report.pdf",
+    reprocessedReviewRecords: [] as ReturnType<typeof buildBaseReviewRecords>,
     uploadCounter: 0,
     uploadFilenamesById: new Map<string, string>(),
     runAttemptsByUploadId: new Map<string, number>(),
@@ -741,6 +749,27 @@ function installFetchMock(
       );
     }
 
+    if (url === "/api/runs/processing-run-2" && (!init || !init.method || init.method === "GET")) {
+      return jsonResponse({
+        ...buildRunDetailPayload(
+          state.reprocessedRunProfileName ?? "alternate",
+          state.reprocessedRunSourceFilename,
+          state.reprocessedReviewRecords,
+        ),
+        processing_run_id: "processing-run-2",
+      });
+    }
+
+    if (url === "/api/runs/processing-run-2/review-session" && (!init || !init.method || init.method === "GET")) {
+      return jsonResponse(
+        buildReviewSessionPayload(
+          state.reprocessedRunProfileName ?? "alternate",
+          0,
+          state.reprocessedReviewRecords,
+        ),
+      );
+    }
+
     if (url === "/api/runs/processing-run-1/archive" && init?.method === "POST") {
       state.currentRunArchived = true;
       return jsonResponse({
@@ -749,6 +778,26 @@ function installFetchMock(
         archived_at: "2026-04-06T12:00:00Z",
         current_revision: state.currentReviewRevision,
       });
+    }
+
+    if (url === "/api/runs/processing-run-1/reprocess" && init?.method === "POST") {
+      const payload = JSON.parse(String(init.body ?? "{}")) as {
+        trusted_profile_name?: "default" | "alternate";
+      };
+      state.reprocessedRunProfileName = payload.trusted_profile_name === "alternate" ? "alternate" : "default";
+      state.reprocessedRunSourceFilename = state.currentRunSourceFilename;
+      state.reprocessedReviewRecords = JSON.parse(
+        JSON.stringify(buildBaseReviewRecords(state.reprocessedRunProfileName)),
+      ) as ReturnType<typeof buildBaseReviewRecords>;
+      return jsonResponse(
+        buildRunPayload(
+          state.reprocessedRunProfileName,
+          state.reprocessedRunSourceFilename,
+          state.reprocessedReviewRecords.length,
+          "processing-run-2",
+        ),
+        201,
+      );
     }
 
     if (url === "/api/runs/processing-run-1/reopen" && init?.method === "POST") {
@@ -1372,6 +1421,97 @@ describe("App", () => {
     expect(screen.queryByText(/you are viewing the original processed state/i)).not.toBeInTheDocument();
     await expandFamily(user, "Show Material");
     expect(screen.getAllByText("Vendor A").length).toBeGreaterThan(0);
+  });
+
+  it("reprocesses original processed preview with the selected profile when the run origin differs", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "alternate");
+    expect(await screen.findByText(/review context is stale for export/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /run library/i }));
+    await screen.findByText("Run History");
+    await user.click(screen.getByRole("button", { name: /open original processed state/i }));
+
+    expect(await screen.findByText(/you are viewing the original processed state/i)).toBeInTheDocument();
+    expect(screen.queryByText(/review context is stale for export/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /reprocess with selected trusted profile/i }));
+
+    expect(await screen.findByText(/reprocessed report\.pdf under alternate profile/i)).toBeInTheDocument();
+    expect(screen.queryByText(/you are viewing the original processed state/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/review context is stale for export/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeEnabled();
+
+    const reprocessRequest = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.find(([url]) => url === "/api/runs/processing-run-1/reprocess");
+    expect(reprocessRequest).toBeDefined();
+    expect(JSON.parse(String(reprocessRequest?.[1]?.body)).trusted_profile_name).toBe("alternate");
+  });
+
+  it("reprocesses a latest reviewed library run with a newly selected profile", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await user.click(screen.getByRole("button", { name: /run library/i }));
+    await screen.findByText("Run History");
+    await user.click(screen.getByRole("button", { name: /open latest reviewed state/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "alternate");
+
+    expect(await screen.findByText(/review context is stale for export/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /reprocess with selected trusted profile/i })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /reprocess with selected trusted profile/i }));
+
+    expect(await screen.findByText(/reprocessed report\.pdf under alternate profile/i)).toBeInTheDocument();
+    expect(screen.queryByText(/review context is stale for export/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /export and download/i })).toBeEnabled();
+
+    const reprocessRequest = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.find(([url]) => url === "/api/runs/processing-run-1/reprocess");
+    expect(reprocessRequest).toBeDefined();
+    expect(JSON.parse(String(reprocessRequest?.[1]?.body)).trusted_profile_name).toBe("alternate");
+  });
+
+  it("switches original processed preview from reset to selected-profile reprocess after profile change", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await user.click(screen.getByRole("button", { name: /run library/i }));
+    await screen.findByText("Run History");
+    await user.click(screen.getByRole("button", { name: /open original processed state/i }));
+
+    expect(await screen.findByText(/you are viewing the original processed state/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue from original processed state/i })).toBeEnabled();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: /trusted profile/i }), "alternate");
+
+    expect(screen.queryByRole("button", { name: /continue from original processed state/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /reprocess with selected trusted profile/i })).toBeEnabled();
+    expect(screen.queryByText(/review context is stale for export/i)).not.toBeInTheDocument();
   });
 
   it("uses run-bound classification dropdowns in the top action bar instead of sidebar review inputs", async () => {

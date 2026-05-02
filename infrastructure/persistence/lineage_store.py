@@ -8,6 +8,7 @@ from core.models.lineage import (
     ExportArtifact,
     Organization,
     ProcessingRun,
+    ProcessingRunInputSnapshot,
     ProfileSnapshot,
     ReviewedRecordEdit,
     ReviewSession,
@@ -189,6 +190,18 @@ class LineageStore(Protocol):
     ) -> SourceDocument: ...
 
     def create_processing_run(self, processing_run: ProcessingRun) -> ProcessingRun: ...
+
+    def create_processing_run_input_snapshot(
+        self,
+        snapshot: ProcessingRunInputSnapshot,
+    ) -> ProcessingRunInputSnapshot: ...
+
+    def get_processing_run_input_snapshot_for_processing_run(
+        self,
+        *,
+        organization_id: str,
+        processing_run_id: str,
+    ) -> ProcessingRunInputSnapshot: ...
 
     def create_run_records(self, run_records: list[RunRecord]) -> list[RunRecord]: ...
 

@@ -178,6 +178,20 @@ CREATE TABLE IF NOT EXISTS processing_runs (
     FOREIGN KEY (archived_by_user_id) REFERENCES users (user_id)
 );
 
+CREATE TABLE IF NOT EXISTS processing_run_input_snapshots (
+    input_snapshot_id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    processing_run_id TEXT NOT NULL,
+    record_count INTEGER NOT NULL CHECK (record_count >= 0),
+    payload_json_gzip BLOB NOT NULL,
+    payload_hash TEXT NOT NULL,
+    schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+    created_at TEXT NOT NULL,
+    UNIQUE (processing_run_id),
+    FOREIGN KEY (organization_id) REFERENCES organizations (organization_id),
+    FOREIGN KEY (processing_run_id) REFERENCES processing_runs (processing_run_id)
+);
+
 CREATE TABLE IF NOT EXISTS run_records (
     run_record_id TEXT PRIMARY KEY,
     organization_id TEXT NOT NULL,
@@ -255,6 +269,7 @@ CREATE INDEX IF NOT EXISTS ix_template_artifacts_org ON template_artifacts (orga
 CREATE INDEX IF NOT EXISTS ix_profile_snapshots_org ON profile_snapshots (organization_id);
 CREATE INDEX IF NOT EXISTS ix_source_documents_org ON source_documents (organization_id);
 CREATE INDEX IF NOT EXISTS ix_processing_runs_org_created_at ON processing_runs (organization_id, created_at);
+CREATE INDEX IF NOT EXISTS ix_processing_run_input_snapshots_run ON processing_run_input_snapshots (processing_run_id);
 CREATE INDEX IF NOT EXISTS ix_run_records_run ON run_records (processing_run_id, record_index);
 CREATE INDEX IF NOT EXISTS ix_reviewed_record_edits_session_revision ON reviewed_record_edits (review_session_id, session_revision);
 CREATE INDEX IF NOT EXISTS ix_export_artifacts_session_revision ON export_artifacts (review_session_id, session_revision);

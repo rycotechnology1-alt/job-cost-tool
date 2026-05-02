@@ -99,6 +99,39 @@ class RuntimeStorageTests(unittest.TestCase):
         self.assertEqual(stored_upload.expires_at, self.current_time + timedelta(hours=24))
         self.assertEqual(resolved_upload.expires_at, self.current_time + timedelta(hours=24))
 
+    def test_source_document_round_trips_through_storage_ref(self) -> None:
+        stored_source = self.store.save_source_document(
+            original_filename="report.pdf",
+            content_bytes=b"durable-pdf-bytes",
+            content_type="application/pdf",
+        )
+
+        resolved_source = self.store.get_source_document(stored_source.storage_ref)
+
+        self.assertTrue(stored_source.storage_ref.startswith("sources/"))
+        self.assertEqual(resolved_source.original_filename, "report.pdf")
+        self.assertEqual(resolved_source.file_size_bytes, len(b"durable-pdf-bytes"))
+        self.assertEqual(resolved_source.file_path.read_bytes(), b"durable-pdf-bytes")
+
+    def test_source_document_survives_temporary_upload_cleanup(self) -> None:
+        stored_upload = self.store.save_upload(
+            original_filename="report.pdf",
+            content_bytes=b"temporary-pdf-bytes",
+            content_type="application/pdf",
+        )
+        stored_source = self.store.save_source_document(
+            original_filename=stored_upload.original_filename,
+            content_bytes=stored_upload.file_path.read_bytes(),
+            content_type=stored_upload.content_type,
+        )
+
+        self.current_time += timedelta(hours=25)
+        self.store.cleanup_expired_uploads()
+        resolved_source = self.store.get_source_document(stored_source.storage_ref)
+
+        self.assertFalse((TEST_ROOT / "uploads" / stored_upload.upload_id).exists())
+        self.assertEqual(resolved_source.file_path.read_bytes(), b"temporary-pdf-bytes")
+
     def test_cleanup_uses_legacy_directory_mtime_when_created_at_is_missing(self) -> None:
         stored_upload = self.store.save_upload(
             original_filename="report.pdf",
@@ -185,6 +218,20 @@ class VercelBlobRuntimeStorageTests(unittest.TestCase):
         self.assertEqual(resolved_upload.expires_at, self.current_time + timedelta(hours=24))
         self.assertEqual(resolved_upload.file_path.read_bytes(), b"pdf-bytes")
         self.assertTrue(str(resolved_upload.file_path).startswith(str((TEST_ROOT / "instance-b").resolve())))
+
+    def test_source_document_saved_by_one_instance_can_be_loaded_by_another(self) -> None:
+        stored_source = self.instance_a.save_source_document(
+            original_filename="report.pdf",
+            content_bytes=b"durable-pdf-bytes",
+            content_type="application/pdf",
+        )
+
+        resolved_source = self.instance_b.get_source_document(stored_source.storage_ref)
+
+        self.assertEqual(resolved_source.storage_ref, stored_source.storage_ref)
+        self.assertEqual(resolved_source.original_filename, "report.pdf")
+        self.assertEqual(resolved_source.file_path.read_bytes(), b"durable-pdf-bytes")
+        self.assertTrue(str(resolved_source.file_path).startswith(str((TEST_ROOT / "instance-b").resolve())))
 
     def test_export_artifact_saved_by_one_instance_can_be_downloaded_by_another(self) -> None:
         stored_artifact = self.instance_a.save_export_artifact(

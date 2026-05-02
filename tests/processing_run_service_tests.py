@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import shutil
 import unittest
+import gzip
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -141,6 +143,114 @@ class ProcessingRunServiceTests(unittest.TestCase):
             persisted_records[0].canonical_record["recap_labor_slot_id"],
             "labor_1",
         )
+
+    def test_processing_run_stores_compressed_parsed_input_snapshot(self) -> None:
+        service = self._build_service()
+        parsed_record = self._make_labor_record(raw_description="Parsed input snapshot line")
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[parsed_record],
+        ):
+            first_result = service.create_processing_run(self.source_document_path)
+            second_result = service.create_processing_run(self.source_document_path)
+
+        first_snapshot = self.lineage_store.get_processing_run_input_snapshot_for_processing_run(
+            organization_id="org-default",
+            processing_run_id=first_result.processing_run.processing_run_id,
+        )
+        second_snapshot = self.lineage_store.get_processing_run_input_snapshot_for_processing_run(
+            organization_id="org-default",
+            processing_run_id=second_result.processing_run.processing_run_id,
+        )
+        first_payload_bytes = gzip.decompress(first_snapshot.payload_json_gzip)
+        first_payload = json.loads(first_payload_bytes.decode("utf-8"))
+
+        self.assertEqual(first_snapshot.schema_version, 1)
+        self.assertEqual(first_snapshot.record_count, 1)
+        self.assertEqual(first_snapshot.payload_hash, hashlib.sha256(first_payload_bytes).hexdigest())
+        self.assertEqual(first_snapshot.payload_hash, second_snapshot.payload_hash)
+        self.assertEqual(first_payload["schema_version"], 1)
+        self.assertEqual(first_payload["records"][0]["raw_description"], "Parsed input snapshot line")
+        self.assertIsNone(first_payload["records"][0]["record_type_normalized"])
+        self.assertEqual(first_payload["records"][0]["source_line_text"], "line one")
+
+    def test_reprocess_saved_run_uses_parsed_snapshot_without_reopening_pdf(self) -> None:
+        self._clone_profile(
+            source_profile_name="default",
+            profile_name="selected_profile",
+            display_name="Selected Profile",
+            description="Selected reprocess profile",
+            version="2.0",
+            labor_target="Selected Journeyman",
+        )
+        self.provisioning_service.bootstrap_filesystem_profiles()
+        service = self._build_service()
+        parsed_record = self._make_labor_record(raw_description="Reusable parsed input")
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[parsed_record],
+        ):
+            original_result = service.create_processing_run(self.source_document_path)
+
+        with patch("services.review_workflow_service.parse_pdf", side_effect=AssertionError("PDF should not be parsed")):
+            reprocessed_result = service.reprocess_processing_run_from_saved_run(
+                original_result.processing_run.processing_run_id,
+                profile_name="selected_profile",
+            )
+
+        original_records = self.lineage_store.list_run_records(original_result.processing_run.processing_run_id)
+        reprocessed_records = self.lineage_store.list_run_records(reprocessed_result.processing_run.processing_run_id)
+        original_snapshot = self.lineage_store.get_processing_run_input_snapshot_for_processing_run(
+            organization_id="org-default",
+            processing_run_id=original_result.processing_run.processing_run_id,
+        )
+        reprocessed_snapshot = self.lineage_store.get_processing_run_input_snapshot_for_processing_run(
+            organization_id="org-default",
+            processing_run_id=reprocessed_result.processing_run.processing_run_id,
+        )
+
+        self.assertNotEqual(
+            original_result.processing_run.processing_run_id,
+            reprocessed_result.processing_run.processing_run_id,
+        )
+        self.assertEqual(original_records[0].canonical_record["recap_labor_classification"], "Default Journeyman")
+        self.assertEqual(reprocessed_records[0].canonical_record["recap_labor_classification"], "Selected Journeyman")
+        self.assertEqual(original_snapshot.payload_hash, reprocessed_snapshot.payload_hash)
+
+    def test_reprocess_legacy_run_without_snapshot_falls_back_to_sanitized_canonical_rows(self) -> None:
+        self._clone_profile(
+            source_profile_name="default",
+            profile_name="selected_profile",
+            display_name="Selected Profile",
+            description="Selected legacy fallback profile",
+            version="2.0",
+            labor_target="Selected Journeyman",
+        )
+        self.provisioning_service.bootstrap_filesystem_profiles()
+        service = self._build_service()
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[self._make_labor_record(raw_description="Legacy fallback input")],
+        ):
+            original_result = service.create_processing_run(self.source_document_path)
+
+        self.lineage_store._connection.execute(
+            "DELETE FROM processing_run_input_snapshots WHERE processing_run_id = ?",
+            (original_result.processing_run.processing_run_id,),
+        )
+        self.lineage_store._connection.commit()
+
+        reprocessed_result = service.reprocess_processing_run_from_saved_run(
+            original_result.processing_run.processing_run_id,
+            profile_name="selected_profile",
+        )
+        reprocessed_records = self.lineage_store.list_run_records(reprocessed_result.processing_run.processing_run_id)
+
+        self.assertEqual(reprocessed_records[0].canonical_record["recap_labor_classification"], "Selected Journeyman")
+        self.assertEqual(reprocessed_records[0].canonical_record["raw_description"], "Legacy fallback input")
 
     def test_identical_behavioral_bundles_with_different_metadata_reuse_same_snapshot(self) -> None:
         self._clone_profile(

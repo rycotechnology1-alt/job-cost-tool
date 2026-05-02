@@ -20,6 +20,7 @@ import {
   openReviewSession,
   publishProfileDraft,
   reopenProcessingRun,
+  reprocessProcessingRun,
   unarchiveTrustedProfile,
   updateDraftState,
   uploadSourceDocument,
@@ -231,7 +232,9 @@ export default function App() {
     runDetail?.trusted_profile_name ?? selectedTrustedProfile?.display_name ?? "the prior trusted profile";
   const reviewContextMessage =
     runDetail && reviewSession && reviewExportInvalidated
-      ? activeReviewProfileMismatch
+      ? originalProcessedPreview
+        ? ""
+        : activeReviewProfileMismatch
         ? `This loaded review was processed under ${activeReviewProfileLabel}, but the current trusted profile selection is ${selectedTrustedProfile?.display_name ?? "different"}. Reprocess under the selected profile before export is allowed.`
         : reviewContextInvalidationMessage
       : "";
@@ -985,20 +988,52 @@ export default function App() {
   }
 
   async function handleContinueFromOriginalProcessedState() {
-    await runAction("Restoring original processed state...", async () => {
+    if (activeReviewProfileMismatch) {
+      await handleReprocessLoadedRunWithSelectedProfile();
+      return;
+    }
+    await runAction(
+      "Restoring original processed state...",
+      async () => {
+        if (!runDetail || !reviewSession) {
+          throw new Error("Open a stored run before restoring its original processed state.");
+        }
+        const nextReviewSession = await reopenProcessingRun(runDetail.processing_run_id, {
+          mode: "original_processed",
+          continue_from_original: true,
+          expected_current_revision: reviewSession.current_revision,
+        });
+        const nextRunDetail = await fetchProcessingRun(runDetail.processing_run_id);
+        applyLoadedReviewWorkspace(
+          nextRunDetail,
+          nextReviewSession,
+          "Restored the original processed state as the latest working review revision.",
+          { reviewOrigin: "run_library" },
+        );
+      },
+    );
+  }
+
+  async function handleReprocessLoadedRunWithSelectedProfile() {
+    await runAction("Reprocessing saved source...", async () => {
       if (!runDetail || !reviewSession) {
-        throw new Error("Open a stored run before restoring its original processed state.");
+        throw new Error("Open a stored run before reprocessing its saved source.");
       }
-      const nextReviewSession = await reopenProcessingRun(runDetail.processing_run_id, {
-        mode: "original_processed",
-        continue_from_original: true,
-        expected_current_revision: reviewSession.current_revision,
+      const selectedProfileName = selectedTrustedProfileName.trim();
+      if (!selectedProfileName) {
+        throw new Error("Choose a trusted profile before reprocessing the saved source.");
+      }
+      const reprocessedRun = await reprocessProcessingRun(runDetail.processing_run_id, {
+        trusted_profile_name: selectedProfileName,
       });
-      const nextRunDetail = await fetchProcessingRun(runDetail.processing_run_id);
+      const [nextRunDetail, nextReviewSession] = await Promise.all([
+        fetchProcessingRun(reprocessedRun.processing_run_id),
+        openReviewSession(reprocessedRun.processing_run_id),
+      ]);
       applyLoadedReviewWorkspace(
         nextRunDetail,
         nextReviewSession,
-        "Restored the original processed state as the latest working review revision.",
+        `Reprocessed ${nextRunDetail.source_document_filename} under ${nextRunDetail.origin_profile_display_name ?? nextRunDetail.trusted_profile_name ?? selectedProfileName}.`,
         { reviewOrigin: "run_library" },
       );
     });
@@ -1734,7 +1769,16 @@ export default function App() {
               exportArtifact={exportArtifact}
               exportDisabledMessage={reviewContextMessage}
               originalProcessedPreview={originalProcessedPreview}
+              originalProcessedActionLabel={
+                activeReviewProfileMismatch
+                  ? "Reprocess with selected trusted profile"
+                  : "Continue from original processed state"
+              }
               onContinueFromOriginalProcessedState={handleContinueFromOriginalProcessedState}
+              showRunLibraryReprocessAction={
+                activeReviewProfileMismatch && loadedReviewOrigin === "run_library" && !Boolean(runDetail?.is_archived)
+              }
+              onReprocessLoadedRunWithSelectedProfile={handleReprocessLoadedRunWithSelectedProfile}
               busy={busy}
               onToggleReviewRowSelection={handleReviewRowSelectionChange}
               onSelectRow={handleActivateReviewRow}

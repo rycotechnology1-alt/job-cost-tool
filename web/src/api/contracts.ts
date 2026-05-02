@@ -55,6 +55,10 @@ export interface ProcessingRunResponse {
   historical_export_status: HistoricalExportStatusResponse;
 }
 
+export interface ProcessingRunReprocessRequest {
+  trusted_profile_name: string;
+}
+
 export interface RunRecordResponse {
   run_record_id: string;
   record_key: string;

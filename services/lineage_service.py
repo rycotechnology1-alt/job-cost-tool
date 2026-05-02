@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import gzip
 from dataclasses import asdict, is_dataclass, replace
 from datetime import datetime
 from hashlib import sha256
@@ -14,12 +15,15 @@ from core.models.lineage import (
     HistoricalExportStatus,
     PendingRecordEdit,
     ProcessingRun,
+    ProcessingRunInputSnapshot,
     ProfileSnapshot,
     ReviewSession,
     ReviewedRecordEdit,
     RunRecord,
     TemplateArtifact,
 )
+
+PROCESSING_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION = 1
 
 
 def build_profile_snapshot(
@@ -109,6 +113,66 @@ def build_run_records(
             )
         )
     return run_records
+
+
+def build_processing_run_input_snapshot(
+    *,
+    input_snapshot_id: str,
+    organization_id: str,
+    processing_run_id: str,
+    records: Sequence[Any],
+    created_at: datetime,
+) -> ProcessingRunInputSnapshot:
+    """Build one compressed immutable parser-output snapshot for a processing run."""
+    normalized_records = [normalize_payload(record) for record in records]
+    payload = {
+        "schema_version": PROCESSING_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
+        "records": normalized_records,
+    }
+    payload_json = canonicalize_json(payload).encode("utf-8")
+    return ProcessingRunInputSnapshot(
+        input_snapshot_id=input_snapshot_id,
+        organization_id=organization_id,
+        processing_run_id=processing_run_id,
+        record_count=len(normalized_records),
+        payload_json_gzip=gzip.compress(payload_json, compresslevel=9, mtime=0),
+        payload_hash=sha256(payload_json).hexdigest(),
+        schema_version=PROCESSING_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION,
+        created_at=created_at,
+    )
+
+
+def load_processing_run_input_records(snapshot: ProcessingRunInputSnapshot) -> list[Record]:
+    """Decode one stored parser-output snapshot into Record objects."""
+    if snapshot.schema_version != PROCESSING_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported processing-run input snapshot schema version {snapshot.schema_version}."
+        )
+    try:
+        payload_json = gzip.decompress(snapshot.payload_json_gzip)
+    except Exception as exc:
+        raise ValueError("Processing-run input snapshot payload could not be decompressed.") from exc
+
+    payload_hash = sha256(payload_json).hexdigest()
+    if payload_hash != snapshot.payload_hash:
+        raise ValueError("Processing-run input snapshot payload hash does not match persisted lineage.")
+
+    try:
+        payload = json.loads(payload_json.decode("utf-8"))
+    except Exception as exc:
+        raise ValueError("Processing-run input snapshot payload is not valid JSON.") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("Processing-run input snapshot payload must be a JSON object.")
+    if payload.get("schema_version") != PROCESSING_RUN_INPUT_SNAPSHOT_SCHEMA_VERSION:
+        raise ValueError("Processing-run input snapshot payload schema version is unsupported.")
+    records_payload = payload.get("records")
+    if not isinstance(records_payload, list):
+        raise ValueError("Processing-run input snapshot payload records must be a list.")
+    if len(records_payload) != snapshot.record_count:
+        raise ValueError("Processing-run input snapshot record count does not match payload.")
+
+    return [Record(**normalize_payload(record_payload)) for record_payload in records_payload]
 
 
 def build_record_key(record_index: int) -> str:

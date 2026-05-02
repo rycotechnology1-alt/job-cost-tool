@@ -16,6 +16,7 @@ from core.models.lineage import (
     ExportArtifact,
     Organization,
     ProcessingRun,
+    ProcessingRunInputSnapshot,
     ProfileSnapshot,
     ReviewSession,
     ReviewedRecordEdit,
@@ -1241,6 +1242,59 @@ class PostgresLineageStore:
         self._connection.commit()
         return self.get_processing_run(processing_run.processing_run_id)
 
+    def create_processing_run_input_snapshot(
+        self,
+        snapshot: ProcessingRunInputSnapshot,
+    ) -> ProcessingRunInputSnapshot:
+        """Persist one immutable compressed parser-output snapshot for a processing run."""
+        self._connection.execute(
+            """
+            INSERT INTO processing_run_input_snapshots (
+                input_snapshot_id,
+                organization_id,
+                processing_run_id,
+                record_count,
+                payload_json_gzip,
+                payload_hash,
+                schema_version,
+                created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                snapshot.input_snapshot_id,
+                snapshot.organization_id,
+                snapshot.processing_run_id,
+                snapshot.record_count,
+                snapshot.payload_json_gzip,
+                snapshot.payload_hash,
+                snapshot.schema_version,
+                _dt(snapshot.created_at),
+            ),
+        )
+        self._connection.commit()
+        return self.get_processing_run_input_snapshot_for_processing_run(
+            organization_id=snapshot.organization_id,
+            processing_run_id=snapshot.processing_run_id,
+        )
+
+    def get_processing_run_input_snapshot_for_processing_run(
+        self,
+        *,
+        organization_id: str,
+        processing_run_id: str,
+    ) -> ProcessingRunInputSnapshot:
+        """Fetch one compressed parser-output snapshot scoped to organization and run."""
+        row = self._connection.execute(
+            """
+            SELECT * FROM processing_run_input_snapshots
+            WHERE processing_run_id = %s AND organization_id = %s
+            """,
+            (processing_run_id, organization_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"ProcessingRunInputSnapshot for ProcessingRun '{processing_run_id}' was not found.")
+        return _processing_run_input_snapshot_from_row(row)
+
     def create_run_records(self, run_records: list[RunRecord]) -> list[RunRecord]:
         """Persist immutable ordered run records for one processing run."""
         with self._connection.cursor() as cursor:
@@ -1826,6 +1880,20 @@ def _processing_run_from_row(row: dict[str, object]) -> ProcessingRun:
         created_by_user_id=row["created_by_user_id"],
         archived_by_user_id=row["archived_by_user_id"],
         archived_at=_parse_dt(row["archived_at"]) if row["archived_at"] else None,
+        created_at=_parse_dt(row["created_at"]),
+    )
+
+
+def _processing_run_input_snapshot_from_row(row: dict[str, object]) -> ProcessingRunInputSnapshot:
+    payload = row["payload_json_gzip"]
+    return ProcessingRunInputSnapshot(
+        input_snapshot_id=row["input_snapshot_id"],
+        organization_id=row["organization_id"],
+        processing_run_id=row["processing_run_id"],
+        record_count=int(row["record_count"]),
+        payload_json_gzip=bytes(payload),
+        payload_hash=row["payload_hash"],
+        schema_version=int(row["schema_version"]),
         created_at=_parse_dt(row["created_at"]),
     )
 

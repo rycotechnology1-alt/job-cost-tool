@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
-from .runtime_storage import ExpiredUploadError, RuntimeStorage, StoredArtifact, StoredUpload
+from .runtime_storage import ExpiredUploadError, RuntimeStorage, StoredArtifact, StoredSourceDocument, StoredUpload
 
 
 class LocalRuntimeFileStore(RuntimeStorage):
@@ -25,10 +25,12 @@ class LocalRuntimeFileStore(RuntimeStorage):
     ) -> None:
         self._upload_root = Path(upload_root).expanduser().resolve()
         self._export_root = Path(export_root).expanduser().resolve()
+        self._source_root = (self._upload_root.parent / "sources").resolve()
         self._upload_retention_hours = float(upload_retention_hours)
         self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         self._upload_root.mkdir(parents=True, exist_ok=True)
         self._export_root.mkdir(parents=True, exist_ok=True)
+        self._source_root.mkdir(parents=True, exist_ok=True)
         self.cleanup_expired_uploads()
 
     def save_upload(
@@ -123,6 +125,68 @@ class LocalRuntimeFileStore(RuntimeStorage):
         """Reject direct blob registration when the runtime uses local storage."""
         raise NotImplementedError(
             "Blob upload registration is only supported when storage_provider=vercel_blob."
+        )
+
+    def save_source_document(
+        self,
+        *,
+        original_filename: str,
+        content_bytes: bytes,
+        content_type: str | None = None,
+    ) -> StoredSourceDocument:
+        """Persist one durable source document outside the temporary upload cache."""
+        filename = self._normalize_filename(original_filename)
+        if not content_bytes:
+            raise ValueError("Source document content_bytes must not be empty.")
+
+        source_id = uuid4().hex
+        source_dir = self._source_root / source_id
+        source_dir.mkdir(parents=True, exist_ok=False)
+        file_path = (source_dir / filename).resolve()
+        file_path.write_bytes(content_bytes)
+
+        storage_ref = f"sources/{source_id}/{filename}"
+        metadata = {
+            "original_filename": filename,
+            "content_type": str(content_type or "application/octet-stream"),
+            "file_size_bytes": len(content_bytes),
+            "storage_ref": storage_ref,
+            "filename": filename,
+        }
+        (source_dir / "metadata.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return StoredSourceDocument(
+            storage_ref=storage_ref,
+            original_filename=filename,
+            content_type=str(metadata["content_type"]),
+            file_size_bytes=len(content_bytes),
+            file_path=file_path,
+        )
+
+    def get_source_document(self, storage_ref: str) -> StoredSourceDocument:
+        """Resolve one durable source document by storage reference."""
+        source_dir = self._resolve_storage_ref_dir(
+            root=self._source_root,
+            storage_ref=storage_ref,
+            expected_prefix="sources/",
+        )
+        metadata_path = source_dir / "metadata.json"
+        if not metadata_path.is_file():
+            raise FileNotFoundError(f"Source document '{storage_ref}' was not found.")
+
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        file_path = (source_dir / str(metadata["filename"])).resolve()
+        if not file_path.is_file():
+            raise FileNotFoundError(f"Source document payload is missing for '{storage_ref}'.")
+
+        return StoredSourceDocument(
+            storage_ref=str(metadata["storage_ref"]),
+            original_filename=str(metadata["original_filename"]),
+            content_type=str(metadata["content_type"]),
+            file_size_bytes=int(metadata["file_size_bytes"]),
+            file_path=file_path,
         )
 
     def cleanup_expired_uploads(self) -> int:

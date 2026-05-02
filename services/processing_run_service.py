@@ -19,13 +19,21 @@ from core.models.lineage import (
     SourceDocument,
     TrustedProfile,
 )
+from core.models.record import Record
 from infrastructure.persistence import LineageStore
-from services.lineage_service import build_profile_snapshot, build_run_records
+from services import review_workflow_service
+from services.lineage_service import (
+    build_processing_run_input_snapshot,
+    build_profile_snapshot,
+    build_run_records,
+    load_processing_run_input_records,
+    normalize_payload,
+)
 from services.lineage_service import build_historical_export_status
 from services.profile_execution_compatibility_adapter import ProfileExecutionCompatibilityAdapter
 from services.profile_authoring_service import ProfileAuthoringService
 from services.request_context import RequestContext, is_local_request_context, resolve_request_context
-from services.review_workflow_service import load_review_data
+from services.review_workflow_service import ReviewLoadResult
 from services.trusted_profile_provisioning_service import (
     ResolvedTrustedProfile,
     TrustedProfileProvisioningService,
@@ -127,11 +135,10 @@ class ProcessingRunService:
         persisted_created_by_user_id = created_by_user_id or self._request_user_id(request_context)
 
         profile_context = self._resolve_profile_context(profile_name, request_context=request_context)
-        snapshot = self._create_or_reuse_profile_snapshot(profile_context)
         with self._profile_execution_compatibility_adapter.materialize_published_version_bundle(
             profile_context.trusted_profile_version
         ) as materialized_profile_bundle:
-            review_result = load_review_data(
+            review_result = review_workflow_service.load_review_data(
                 str(source_path),
                 config_dir=materialized_profile_bundle.config_dir,
                 legacy_config_dir=materialized_profile_bundle.legacy_config_dir,
@@ -155,44 +162,59 @@ class ProcessingRunService:
                 created_at=created_at,
             )
         )
-
-        processing_run = self._lineage_store.create_processing_run(
-            ProcessingRun(
-                processing_run_id=f"processing-run:{uuid4()}",
-                organization_id=profile_context.organization.organization_id,
-                source_document_id=persisted_source_document.source_document_id,
-                profile_snapshot_id=snapshot.profile_snapshot_id,
-                trusted_profile_id=profile_context.trusted_profile.trusted_profile_id,
-                trusted_profile_version_id=profile_context.trusted_profile_version.trusted_profile_version_id,
-                status="completed",
-                engine_version=self._engine_version,
-                aggregate_blockers=tuple(review_result.blocking_issues),
-                created_at=created_at,
-                created_by_user_id=persisted_created_by_user_id,
-            )
-        )
-        run_records = self._lineage_store.create_run_records(
-            build_run_records(
-                organization_id=profile_context.organization.organization_id,
-                processing_run_id=processing_run.processing_run_id,
-                records=review_result.records,
-                created_at=created_at,
-            )
-        )
-        self._profile_authoring_service.capture_unmapped_observations(
-            profile_context.trusted_profile.trusted_profile_id,
-            processing_run_id=processing_run.processing_run_id,
-            records=review_result.records,
-            published_version=profile_context.trusted_profile_version,
-            request_context=request_context,
-        )
-        return ProcessingRunResult(
-            organization=profile_context.organization,
-            trusted_profile=profile_context.trusted_profile,
+        snapshot = self._create_or_reuse_profile_snapshot(profile_context)
+        return self._persist_processing_result(
+            profile_context=profile_context,
             profile_snapshot=snapshot,
             source_document=persisted_source_document,
-            processing_run=processing_run,
-            run_records=run_records,
+            review_result=review_result,
+            parsed_records=review_result.parsed_records,
+            created_at=created_at,
+            created_by_user_id=persisted_created_by_user_id,
+            request_context=request_context,
+        )
+
+    def reprocess_processing_run_from_saved_run(
+        self,
+        processing_run_id: str,
+        *,
+        profile_name: str | None = None,
+        created_by_user_id: str | None = None,
+        request_context: RequestContext | None = None,
+    ) -> ProcessingRunResult:
+        """Create a new immutable run from stored parsed input, without requiring the source PDF."""
+        created_at = self._now_provider()
+        organization_id = self._request_organization_id(request_context)
+        persisted_created_by_user_id = created_by_user_id or self._request_user_id(request_context)
+        source_processing_run = self._lineage_store.get_processing_run_for_organization(
+            organization_id=organization_id,
+            processing_run_id=processing_run_id,
+        )
+        source_document = self._lineage_store.get_source_document_for_organization(
+            organization_id=organization_id,
+            source_document_id=source_processing_run.source_document_id,
+        )
+        parsed_records = self._load_reprocess_input_records(source_processing_run)
+        profile_context = self._resolve_profile_context(profile_name, request_context=request_context)
+        profile_snapshot = self._create_or_reuse_profile_snapshot(profile_context)
+        with self._profile_execution_compatibility_adapter.materialize_published_version_bundle(
+            profile_context.trusted_profile_version
+        ) as materialized_profile_bundle:
+            review_result = review_workflow_service.process_parsed_records(
+                parsed_records,
+                source_label=source_document.original_filename,
+                config_dir=materialized_profile_bundle.config_dir,
+                legacy_config_dir=materialized_profile_bundle.legacy_config_dir,
+            )
+        return self._persist_processing_result(
+            profile_context=profile_context,
+            profile_snapshot=profile_snapshot,
+            source_document=source_document,
+            review_result=review_result,
+            parsed_records=parsed_records,
+            created_at=created_at,
+            created_by_user_id=persisted_created_by_user_id,
+            request_context=request_context,
         )
 
     def get_processing_run_state(
@@ -288,6 +310,108 @@ class ProcessingRunService:
             profile_snapshot_id=processing_run.profile_snapshot_id,
         )
         return self._build_processing_run_state(processing_run, profile_snapshot)
+
+    def _persist_processing_result(
+        self,
+        *,
+        profile_context: ResolvedTrustedProfile,
+        profile_snapshot: ProfileSnapshot,
+        source_document: SourceDocument,
+        review_result: ReviewLoadResult,
+        parsed_records: list[Record],
+        created_at: datetime,
+        created_by_user_id: str | None,
+        request_context: RequestContext | None,
+    ) -> ProcessingRunResult:
+        """Persist one completed processing run plus input snapshot and emitted rows."""
+        processing_run = self._lineage_store.create_processing_run(
+            ProcessingRun(
+                processing_run_id=f"processing-run:{uuid4()}",
+                organization_id=profile_context.organization.organization_id,
+                source_document_id=source_document.source_document_id,
+                profile_snapshot_id=profile_snapshot.profile_snapshot_id,
+                trusted_profile_id=profile_context.trusted_profile.trusted_profile_id,
+                trusted_profile_version_id=profile_context.trusted_profile_version.trusted_profile_version_id,
+                status="completed",
+                engine_version=self._engine_version,
+                aggregate_blockers=tuple(review_result.blocking_issues),
+                created_at=created_at,
+                created_by_user_id=created_by_user_id,
+            )
+        )
+        self._lineage_store.create_processing_run_input_snapshot(
+            build_processing_run_input_snapshot(
+                input_snapshot_id=f"{processing_run.processing_run_id}:input-snapshot",
+                organization_id=profile_context.organization.organization_id,
+                processing_run_id=processing_run.processing_run_id,
+                records=parsed_records,
+                created_at=created_at,
+            )
+        )
+        run_records = self._lineage_store.create_run_records(
+            build_run_records(
+                organization_id=profile_context.organization.organization_id,
+                processing_run_id=processing_run.processing_run_id,
+                records=review_result.records,
+                created_at=created_at,
+            )
+        )
+        self._profile_authoring_service.capture_unmapped_observations(
+            profile_context.trusted_profile.trusted_profile_id,
+            processing_run_id=processing_run.processing_run_id,
+            records=review_result.records,
+            published_version=profile_context.trusted_profile_version,
+            request_context=request_context,
+        )
+        return ProcessingRunResult(
+            organization=profile_context.organization,
+            trusted_profile=profile_context.trusted_profile,
+            profile_snapshot=profile_snapshot,
+            source_document=source_document,
+            processing_run=processing_run,
+            run_records=run_records,
+        )
+
+    def _load_reprocess_input_records(self, source_processing_run: ProcessingRun) -> list[Record]:
+        """Load parser-output records for a saved run, with legacy canonical-row fallback."""
+        try:
+            snapshot = self._lineage_store.get_processing_run_input_snapshot_for_processing_run(
+                organization_id=source_processing_run.organization_id,
+                processing_run_id=source_processing_run.processing_run_id,
+            )
+            return load_processing_run_input_records(snapshot)
+        except KeyError:
+            run_records = self._lineage_store.list_run_records_for_processing_run(
+                organization_id=source_processing_run.organization_id,
+                processing_run_id=source_processing_run.processing_run_id,
+            )
+            if not run_records:
+                raise FileNotFoundError(
+                    "The saved run has no parsed input snapshot or legacy run records available for reprocessing."
+                )
+            return [
+                Record(**self._sanitize_legacy_canonical_record_for_reprocess(run_record.canonical_record))
+                for run_record in run_records
+            ]
+
+    def _sanitize_legacy_canonical_record_for_reprocess(self, canonical_record: dict[str, object]) -> dict[str, object]:
+        """Strip profile-derived values from legacy run rows before re-normalizing them."""
+        payload = normalize_payload(canonical_record)
+        payload.update(
+            {
+                "record_type_normalized": None,
+                "labor_class_normalized": None,
+                "recap_labor_slot_id": None,
+                "recap_labor_classification": None,
+                "recap_equipment_slot_id": None,
+                "vendor_name_normalized": None,
+                "equipment_category": None,
+                "equipment_mapping_key": None,
+                "is_omitted": False,
+                "warnings": [],
+            }
+        )
+        return payload
 
     def _resolve_profile_context(
         self,
