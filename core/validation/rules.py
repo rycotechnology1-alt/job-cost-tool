@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import List
 
-from core.models.record import EQUIPMENT, LABOR, MATERIAL, OTHER, PROJECT_MANAGEMENT, Record
+from core.models.record import ALLOWED_LABOR_HOUR_TYPES, EQUIPMENT, LABOR, MATERIAL, OTHER, PROJECT_MANAGEMENT, Record
 
 _BLOCKING_WARNING_PHRASES = (
     "ambiguous",
     "not yet confidently classified",
     "did not begin with a recognized transaction marker",
 )
-_ALLOWED_LABOR_HOUR_TYPES = {"ST", "OT", "DT"}
+_ALLOWED_LABOR_HOUR_TYPES = set(ALLOWED_LABOR_HOUR_TYPES)
 
 
 def get_record_warnings(record: Record) -> List[str]:

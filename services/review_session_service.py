@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 from typing import Callable, Sequence
 from uuid import uuid4
 
-from core.models import PendingRecordEdit, Record
+from core.models import ALLOWED_LABOR_HOUR_TYPES, PendingRecordEdit, Record
 from core.models.lineage import (
     ExportArtifact,
     HistoricalExportStatus,
@@ -51,6 +51,7 @@ class ReviewSessionState:
     records: list[Record]
     blocking_issues: list[str]
     labor_classification_options: list[str]
+    labor_hour_type_options: list[str]
     equipment_classification_options: list[str]
     session_revision: int
     historical_export_status: HistoricalExportStatus
@@ -195,6 +196,7 @@ class ReviewSessionService:
             records=list(validated_records),
             blocking_issues=list(blocking_issues),
             labor_classification_options=labor_options,
+            labor_hour_type_options=list(ALLOWED_LABOR_HOUR_TYPES),
             equipment_classification_options=equipment_options,
             session_revision=target_revision,
             historical_export_status=build_historical_export_status(context.profile_snapshot),
@@ -517,6 +519,7 @@ class ReviewSessionService:
             "recap_labor_classification",
             "equipment_category",
             "vendor_name_normalized",
+            "hour_type",
             "is_omitted",
         )
         pending_edits: list[PendingRecordEdit] = []

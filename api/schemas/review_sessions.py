@@ -13,6 +13,7 @@ class ReviewEditFields(ApiModel):
     recap_labor_classification: str | None = None
     equipment_category: str | None = None
     vendor_name_normalized: str | None = None
+    hour_type: str | None = None
     is_omitted: bool | None = None
 
 
@@ -39,6 +40,7 @@ class ReviewSessionResponse(ApiModel):
     session_revision: int
     blocking_issues: list[str]
     labor_classification_options: list[str]
+    labor_hour_type_options: list[str]
     equipment_classification_options: list[str]
     historical_export_status: HistoricalExportStatusResponse
     effective_source_mode: str

@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from core.config import ConfigLoader
-from core.models.record import Record
+from core.models.record import ALLOWED_LABOR_HOUR_TYPES, Record
 from core.review_defaults import apply_default_omit_rules
 from services.normalization_service import normalize_records
 from services.parsing_service import parse_pdf
@@ -17,6 +17,7 @@ EDITABLE_FIELDS = {
     "recap_labor_classification",
     "equipment_category",
     "vendor_name_normalized",
+    "hour_type",
     "is_omitted",
 }
 
@@ -184,6 +185,17 @@ def _normalize_editable_updates(updates: dict[str, object]) -> dict[str, object]
             continue
         if key == "is_omitted":
             allowed_updates[key] = bool(value)
+        elif key == "hour_type":
+            normalized_hour_type = str(value or "").strip().upper()
+            if not normalized_hour_type:
+                allowed_updates[key] = None
+            elif normalized_hour_type not in ALLOWED_LABOR_HOUR_TYPES:
+                raise ValueError(
+                    f"Labor hour type '{normalized_hour_type}' is not allowed for this review. "
+                    "Choose one of ST, OT, or DT."
+                )
+            else:
+                allowed_updates[key] = normalized_hour_type
         else:
             allowed_updates[key] = value if value not in {"", None} else None
     return allowed_updates

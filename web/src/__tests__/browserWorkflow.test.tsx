@@ -431,6 +431,7 @@ function buildReviewSessionPayload(
     session_revision: sessionRevision,
     blocking_issues: [],
     labor_classification_options: [...optionSet.labor],
+    labor_hour_type_options: ["ST", "OT", "DT"],
     equipment_classification_options: [...optionSet.equipment],
     historical_export_status: {
       status_code: "reproducible",
@@ -464,6 +465,9 @@ function applyReviewEdits(
     if (Object.prototype.hasOwnProperty.call(edit.changed_fields, "equipment_category")) {
       (nextRecord as { equipment_category: string | null }).equipment_category =
         (edit.changed_fields.equipment_category as string | null) ?? null;
+    }
+    if (Object.prototype.hasOwnProperty.call(edit.changed_fields, "hour_type")) {
+      (nextRecord as { hour_type: string | null }).hour_type = (edit.changed_fields.hour_type as string | null) ?? null;
     }
     if (Object.prototype.hasOwnProperty.call(edit.changed_fields, "is_omitted")) {
       nextRecord.is_omitted = Boolean(edit.changed_fields.is_omitted);
@@ -1673,6 +1677,59 @@ describe("App", () => {
     expect(edits).toHaveLength(2);
     expect(edits[0].changed_fields.recap_labor_classification).toBe("103 Foreman");
     expect(edits[1].changed_fields.recap_labor_classification).toBe("103 Foreman");
+  });
+
+  it("bulk applies one labor hour type across selected labor rows", async () => {
+    installFetchMock({
+      initialReviewRecords: [
+        ...buildBaseReviewRecords("default"),
+        {
+          ...buildExtraLaborReviewRecord("default", "Adjustment labor line"),
+          hours: -8,
+          hour_type: null,
+          warnings: ["BLOCKING: Labor hour type is missing for export."],
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await expandFamily(user, "Show Labor");
+    await user.click(screen.getByRole("checkbox", { name: /select adjustment labor line/i }));
+    await user.selectOptions(screen.getByRole("combobox", { name: /bulk labor hour type/i }), "ST");
+    await user.click(screen.getByRole("button", { name: /apply hour type/i }));
+
+    expect(await screen.findByText(/applied labor hour type st to 1 selected row/i)).toBeInTheDocument();
+    expect(await screen.findByText("-8 ST")).toBeInTheDocument();
+
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    const editRequests = fetchCalls.filter(([url]) => url === "/api/runs/processing-run-1/review-session/edits");
+    expect(editRequests.length).toBeGreaterThan(0);
+    const edits = JSON.parse(String(editRequests[editRequests.length - 1]?.[1]?.body)).edits;
+    expect(edits).toHaveLength(1);
+    expect(edits[0].changed_fields.hour_type).toBe("ST");
+  });
+
+  it("does not allow labor hour type edits for non-labor selections", async () => {
+    installFetchMock();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Trusted profiles loaded.");
+    await stageReports(user, ["report.pdf"]);
+    await user.click(screen.getByRole("button", { name: /process source pdf/i }));
+    await screen.findByRole("heading", { name: "report.pdf" });
+
+    await expandFamily(user, "Show Material");
+    await user.click(screen.getByRole("checkbox", { name: /select material line/i }));
+    await user.selectOptions(screen.getByRole("combobox", { name: /bulk labor hour type/i }), "ST");
+
+    expect(screen.getByRole("button", { name: /apply hour type/i })).toBeDisabled();
   });
 
   it("bulk applies one equipment category across selected equipment rows", async () => {

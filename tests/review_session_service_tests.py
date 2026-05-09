@@ -345,6 +345,80 @@ class ReviewSessionServiceTests(unittest.TestCase):
         self.assertEqual(updated_state.records[0].warnings, [])
         self.assertEqual(updated_state.blocking_issues, [])
 
+    def test_manual_labor_hour_type_fix_clears_missing_hour_type_blocker_without_mutating_run_record(self) -> None:
+        processing_result = self._create_processing_run_with_record(
+            self._make_labor_adjustment_record(hour_type=None),
+        )
+        initial_state = self.review_session_service.open_review_session(
+            processing_result.processing_run.processing_run_id,
+        )
+
+        updated_state = self.review_session_service.apply_review_edits(
+            processing_result.processing_run.processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"hour_type": " st "},
+                )
+            ],
+        )
+        persisted_run_records = self.lineage_store.list_run_records(
+            processing_result.processing_run.processing_run_id,
+        )
+
+        self.assertIn(
+            "Record on page 1 (phase 20, labor): Labor hour type is missing for export.",
+            initial_state.blocking_issues,
+        )
+        self.assertEqual(updated_state.records[0].hour_type, "ST")
+        self.assertEqual(updated_state.records[0].warnings, [])
+        self.assertEqual(updated_state.blocking_issues, [])
+        self.assertIsNone(persisted_run_records[0].canonical_record["hour_type"])
+
+    def test_manual_labor_hour_type_fix_rejects_invalid_value_without_advancing_revision(self) -> None:
+        processing_result = self._create_processing_run_with_record(
+            self._make_labor_adjustment_record(hour_type=None),
+        )
+
+        with self.assertRaisesRegex(ValueError, "Labor hour type 'REG' is not allowed for this review."):
+            self.review_session_service.apply_review_edits(
+                processing_result.processing_run.processing_run_id,
+                [
+                    PendingRecordEdit(
+                        record_key="record-0",
+                        changed_fields={"hour_type": "REG"},
+                    )
+                ],
+            )
+        state = self.review_session_service.open_review_session(
+            processing_result.processing_run.processing_run_id,
+        )
+
+        self.assertEqual(state.review_session.current_revision, 0)
+        self.assertIsNone(state.records[0].hour_type)
+
+    def test_reset_to_original_restores_canonical_labor_hour_type(self) -> None:
+        processing_result = self._create_processing_run_with_record(
+            self._make_labor_adjustment_record(hour_type=None),
+        )
+        updated_state = self.review_session_service.apply_review_edits(
+            processing_result.processing_run.processing_run_id,
+            [
+                PendingRecordEdit(
+                    record_key="record-0",
+                    changed_fields={"hour_type": "ST"},
+                )
+            ],
+        )
+
+        reset_state = self.review_session_service.reset_review_session_to_original(
+            processing_result.processing_run.processing_run_id,
+            expected_current_revision=updated_state.review_session.current_revision,
+        )
+
+        self.assertEqual(reset_state.review_session.current_revision, 2)
+        self.assertIsNone(reset_state.records[0].hour_type)
+
     def test_reprocessed_labor_mapping_resolution_hides_parser_warning_in_effective_review_state(self) -> None:
         parsed_record = self._make_unmapped_labor_record(
             warnings=["PR labor detail line was recognized but labor class was not parsed cleanly."],
@@ -688,7 +762,10 @@ class ReviewSessionServiceTests(unittest.TestCase):
                 "is_active": False,
             },
         )
-        self._write_json(profile_dir / "labor_mapping.json", {"raw_mappings": {}, "saved_mappings": []})
+        self._write_json(
+            profile_dir / "labor_mapping.json",
+            {"raw_mappings": {"103/J": "103 Journeyman"}, "saved_mappings": []},
+        )
         self._write_json(profile_dir / "equipment_mapping.json", {"raw_mappings": {}, "saved_mappings": []})
         self._write_json(profile_dir / "phase_mapping.json", {"50": "MATERIAL"})
         self._write_json(profile_dir / "vendor_normalization.json", {})
@@ -911,6 +988,33 @@ class ReviewSessionServiceTests(unittest.TestCase):
             source_line_text="Labor source",
             record_type_normalized=None,
             recap_labor_classification=None,
+        )
+
+    def _make_labor_adjustment_record(self, *, hour_type: str | None) -> Record:
+        return Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Colin MacGillivray ST Hrs 4/2/26 to 837800",
+            cost=-1036.40,
+            hours=-8.0,
+            hour_type=hour_type,
+            union_code="103",
+            labor_class_raw="J",
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="JC 04/09/26 Colin MacGillivray ST Hrs 4/2/26 to 837800 -8.00 -1,036.40",
+            record_type_normalized=LABOR,
+            recap_labor_slot_id="labor_3",
+            recap_labor_classification="103 Journeyman",
+            vendor_name_normalized=None,
+            is_omitted=False,
         )
 
     def _write_json(self, path: Path, payload: object) -> None:

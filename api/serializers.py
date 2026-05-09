@@ -153,6 +153,7 @@ def to_review_session_response(state: ReviewSessionState) -> ReviewSessionRespon
         session_revision=state.session_revision,
         blocking_issues=list(state.blocking_issues),
         labor_classification_options=list(state.labor_classification_options),
+        labor_hour_type_options=list(state.labor_hour_type_options),
         equipment_classification_options=list(state.equipment_classification_options),
         historical_export_status=HistoricalExportStatusResponse(
             status_code=state.historical_export_status.status_code,

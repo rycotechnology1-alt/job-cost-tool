@@ -34,6 +34,7 @@ interface ReviewWorkspaceProps {
   onApplyBulkVendorName: (vendorName: string) => Promise<void> | void;
   onApplyBulkOmission: (nextOmissionState: boolean) => Promise<void> | void;
   onApplyBulkLaborClassification: (targetClassification: string) => Promise<void> | void;
+  onApplyBulkLaborHourType: (hourType: string) => Promise<void> | void;
   onApplyBulkEquipmentCategory: (targetCategory: string) => Promise<void> | void;
 }
 
@@ -62,6 +63,14 @@ function formatCurrency(value: number | null | undefined): string {
     currency: "USD",
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatHours(value: number | null | undefined, hourType: string | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  const formattedValue = Number.isInteger(value) ? value.toFixed(0) : String(value);
+  return `${formattedValue} ${hourType?.trim() || "missing type"}`;
 }
 
 function formatSourceLabel(row: WorkspaceRow): string {
@@ -166,6 +175,7 @@ export function ReviewWorkspace({
   onApplyBulkVendorName,
   onApplyBulkOmission,
   onApplyBulkLaborClassification,
+  onApplyBulkLaborHourType,
   onApplyBulkEquipmentCategory,
 }: ReviewWorkspaceProps) {
   const currentBlockers = reviewSession?.blocking_issues ?? [];
@@ -197,6 +207,7 @@ export function ReviewWorkspace({
   const canBulkInclude = selectedReviewRows.some((row) => row.record.is_omitted);
   const [bulkVendorName, setBulkVendorName] = useState("");
   const [bulkLaborClassification, setBulkLaborClassification] = useState("");
+  const [bulkLaborHourType, setBulkLaborHourType] = useState("");
   const [bulkEquipmentCategory, setBulkEquipmentCategory] = useState("");
   const [expandedFamilies, setExpandedFamilies] = useState<Record<string, boolean>>({});
   const vendorCompatibleSelection = selectedReviewRows.length > 0 && selectedReviewRows.every(isVendorBulkCompatibleRow);
@@ -212,6 +223,11 @@ export function ReviewWorkspace({
     laborCompatibleSelection &&
     bulkLaborClassification.trim().length > 0 &&
     selectedReviewRows.some((row) => (row.record.recap_labor_classification ?? "").trim() !== bulkLaborClassification.trim());
+  const normalizedBulkLaborHourType = bulkLaborHourType.trim().toUpperCase();
+  const canBulkApplyLaborHourType =
+    laborCompatibleSelection &&
+    normalizedBulkLaborHourType.length > 0 &&
+    selectedReviewRows.some((row) => (row.record.hour_type ?? "").trim().toUpperCase() !== normalizedBulkLaborHourType);
   const canBulkApplyEquipmentCategory =
     equipmentCompatibleSelection &&
     bulkEquipmentCategory.trim().length > 0 &&
@@ -231,6 +247,7 @@ export function ReviewWorkspace({
     if (selectedReviewRows.length === 0) {
       setBulkVendorName("");
       setBulkLaborClassification("");
+      setBulkLaborHourType("");
       setBulkEquipmentCategory("");
     }
   }, [selectedReviewRows.length]);
@@ -420,6 +437,32 @@ export function ReviewWorkspace({
                     Apply Labor
                   </button>
                 </div>
+                <div className="review-bulk-column">
+                  <div className="field review-bulk-field">
+                    <span className="sr-only">Bulk labor hour type</span>
+                    <select
+                      aria-label="Bulk labor hour type"
+                      value={bulkLaborHourType}
+                      onChange={(event) => setBulkLaborHourType(event.target.value)}
+                      disabled={editingDisabled || selectedReviewRecordKeys.length === 0}
+                    >
+                      <option value="">Choose Hour Type</option>
+                      {reviewSession.labor_hour_type_options.map((option) => (
+                        <option key={`bulk-labor-hour-type-${option}`} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => onApplyBulkLaborHourType(bulkLaborHourType)}
+                    disabled={editingDisabled || !canBulkApplyLaborHourType}
+                  >
+                    Apply Hour Type
+                  </button>
+                </div>
               </div>
             </div>
             <div className="table-wrap workspace-table-wrap">
@@ -520,9 +563,7 @@ export function ReviewWorkspace({
                                   </td>
                                   <td>
                                     <div className="cell-primary">{formatCurrency(row.record.cost)}</div>
-                                    <div className="cell-secondary">
-                                      {row.record.hours ? `${row.record.hours} ${row.record.hour_type ?? "hrs"}` : "-"}
-                                    </div>
+                                    <div className="cell-secondary">{formatHours(row.record.hours, row.record.hour_type)}</div>
                                   </td>
                                   <td className="review-source-cell">
                                     <div className="cell-primary review-source-primary">{renderPrimary(row.record.raw_description)}</div>

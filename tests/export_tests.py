@@ -311,6 +311,19 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["H27"].value, 100)
         self.assertEqual(worksheet["H42"].value, "=SUM(H27:H41)")
 
+    def test_export_nets_negative_labor_adjustment_hours_by_hour_type(self) -> None:
+        records = [
+            self._labor_record(recap_classification="103 Journeyman", recap_slot_id="labor_1", hours=16, hour_type="ST"),
+            self._labor_record(recap_classification="103 Journeyman", recap_slot_id="labor_1", hours=-8, hour_type="ST"),
+            self._labor_record(recap_classification="103 Journeyman", recap_slot_id="labor_1", hours=2, hour_type="OT"),
+        ]
+
+        export_records_to_recap(records, str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(worksheet["B14"].value, 8)
+        self.assertEqual(worksheet["C14"].value, 2)
+
     def test_export_uses_slot_rows_after_profile_label_rename(self) -> None:
         renamed_labor_slot_config = {
             "slots": [
@@ -626,6 +639,27 @@ class ExportWorkflowTests(unittest.TestCase):
         self.assertEqual(worksheet["A14"].value, "103 Journeyman")
         self.assertEqual(worksheet["B14"].value, 4)
         self.assertEqual(worksheet["E14"].value, 199.5)
+
+    def test_export_minimum_hours_rule_does_not_modify_negative_labor_adjustments(self) -> None:
+        minimum_hours_settings = {
+            "labor_minimum_hours": {
+                "enabled": True,
+                "threshold_hours": 2,
+                "minimum_hours": 4,
+            }
+        }
+
+        with patch(
+            "core.export.recap_mapper.ConfigLoader.get_export_settings",
+            return_value=minimum_hours_settings,
+        ):
+            recap_mapper._get_export_settings.cache_clear()
+            record = self._labor_record(recap_classification="103 Journeyman", recap_slot_id="labor_1", hours=-1.5)
+            export_records_to_recap([record], str(self.template_path), str(self.output_path))
+
+        worksheet = load_workbook(self.output_path)["Recap"]
+        self.assertEqual(record.hours, -1.5)
+        self.assertEqual(worksheet["B14"].value, -1.5)
 
     def test_export_rewrites_summary_area_and_sales_tax_formulas(self) -> None:
         records = [

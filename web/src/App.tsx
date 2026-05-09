@@ -1313,6 +1313,58 @@ export default function App() {
     });
   }
 
+  async function handleApplyBulkLaborHourType(hourType: string) {
+    const nextHourType = hourType.trim().toUpperCase();
+    await runAction("Applying bulk labor hour type...", async () => {
+      if (!runDetail || !reviewSession) {
+        throw new Error("Open the review workspace before applying a bulk labor hour type.");
+      }
+      if (!nextHourType) {
+        throw new Error("Choose a labor hour type before applying a bulk review change.");
+      }
+      if (!reviewSession.labor_hour_type_options.includes(nextHourType)) {
+        throw new Error("Choose ST, OT, or DT before applying a labor hour type.");
+      }
+
+      const selectedRows = rows.filter((row) => selectedReviewRecordKeys.includes(row.recordKey));
+      if (selectedRows.length === 0) {
+        throw new Error("Select at least one review row before applying a bulk labor hour type.");
+      }
+      if (!selectedRows.every(isLaborBulkCompatibleRow)) {
+        throw new Error("Bulk labor hour type only works when every selected row is a labor row.");
+      }
+
+      const applicableRows = selectedRows.filter((row) => (row.record.hour_type ?? "").trim().toUpperCase() !== nextHourType);
+      if (applicableRows.length === 0) {
+        throw new Error("The selected labor rows already use that hour type.");
+      }
+
+      const nextReviewSession = await appendReviewEdits(
+        runDetail.processing_run_id,
+        applicableRows.map((row) => ({
+          record_key: row.recordKey,
+          changed_fields: {
+            hour_type: nextHourType,
+          },
+        })),
+      );
+      const nextRows = buildWorkspaceRows(runDetail, nextReviewSession);
+      const preferredSelectedRecordKey =
+        selectedRow && nextRows.some((row) => row.recordKey === selectedRow.recordKey)
+          ? selectedRow.recordKey
+          : applicableRows[0]?.recordKey ?? null;
+
+      setReviewSession(nextReviewSession);
+      setExportArtifact(null);
+      setLastDownloadedFilename("");
+      setSelectedReviewRecordKeys([]);
+      selectRow(nextRows, preferredSelectedRecordKey);
+      setStatusMessage(
+        `Applied labor hour type ${nextHourType} to ${applicableRows.length} selected row${applicableRows.length === 1 ? "" : "s"} and advanced the session to revision ${nextReviewSession.current_revision}.`,
+      );
+    });
+  }
+
   async function handleApplyBulkEquipmentCategory(targetCategory: string) {
     const nextTarget = targetCategory.trim();
     await runAction("Applying bulk equipment category...", async () => {
@@ -1850,6 +1902,7 @@ export default function App() {
               onApplyBulkVendorName={handleApplyBulkVendorName}
               onApplyBulkOmission={handleApplyBulkOmission}
               onApplyBulkLaborClassification={handleApplyBulkLaborClassification}
+              onApplyBulkLaborHourType={handleApplyBulkLaborHourType}
               onApplyBulkEquipmentCategory={handleApplyBulkEquipmentCategory}
             />
           </div>

@@ -13,6 +13,8 @@ POLICE_DETAIL = "police_detail"
 PROJECT_MANAGEMENT = "project_management"
 OTHER = "other"
 
+ALLOWED_LABOR_HOUR_TYPES = ("ST", "OT", "DT")
+
 
 @dataclass(slots=True)
 class Record:

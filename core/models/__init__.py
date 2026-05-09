@@ -17,6 +17,7 @@ from .lineage import (
     User,
 )
 from .record import (
+    ALLOWED_LABOR_HOUR_TYPES,
     EQUIPMENT,
     LABOR,
     MATERIAL,
@@ -30,6 +31,7 @@ from .record import (
 
 __all__ = [
     "EQUIPMENT",
+    "ALLOWED_LABOR_HOUR_TYPES",
     "ExportArtifact",
     "HistoricalExportStatus",
     "LABOR",

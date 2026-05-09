@@ -921,6 +921,30 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertEqual(session_response.status_code, 200)
         self.assertEqual(session_response.json()["labor_classification_options"], ["ALT Journeyman"])
         self.assertEqual(session_response.json()["equipment_classification_options"], ["ALT Truck"])
+        self.assertEqual(session_response.json()["labor_hour_type_options"], ["ST", "OT", "DT"])
+
+    def test_review_edit_accepts_labor_hour_type_submission(self) -> None:
+        processing_run_id = self._create_processing_run_via_api_with_record(
+            self._make_labor_adjustment_record(hour_type=None),
+        )
+
+        edit_response = self.client.post(
+            f"/api/runs/{processing_run_id}/review-session/edits",
+            json={
+                "edits": [
+                    {
+                        "record_key": "record-0",
+                        "changed_fields": {"hour_type": " st "},
+                    }
+                ]
+            },
+        )
+        run_detail_response = self.client.get(f"/api/runs/{processing_run_id}")
+
+        self.assertEqual(edit_response.status_code, 200)
+        self.assertEqual(edit_response.json()["records"][0]["hour_type"], "ST")
+        self.assertEqual(edit_response.json()["blocking_issues"], [])
+        self.assertIsNone(run_detail_response.json()["run_records"][0]["canonical_record"]["hour_type"])
 
     def test_review_edit_rejects_invalid_classification_submission(self) -> None:
         processing_run_id = self._create_processing_run_via_api()
@@ -942,6 +966,30 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertIn("not allowed for this review", edit_response.json()["detail"])
         self.assertEqual(session_response.status_code, 200)
         self.assertEqual(session_response.json()["current_revision"], 0)
+
+    def test_review_edit_rejects_invalid_labor_hour_type_submission(self) -> None:
+        processing_run_id = self._create_processing_run_via_api_with_record(
+            self._make_labor_adjustment_record(hour_type=None),
+        )
+
+        edit_response = self.client.post(
+            f"/api/runs/{processing_run_id}/review-session/edits",
+            json={
+                "edits": [
+                    {
+                        "record_key": "record-0",
+                        "changed_fields": {"hour_type": "REG"},
+                    }
+                ]
+            },
+        )
+        session_response = self.client.get(f"/api/runs/{processing_run_id}/review-session")
+
+        self.assertEqual(edit_response.status_code, 400)
+        self.assertIn("Labor hour type 'REG' is not allowed for this review", edit_response.json()["detail"])
+        self.assertEqual(session_response.status_code, 200)
+        self.assertEqual(session_response.json()["current_revision"], 0)
+        self.assertIsNone(session_response.json()["records"][0]["hour_type"])
 
     def test_hosted_review_edit_returns_conflict_for_stale_expected_current_revision(self) -> None:
         hosted_client = self._create_hosted_client()
@@ -2136,6 +2184,34 @@ class Phase1ApiTests(unittest.TestCase):
         self.assertEqual(run_response.status_code, 201)
         return run_response.json()["processing_run_id"]
 
+    def _create_processing_run_via_api_with_record(
+        self,
+        record: Record,
+        *,
+        trusted_profile_name: str = "default",
+    ) -> str:
+        upload_response = self.client.post(
+            "/api/source-documents/uploads",
+            files={"file": ("report.pdf", b"sample pdf bytes", "application/pdf")},
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        upload_payload = upload_response.json()
+
+        with patch(
+            "services.review_workflow_service.parse_pdf",
+            return_value=[record],
+        ):
+            run_response = self.client.post(
+                "/api/runs",
+                json={
+                    "upload_id": upload_payload["upload_id"],
+                    "trusted_profile_name": trusted_profile_name,
+                },
+            )
+
+        self.assertEqual(run_response.status_code, 201)
+        return run_response.json()["processing_run_id"]
+
     def _create_hosted_client(self, *, auth_secret: str = "test-auth-secret") -> TestClient:
         with patch.dict(
             os.environ,
@@ -2250,7 +2326,10 @@ class Phase1ApiTests(unittest.TestCase):
                 "is_active": False,
             },
         )
-        self._write_json(profile_dir / "labor_mapping.json", {"raw_mappings": {}, "saved_mappings": []})
+        self._write_json(
+            profile_dir / "labor_mapping.json",
+            {"raw_mappings": {"103/J": resolved_labor_classifications[0]}, "saved_mappings": []},
+        )
         self._write_json(profile_dir / "equipment_mapping.json", {"raw_mappings": {}, "saved_mappings": []})
         self._write_json(profile_dir / "phase_mapping.json", {"50": "MATERIAL"})
         self._write_json(profile_dir / "vendor_normalization.json", {})
@@ -2406,6 +2485,31 @@ class Phase1ApiTests(unittest.TestCase):
             source_line_text="Labor source",
             record_type_normalized="labor",
             recap_labor_classification=None,
+        )
+
+    def _make_labor_adjustment_record(self, *, hour_type: str | None) -> Record:
+        return Record(
+            record_type="labor",
+            phase_code="20",
+            raw_description="Colin MacGillivray ST Hrs 4/2/26 to 837800",
+            cost=-1036.40,
+            hours=-8.0,
+            hour_type=hour_type,
+            union_code="103",
+            labor_class_raw="J",
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            job_number="JOB-100",
+            job_name="Sample Project",
+            source_page=1,
+            source_line_text="JC 04/09/26 Colin MacGillivray ST Hrs 4/2/26 to 837800 -8.00 -1,036.40",
+            record_type_normalized="labor",
+            recap_labor_slot_id="labor_1",
+            recap_labor_classification="103 Journeyman",
         )
 
     def _make_unmapped_equipment_record(self, *, raw_description: str) -> Record:

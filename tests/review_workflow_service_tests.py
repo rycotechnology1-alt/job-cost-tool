@@ -239,6 +239,68 @@ class ReviewWorkflowServiceTests(unittest.TestCase):
         self.assertEqual(result.review_records[0].recap_labor_classification, "103 Journeyman")
         self.assertEqual(result.review_records[0].recap_labor_slot_id, "labor_1")
 
+    def test_update_review_record_normalizes_labor_hour_type_edits(self) -> None:
+        record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor adjustment line",
+            cost=-100.0,
+            hours=-8.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="JC adjustment source",
+            record_type_normalized=LABOR,
+            recap_labor_slot_id="labor_1",
+            recap_labor_classification="103 Journeyman",
+            is_omitted=False,
+        )
+
+        result = update_review_record([record], 0, {"hour_type": " st "}, file_path="sample.pdf")
+
+        self.assertIsNotNone(result)
+        if result is None:
+            self.fail("Expected review update result.")
+        self.assertEqual(result.review_records[0].hour_type, "ST")
+        self.assertNotIn(
+            "Record on page 1 (phase 20, labor): Labor hour type is missing for export.",
+            result.blocking_issues,
+        )
+
+    def test_update_review_record_rejects_unknown_labor_hour_type(self) -> None:
+        record = Record(
+            record_type=LABOR,
+            phase_code="20",
+            raw_description="Labor adjustment line",
+            cost=-100.0,
+            hours=-8.0,
+            hour_type=None,
+            union_code=None,
+            labor_class_raw=None,
+            labor_class_normalized=None,
+            vendor_name=None,
+            equipment_description=None,
+            equipment_category=None,
+            confidence=0.9,
+            warnings=[],
+            source_page=1,
+            source_line_text="JC adjustment source",
+            record_type_normalized=LABOR,
+            recap_labor_slot_id="labor_1",
+            recap_labor_classification="103 Journeyman",
+            is_omitted=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "Labor hour type 'REG' is not allowed for this review."):
+            update_review_record([record], 0, {"hour_type": "REG"}, file_path="sample.pdf")
+
     def test_update_review_record_rejects_unknown_labor_classification(self) -> None:
         record = Record(
             record_type=LABOR,

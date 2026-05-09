@@ -113,6 +113,7 @@ export interface ReviewSessionResponse {
   session_revision: number;
   blocking_issues: string[];
   labor_classification_options: string[];
+  labor_hour_type_options: string[];
   equipment_classification_options: string[];
   historical_export_status: HistoricalExportStatusResponse;
   effective_source_mode: "latest_reviewed" | "original_processed";
@@ -123,6 +124,7 @@ export interface ReviewEditFields {
   recap_labor_classification?: string | null;
   equipment_category?: string | null;
   vendor_name_normalized?: string | null;
+  hour_type?: string | null;
   is_omitted?: boolean | null;
 }
 

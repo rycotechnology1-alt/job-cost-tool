@@ -89,6 +89,7 @@ The browser workspace supports:
 - filtering records
 - inspecting record details and warnings
 - correcting recap labor classification
+- correcting labor hour type
 - correcting equipment category
 - correcting normalized vendor name
 - omitting records intentionally

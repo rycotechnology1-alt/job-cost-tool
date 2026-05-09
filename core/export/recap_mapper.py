@@ -12,6 +12,7 @@ from typing import Any, Optional
 from core.config import ConfigLoader
 from core.config.classification_slots import build_slot_lookup, get_active_slots
 from core.models.record import (
+    ALLOWED_LABOR_HOUR_TYPES,
     EQUIPMENT,
     LABOR,
     MATERIAL,
@@ -24,7 +25,7 @@ from core.models.record import (
 )
 from core.phase_codes import canonicalize_phase_code
 
-_ALLOWED_HOUR_TYPES = {"ST", "OT", "DT"}
+_ALLOWED_HOUR_TYPES = set(ALLOWED_LABOR_HOUR_TYPES)
 _SUPPORTED_FAMILIES = {LABOR, EQUIPMENT, MATERIAL, SUBCONTRACTOR, PERMIT, POLICE_DETAIL, PROJECT_MANAGEMENT}
 
 
